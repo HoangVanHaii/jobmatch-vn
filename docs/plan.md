@@ -1,9 +1,9 @@
-# JobMatch VN — Khóa luận tốt nghiệp
+# JobMatch VN — Sản phẩm nghiên cứu
 
 **Project:** Nền tảng Tuyển dụng & Sắp xếp phỏng vấn tự động (Smart Recruitment)  
-**Version:** 3.0 (Đề tài khóa luận chính thức)  
+**Version:** 3.0 (Đề tài nghiên cứu chính thức)  
 **Date:** 2026-07-10  
-**Owner:** Nhóm sinh viên thực hiện khóa luận
+**Owner:** Nhóm sinh viên thực hiện nghiên cứu
 
 > **Stack:** Backend NodeJS (Express + TypeScript) · Frontend Vue 3 + TypeScript · Database PostgreSQL + pgvector · AI đa provider (OpenAI, DeepSeek, Anthropic, Gemini) · **n8n** cho workflow tự động hóa · **Dialogflow CX** cho chatbot · Redis · Socket.IO realtime · PayOS (VN).
 
@@ -1215,7 +1215,7 @@ src/
 
 ---
 
-## 15. KPIs (đánh giá khóa luận)
+## 15. KPIs (đánh giá sản phẩm nghiên cứu)
 
 | Nhóm | Metric | Target |
 |---|---|---|

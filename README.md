@@ -1,4 +1,4 @@
-# JobMatch VN — Khóa luận tốt nghiệp
+# JobMatch VN — Sản phẩm nghiên cứu
 
 > **Nền tảng Tuyển dụng & Sắp xếp phỏng vấn tự động (Smart Recruitment)**
 > Đề tài: ATS + Auto CV screening + Auto interview scheduling — ứng dụng AI + n8n + Dialogflow CX.
@@ -258,4 +258,4 @@ Tuần 16     : Hoàn thiện, báo cáo cuối khóa
 
 ## 📄 License
 
-Khóa luận tốt nghiệp — chỉ dùng cho mục đích học thuật.
+Sản phẩm nghiên cứu — chỉ dùng cho mục đích học thuật.

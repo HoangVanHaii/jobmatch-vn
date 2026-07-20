@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<title>JobMatch VN — Khóa luận tốt nghiệp</title>
+<title>JobMatch VN — Sản phẩm nghiên cứu</title>
 <style>
   @page { size: A4; margin: 2cm 2.5cm; }
   body {
@@ -107,7 +107,7 @@
 </head>
 <body>
 
-<h1>JobMatch VN — Khóa luận tốt nghiệp</h1>
+<h1>JobMatch VN — Sản phẩm nghiên cứu</h1>
 <p class="meta">Nền tảng Tuyển dụng & Sắp xếp phỏng vấn tự động (Smart Recruitment) — 3 Phase<br>
 Version 3.0 · Date 2026-07-10 · Nhóm sinh viên thực hiện</p>
 
@@ -1222,7 +1222,7 @@ Backend --(POST webhook)--> n8n workflow --> gọi action --> (callback) Backend
 
 <hr>
 
-<h2>11. KPIs (đánh giá khóa luận)</h2>
+<h2>11. KPIs (đánh giá sản phẩm nghiên cứu)</h2>
 
 <table>
 <thead><tr><th>Nhóm</th><th>Metric</th><th>Target</th></tr></thead>
@@ -1318,7 +1318,7 @@ Backend --(POST webhook)--> n8n workflow --> gọi action --> (callback) Backend
 
 <hr>
 
-<p class="meta"><em>Hết tài liệu. Nhóm sinh viên thực hiện khóa luận tốt nghiệp — JobMatch VN — 2026.</em></p>
+<p class="meta"><em>Hết tài liệu. Nhóm sinh viên thực hiện sản phẩm nghiên cứu — JobMatch VN — 2026.</em></p>
 
 </body>
 </html>
