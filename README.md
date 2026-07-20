@@ -3,6 +3,8 @@
 > **Nền tảng Tuyển dụng & Sắp xếp phỏng vấn tự động (Smart Recruitment)**
 > Đề tài: ATS + Auto CV screening + Auto interview scheduling — ứng dụng AI + n8n + Dialogflow CX.
 
+> 🧭 **Mới vào dự án?** Đọc [docs/business-overview.md](docs/business-overview.md) để nắm nghiệp vụ trong 10 phút (bài toán, 3 vai trò, luồng chính, glossary) trước khi code.
+
 ## 🎯 Tổng quan 3 Phase (theo yêu cầu GVHD)
 
 | Phase | Mục tiêu | Báo cáo |
@@ -210,6 +212,7 @@ jobmatch-vn/
 
 ## 📖 Tài liệu
 
+- [docs/business-overview.md](docs/business-overview.md) — **Tổng quan nghiệp vụ** (bài toán, vai trò, luồng, glossary) — đọc đầu tiên
 - [docs/plan.md](docs/plan.md) — PRD đầy đủ (Markdown)
 - [docs/plan.docs](docs/plan.docs) — PRD (Word / LibreOffice)
 - [docs/database-setup.md](docs/database-setup.md) — Hướng dẫn setup database chi tiết (Docker + local, pgvector, troubleshooting)
