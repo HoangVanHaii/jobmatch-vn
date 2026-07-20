@@ -1,0 +1,69 @@
+{
+  "name": "Interview Reminder (Cron)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [15, "minutes"]
+        }
+      },
+      "id": "cron",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://backend:5000/api/v1/schedule/reminders/check",
+        "options": {}
+      },
+      "id": "http",
+      "name": "Get Due Reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// For each interview due, send email\nconst interviews = $input.item.json.interviews || [];\nreturn interviews.map((i) => ({ json: i }));"
+      },
+      "id": "split",
+      "name": "Split",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "no-reply@jobmatch.vn",
+        "toEmail": "={{$json.candidateEmail}}",
+        "subject": "Nhắc nhở: Buổi phỏng vấn sắp tới",
+        "text": "Xin chào,\n\nĐây là lời nhắc nhở buổi phỏng vấn {{$json.jobTitle}} vào lúc {{new Date($json.scheduledAt).toLocaleString('vi-VN')}}.\n\nĐịa điểm: {{$json.location}}\n{{$json.meetingLink ? 'Link: ' + $json.meetingLink : ''}}\n\nTrân trọng,\nJobMatch VN",
+        "options": {
+          "host": "localhost",
+          "port": 1025
+        }
+      },
+      "id": "send",
+      "name": "Send Reminder",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [[{"node": "Get Due Reminders", "type": "main", "index": 0}]]
+    },
+    "Get Due Reminders": {
+      "main": [[{"node": "Split", "type": "main", "index": 0}]]
+    },
+    "Split": {
+      "main": [[{"node": "Send Reminder", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1"
+}

@@ -1,0 +1,55 @@
+{
+  "name": "Interview Invitation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "interview_invite",
+        "responseMode": "onReceived"
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Render HTML email\nconst { interviewId, candidateName, jobTitle, scheduledAt, location, meetingLink, interviewerName } = $input.item.json.body;\n\nconst confirmUrl = `{{$json.body.confirmationUrl}}`;\nconst html = `\n<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #1F3864;\">Lời mời phỏng vấn</h2>\n  <p>Xin chào <b>${candidateName}</b>,</p>\n  <p>Chúc mừng bạn đã vượt qua vòng sàng lọc cho vị trí <b>${jobTitle}</b>.</p>\n  <p>Chúng tôi trân trọng mời bạn tham gia buổi phỏng vấn:</p>\n  <ul>\n    <li><b>Thời gian:</b> ${new Date(scheduledAt).toLocaleString('vi-VN')}</li>\n    <li><b>Địa điểm:</b> ${location || 'Online'}</li>\n    ${meetingLink ? `<li><b>Link meeting:</b> <a href=\"${meetingLink}\">${meetingLink}</a></li>` : ''}\n    <li><b>Người phỏng vấn:</b> ${interviewerName}</li>\n  </ul>\n  <p>Vui lòng xác nhận hoặc đề xuất lịch khác:</p>\n  <p style=\"text-align: center; margin: 24px 0;\">\n    <a href=\"${confirmUrl}&action=confirm\" style=\"background: #1F3864; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 0 8px;\">Xác nhận</a>\n    <a href=\"${confirmUrl}&action=reschedule\" style=\"background: #999; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 0 8px;\">Đề xuất lại lịch</a>\n  </p>\n  <p>Trân trọng,<br>Đội ngũ JobMatch VN</p>\n</div>`;\n\nreturn { json: { html, subject: `[JobMatch] Lời mời phỏng vấn - ${jobTitle}` } };"
+      },
+      "id": "render",
+      "name": "Render HTML",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "no-reply@jobmatch.vn",
+        "toEmail": "={{$node[\"Webhook\"].json[\"body\"][\"candidateEmail\"]}}",
+        "subject": "={{$json.subject}}",
+        "html": "={{$json.html}}",
+        "options": {
+          "host": "localhost",
+          "port": 1025
+        }
+      },
+      "id": "send",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [650, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{"node": "Render HTML", "type": "main", "index": 0}]]
+    },
+    "Render HTML": {
+      "main": [[{"node": "Send Email", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1"
+}

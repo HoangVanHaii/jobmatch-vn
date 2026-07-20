@@ -1,0 +1,43 @@
+{
+  "name": "Reference Verification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "reference_verify",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "no-reply@jobmatch.vn",
+        "toEmail": "={{$json.body.refereeEmail}}",
+        "subject": "Xác nhận thông tin ứng viên - JobMatch VN",
+        "text": "Xin chào {{$json.body.refereeName}},\n\nBạn được {{$json.body.candidateName}} liệt kê là người tham chiếu trong CV ứng tuyển.\n\nVui lòng xác nhận thông tin bằng cách click link:\n{{$json.body.verifyUrl}}\n\nLink có hiệu lực trong 14 ngày.\n\nCảm ơn bạn,\nJobMatch VN",
+        "options": {
+          "host": "localhost",
+          "port": 1025
+        }
+      },
+      "id": "send",
+      "name": "Send Verify Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [450, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{"node": "Send Verify Email", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1"
+}

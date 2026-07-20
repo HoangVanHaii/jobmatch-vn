@@ -1,0 +1,1324 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>JobMatch VN — Khóa luận tốt nghiệp</title>
+<style>
+  @page { size: A4; margin: 2cm 2.5cm; }
+  body {
+    font-family: "Calibri", "Segoe UI", Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: #000;
+    max-width: 900px;
+    margin: 2em auto;
+    padding: 0 2em;
+  }
+  h1 {
+    color: #1F3864;
+    font-size: 26pt;
+    text-align: center;
+    border-bottom: 2px solid #1F3864;
+    padding-bottom: 12px;
+    margin-top: 0.5em;
+  }
+  h2 {
+    color: #1F3864;
+    font-size: 17pt;
+    border-bottom: 1px solid #B4C7E7;
+    padding-bottom: 6px;
+    margin-top: 1.5em;
+  }
+  h3 {
+    color: #2E74B5;
+    font-size: 13pt;
+    margin-top: 1.2em;
+  }
+  h4 {
+    color: #1F4E79;
+    font-size: 12pt;
+    margin-top: 1em;
+  }
+  p { margin: 0.6em 0; }
+  code, pre {
+    font-family: "Consolas", "Courier New", monospace;
+    background: #F2F2F2;
+    border: 1px solid #D9D9D9;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 9.5pt;
+  }
+  pre {
+    padding: 10px;
+    overflow-x: auto;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    font-size: 9pt;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    font-size: 10pt;
+  }
+  th, td {
+    border: 1px solid #999;
+    padding: 5px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #1F3864;
+    color: #FFF;
+    font-weight: bold;
+  }
+  tr:nth-child(even) td { background: #F8F9FA; }
+  blockquote {
+    border-left: 4px solid #1F3864;
+    background: #EAF1FB;
+    margin: 1em 0;
+    padding: 0.6em 1em;
+    color: #1F3864;
+  }
+  ul, ol { margin: 0.5em 0; padding-left: 1.8em; }
+  li { margin: 0.2em 0; }
+  .meta {
+    text-align: center;
+    font-style: italic;
+    color: #555;
+    margin-bottom: 1.5em;
+  }
+  .stack-note {
+    background: #FFF4E6;
+    border: 1px solid #FFB347;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin: 1em 0;
+  }
+  .phase1 { background: #E3F2FD; border-left: 4px solid #1976D2; padding: 8px 14px; margin: 1em 0; }
+  .phase2 { background: #FFF3E0; border-left: 4px solid #F57C00; padding: 8px 14px; margin: 1em 0; }
+  .phase3 { background: #F3E5F5; border-left: 4px solid #7B1FA2; padding: 8px 14px; margin: 1em 0; }
+  hr {
+    border: none;
+    border-top: 1px dashed #999;
+    margin: 2em 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>JobMatch VN — Khóa luận tốt nghiệp</h1>
+<p class="meta">Nền tảng Tuyển dụng & Sắp xếp phỏng vấn tự động (Smart Recruitment) — 3 Phase<br>
+Version 3.0 · Date 2026-07-10 · Nhóm sinh viên thực hiện</p>
+
+<div class="stack-note">
+<strong>Stack:</strong> Backend NodeJS (Express + TypeScript) · Frontend Vue 3 + TypeScript · Database PostgreSQL + pgvector · AI đa provider (OpenAI, DeepSeek, Anthropic, Gemini) · <strong>n8n</strong> cho workflow tự động hóa · <strong>Dialogflow CX</strong> cho chatbot · Redis · Socket.IO realtime.
+</div>
+<div class="stack-note">
+<strong>Phạm vi ngành:</strong> Tất cả các ngành (mở rộng từ giới hạn CNTT ban đầu của thầy).
+</div>
+
+<hr>
+
+<h2>1. Đề tài & Mục tiêu</h2>
+
+<h3>1.1 Đề tài (từ giảng viên)</h3>
+<blockquote>
+"Nền tảng Tuyển dụng & Sắp xếp phỏng vấn tự động (Smart Recruitment)" gồm 3 phase:
+<ul>
+  <li><strong>Phase 1:</strong> ATS theo vị trí việc làm (JD) — web đăng tuyển, ứng viên nộp CV, tìm kiếm theo tiêu chí.</li>
+  <li><strong>Phase 2:</strong> Tự động sàng lọc CV dựa trên JD — scan CV, tra cứu GitHub, verify references, ranking tương thích.</li>
+  <li><strong>Phase 3:</strong> Lên lịch phỏng vấn & gửi bài test — AI gửi test theo năng lực, schedule phỏng vấn với email confirm + reminder.</li>
+</ul>
+</blockquote>
+
+<h3>1.2 Mục tiêu cụ thể</h3>
+<ul>
+  <li><strong>Functional:</strong> 1 web hoàn chỉnh phục vụ 3 actor: Ứng viên, Nhà tuyển dụng (HR), Admin.</li>
+  <li><strong>Automation:</strong> giảm 70% thao tác thủ công của HR nhờ n8n workflow.</li>
+  <li><strong>AI quality:</strong> CV scan chính xác ≥ 85%, ranking score phản ánh đúng ≥ 75% (theo feedback HR).</li>
+  <li><strong>Schedule quality:</strong> ứng viên confirm lịch ≥ 60%, không bị miss slot.</li>
+  <li><strong>Demo:</strong> chạy end-to-end Phase 1 → 2 → 3 với data mẫu 100 JD + 500 CV.</li>
+</ul>
+
+<hr>
+
+<h2>2. Roadmap 3 Phase (báo cáo thầy)</h2>
+
+<blockquote>
+Thầy yêu cầu: <em>"Các bạn hoàn thiện mỗi phase lên lịch báo cáo cho Thầy nhé... (online - offline tùy các bạn)."</em>
+</blockquote>
+
+<h3>Timeline đề xuất (16 tuần)</h3>
+<pre>
+Tuần 1–2    : Setup repo, docker, schema DB, auth (email + OAuth)
+Tuần 3–4    : Phase 1 — Company/JD CRUD, Search, Apply CV
+Tuần 5      : 🟢 BÁO CÁO PHASE 1 — demo web tuyển dụng
+Tuần 6–8    : Phase 2 — CV scan AI, GitHub lookup, reference verify
+Tuần 9      : 🟢 BÁO CÁO PHASE 2 — demo auto-screening
+Tuần 10–12  : Phase 3 — AI test (IQ/English), Interview scheduler
+Tuần 13–14  : Dialogflow chatbot, polish, admin dashboard
+Tuần 15     : 🟢 BÁO CÁO PHASE 3 — demo full end-to-end
+Tuần 16     : Hoàn thiện, fix bug, viết báo cáo, chuẩn bị bảo vệ
+</pre>
+
+<h3>Phân công nhóm (4 người gợi ý)</h3>
+<table>
+<thead><tr><th>Thành viên</th><th>Phụ trách</th><th>Module chính</th></tr></thead>
+<tbody>
+<tr><td><strong>TV1 — Lead Backend</strong></td><td>NodeJS + DB + n8n</td><td>Auth, JD/Apply, CV scan pipeline, n8n workflows, scheduler</td></tr>
+<tr><td><strong>TV2 — AI/ML</strong></td><td>AI providers + Dialogflow</td><td>CV parse/score, AI test (IQ/English), chatbot, embedding</td></tr>
+<tr><td><strong>TV3 — Frontend</strong></td><td>Vue 3 + UX</td><td>Tất cả views, components, responsive, realtime UI</td></tr>
+<tr><td><strong>TV4 — Fullstack + DevOps</strong></td><td>Integration + deploy</td><td>GitHub lookup, reference verify, Docker, CI/CD, báo cáo</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>3. Functional Requirements — chi tiết theo 3 Phase</h2>
+
+<div class="phase1">
+<strong>PHASE 1 — ATS cơ bản (Web tuyển dụng)</strong><br>
+Mục tiêu: web cho HR đăng JD, ứng viên nộp CV, tìm kiếm theo tiêu chí.
+</div>
+
+<h3>F1. Quản lý tài khoản (3 role)</h3>
+<ul>
+  <li><strong>F1.1</strong> Đăng ký / đăng nhập bằng email + password.</li>
+  <li><strong>F1.2</strong> Đăng nhập bằng OAuth: <strong>Google</strong>, <strong>Facebook</strong>, <strong>GitHub</strong> (PKCE flow).</li>
+  <li><strong>F1.3</strong> Xác minh email qua OTP (5 phút expiry).</li>
+  <li><strong>F1.4</strong> Phân quyền 3 role: <strong>Candidate</strong>, <strong>Employer</strong> (HR), <strong>Admin</strong>.</li>
+  <li><strong>F1.5</strong> Quên mật khẩu / reset qua email.</li>
+</ul>
+
+<h3>F2. Ứng viên (Candidate)</h3>
+<ul>
+  <li><strong>F2.1</strong> Tạo / sửa / xóa CV (multi-CV).</li>
+  <li><strong>F2.2</strong> Upload CV (PDF, DOCX) — AI bóc tách tự động điền form.</li>
+  <li><strong>F2.3</strong> Tìm kiếm việc theo: keyword, location, ngành, cấp bậc, loại hình, salary range.</li>
+  <li><strong>F2.4</strong> Search insight (AI gợi ý lương thị trường, top công ty, kỹ năng hot).</li>
+  <li><strong>F2.5</strong> Apply job 1-click (kèm CV + cover letter).</li>
+  <li><strong>F2.6</strong> Saved jobs, Job alerts (email + realtime).</li>
+  <li><strong>F2.7</strong> Lịch sử apply với status (pending → viewed → screening → interview → offered/rejected).</li>
+  <li><strong>F2.8</strong> Hồ sơ ẩn danh (ẩn tên + email khi apply).</li>
+  <li><strong>F2.9</strong> Đánh giá công ty (review, rating 1–5).</li>
+</ul>
+
+<h3>F3. Nhà tuyển dụng (Employer / HR)</h3>
+<ul>
+  <li><strong>F3.1</strong> Company profile (logo, cover, mô tả, địa chỉ, website, scale, ngành nghề).</li>
+  <li><strong>F3.2</strong> Xác minh công ty (upload giấy phép KD, admin duyệt).</li>
+  <li><strong>F3.3</strong> <strong>JD CRUD</strong> — rich editor với các trường: title, description, <strong>requirements (skills, years of experience, certifications)</strong>, benefits, salary range, deadline, <strong>ngành nghề</strong>, <strong>cấp bậc</strong>, <strong>loại hình</strong>.</li>
+  <li><strong>F3.4</strong> AI sinh JD mẫu (nhập vài keyword → AI sinh JD hoàn chỉnh).</li>
+  <li><strong>F3.5</strong> Quản lý JD (draft → pending → live → expired → closed).</li>
+  <li><strong>F3.6</strong> Xem danh sách ứng viên apply — filter theo: status, score, keyword, location, ngành.</li>
+  <li><strong>F3.7</strong> <strong>Bulk actions</strong>: invite to interview, reject, save to talent pool.</li>
+  <li><strong>F3.8</strong> <strong>ATS pipeline</strong> (kanban) theo stage: <code>new</code> → <code>screening</code> → <code>interview</code> → <code>offer</code> → <code>hired</code> / <code>rejected</code>.</li>
+  <li><strong>F3.9</strong> Gửi email template cho ứng viên (interview invite, rejection, offer) — qua n8n.</li>
+  <li><strong>F3.10</strong> Analytics dashboard (views, applies, conversion rate, time-to-hire).</li>
+  <li><strong>F3.11</strong> Featured jobs (lên top — free 1 JD/tháng cho user mới).</li>
+</ul>
+
+<h3>F4. Admin</h3>
+<ul>
+  <li><strong>F4.1</strong> Quản lý users (ban, unban, xem chi tiết).</li>
+  <li><strong>F4.2</strong> Duyệt JD + AI moderation (phát hiện spam).</li>
+  <li><strong>F4.3</strong> Duyệt company verification.</li>
+  <li><strong>F4.4</strong> Báo cáo tổng quan (MAU, JD posted, applications, time-to-hire).</li>
+  <li><strong>F4.5</strong> Quản lý master data: ngành nghề, kỹ năng, địa điểm, cấp bậc.</li>
+  <li><strong>F4.6</strong> Audit log.</li>
+</ul>
+
+<h3>F5. Realtime & Communication</h3>
+<ul>
+  <li><strong>F5.1</strong> <strong>Chat realtime</strong> ứng viên ↔ HR (Socket.IO + typing + read receipt).</li>
+  <li><strong>F5.2</strong> <strong>Notification realtime</strong> (Socket.IO + Web Push + email digest).</li>
+  <li><strong>F5.3</strong> Follow công ty (nhận update khi đăng JD mới).</li>
+</ul>
+
+<div class="phase2">
+<strong>PHASE 2 — Tự động sàng lọc CV (Auto-screening)</strong><br>
+Mục tiêu: <em>"Dựa vào JD đã đưa lên, tiến hành 'scan cv' bằng cách đánh giá các tiêu chi trong JD và CV có phù hợp ko. Ví dụ yêu cầu 3 năm kinh nghiệm thì trong CV phải có nội dung >= 3 năm lĩnh vực đó... Tra cứu link github có tồn tại ko? Tra cứu các thông tin người tham chiếu trong CV có xác thực không... Đánh giá xếp hạng tương thích với JD"</em> — trích yêu cầu của thầy.
+</div>
+
+<h3>F6. AI CV Scan theo JD (core Phase 2)</h3>
+<p>Khi ứng viên apply JD, hệ thống <strong>tự động</strong> chạy scan pipeline:</p>
+
+<h4>F6.1. Trích xuất yêu cầu từ JD (dùng LLM)</h4>
+<ul>
+  <li>Kỹ năng bắt buộc (required skills) — VD: <code>Java, Spring Boot, PostgreSQL</code>.</li>
+  <li>Kỹ năng nice-to-have.</li>
+  <li>Số năm kinh nghiệm tối thiểu / tối đa.</li>
+  <li>Bằng cấp (Đại học / Cao đẳng / không yêu cầu).</li>
+  <li>Chứng chỉ (nếu có trong JD).</li>
+  <li>Ngành nghề trước đây (industry history).</li>
+  <li>Địa điểm / remote OK.</li>
+</ul>
+
+<h4>F6.2. Scan từng tiêu chí (so khớp JD ↔ CV)</h4>
+<table>
+<thead><tr><th>Tiêu chí</th><th>Cách scan</th><th>Điểm tối đa</th></tr></thead>
+<tbody>
+<tr><td><strong>Years of experience</strong></td><td>Parse ngày bắt đầu/kết thúc từng job trong CV → tổng năm theo lĩnh vực → so với JD</td><td>25</td></tr>
+<tr><td><strong>Required skills</strong></td><td>Match từng skill trong JD với <code>skills[]</code> trong CV (fuzzy match cho phép viết tắt: <code>JS</code> = <code>JavaScript</code>)</td><td>30</td></tr>
+<tr><td><strong>Education</strong></td><td>So bằng cấp + chuyên ngành (nếu JD yêu cầu)</td><td>10</td></tr>
+<tr><td><strong>Certifications</strong></td><td>Match chứng chỉ trong CV với JD list</td><td>5</td></tr>
+<tr><td><strong>Industry history</strong></td><td>Parse <code>experience[].industry</code> → match với ngành JD</td><td>5</td></tr>
+<tr><td><strong>Location fit</strong></td><td>So location CV vs JD (có remote OK không)</td><td>5</td></tr>
+<tr><td><strong>GitHub profile</strong> (F7)</td><td>Có GitHub + repo count + contribution</td><td>10</td></tr>
+<tr><td><strong>Reference verify</strong> (F8)</td><td>Email người tham chiếu verified</td><td>5</td></tr>
+<tr><td><strong>Cover letter quality</strong></td><td>LLM đánh giá độ liên quan, ngôn ngữ, sự nghiêm túc</td><td>5</td></tr>
+<tr><td><strong>Tổng</strong></td><td></td><td><strong>100</strong></td></tr>
+</tbody>
+</table>
+
+<h4>F6.3. Auto scoring &amp; ranking</h4>
+<ul>
+  <li>Tính <code>match_score</code> (0–100) cho từng (candidate, JD).</li>
+  <li>Tự động <strong>status transition</strong>:
+    <ul>
+      <li><code>match_score ≥ 75</code> → <code>auto-screening-passed</code> (chuyển sang stage <code>screening</code>).</li>
+      <li><code>match_score 50–74</code> → <code>auto-screening-review</code> (HR xem lại).</li>
+      <li><code>match_score &lt; 50</code> → <code>auto-screening-rejected</code> (gửi email polite reject tự động qua n8n).</li>
+    </ul>
+  </li>
+  <li>Lưu <code>ai_match_reasoning</code> (JSONB) giải thích điểm từng tiêu chí.</li>
+</ul>
+
+<h3>F7. GitHub Profile Lookup</h3>
+<ul>
+  <li><strong>F7.1.</strong> Tự động detect GitHub URL trong CV (regex: <code>github.com/[a-zA-Z0-9-]+</code>).</li>
+  <li><strong>F7.2.</strong> Kiểm tra GitHub user có tồn tại không (gọi GitHub API: <code>GET /users/{username}</code>).</li>
+  <li><strong>F7.3.</strong> Lấy thông tin public:
+    <ul>
+      <li>Số public repos, số followers/following.</li>
+      <li>Top 5 repos theo stars (lưu <code>top_repos</code> JSONB).</li>
+      <li>Contribution count (year) qua GitHub GraphQL.</li>
+      <li>Ngôn ngữ lập trình chính (qua repos language).</li>
+      <li>Account age (từ <code>created_at</code>).</li>
+    </ul>
+  </li>
+  <li><strong>F7.4.</strong> Đánh giá:
+    <ul>
+      <li>Tài khoản thật (<code>has_activity = true</code> nếu có ≥ 1 repo trong 6 tháng qua).</li>
+      <li>Tài khoản "ảo" / spam (no repos, no followers, no activity).</li>
+      <li>Cảnh báo HR nếu GitHub không tồn tại hoặc có dấu hiệu giả mạo.</li>
+    </ul>
+  </li>
+  <li><strong>F7.5.</strong> Cache kết quả GitHub 7 ngày (Redis) để tránh rate limit.</li>
+</ul>
+
+<h3>F8. Reference Verification</h3>
+<ul>
+  <li><strong>F8.1.</strong> Tự động detect người tham chiếu trong CV:
+    <ul>
+      <li>Phần "References" (nếu có).</li>
+      <li>Hoặc extract từ LLM với schema: <code>[{name, email, phone, relationship, company}]</code>.</li>
+    </ul>
+  </li>
+  <li><strong>F8.2.</strong> Verify email người tham chiếu:
+    <ul>
+      <li>Validate format email.</li>
+      <li>Check MX record có tồn tại không.</li>
+      <li><strong>Gửi email xác minh</strong> qua n8n workflow:
+        <ul>
+          <li>Email chứa link confirm (token 32 char, expire 7 ngày).</li>
+          <li>Người tham chiếu click → xác nhận "Tôi xác nhận [tên ứng viên] đã làm việc tại [công ty] trong [khoảng thời gian]".</li>
+          <li>Lưu <code>verified_at</code> + <code>verification_method</code>.</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li><strong>F8.3.</strong> Lưu trạng thái:
+    <ul>
+      <li><code>pending</code> (chưa gửi email).</li>
+      <li><code>sent</code> (đã gửi, chờ confirm).</li>
+      <li><code>verified</code> (đã xác nhận).</li>
+      <li><code>failed</code> (email bounce / người tham chiếu từ chối).</li>
+    </ul>
+  </li>
+  <li><strong>F8.4.</strong> Nếu người tham chiếu không phản hồi sau 14 ngày → đánh dấu <code>expired</code>, HR tự quyết định.</li>
+</ul>
+
+<h3>F9. Auto-Reject Email (qua n8n)</h3>
+<ul>
+  <li><strong>F9.1.</strong> Với <code>match_score &lt; 50</code>, tự động:
+    <ul>
+      <li>Gửi email polite reject (template tiếng Việt + tiếng Anh).</li>
+      <li>Lưu email vào <code>email_logs</code> để audit.</li>
+      <li>Cho phép HR override (mở lại trạng thái <code>pending</code>).</li>
+    </ul>
+  </li>
+  <li><strong>F9.2.</strong> Template email:
+    <ul>
+      <li>Tiếng Việt: <em>"Cảm ơn bạn đã quan tâm vị trí [JD title] tại [Company]. Sau khi xem xét, chúng tôi nhận thấy hồ sơ chưa phù hợp... Chúc bạn tìm được cơ hội phù hợp."</em></li>
+      <li>Có thể tùy biến template trong Admin.</li>
+    </ul>
+  </li>
+</ul>
+
+<h3>F10. HR Dashboard cho Auto-screening</h3>
+<ul>
+  <li><strong>F10.1.</strong> Bảng Kanban ATS với filter theo JD, score range, status.</li>
+  <li><strong>F10.2.</strong> Click vào 1 candidate → xem chi tiết:
+    <ul>
+      <li>CV parsed + điểm từng tiêu chí.</li>
+      <li>GitHub profile preview (nếu có).</li>
+      <li>Reference status.</li>
+      <li>Match reasoning từ LLM.</li>
+    </ul>
+  </li>
+  <li><strong>F10.3.</strong> Nút "Invite to interview" → chuyển sang Phase 3.</li>
+</ul>
+
+<div class="phase3">
+<strong>PHASE 3 — Lên lịch phỏng vấn &amp; Bài test AI</strong><br>
+Mục tiêu: <em>"AI Gửi bài test theo năng lực qua email (có thể test IQ, test English). Xếp lịch phỏng vấn (gửi email phỏng vấn đến ứng viên -> bắt buộc ứng viên reply confirm lịch trình -> nhắc nhở phỏng vấn)"</em> — trích yêu cầu của thầy.
+</div>
+
+<h3>F11. AI Test (IQ + English)</h3>
+<ul>
+  <li><strong>F11.1.</strong> Tạo đề thi IQ:
+    <ul>
+      <li>LLM sinh câu hỏi IQ dạng: logic, pattern, số học, hình ảnh, verbal reasoning.</li>
+      <li>Mỗi JD → 1 bộ test riêng (10–20 câu, 30 phút).</li>
+      <li>Lưu <code>ai_tests</code> (JSONB) với đáp án + điểm.</li>
+    </ul>
+  </li>
+  <li><strong>F11.2.</strong> Tạo đề thi English:
+    <ul>
+      <li>LLM sinh câu hỏi theo level (A2/B1/B2/C1) tương ứng JD.</li>
+      <li>Dạng: reading comprehension, grammar, vocabulary, essay.</li>
+      <li>Auto-grade bằng LLM (kèm rubric).</li>
+    </ul>
+  </li>
+  <li><strong>F11.3.</strong> Gửi bài test qua email (qua n8n):
+    <ul>
+      <li>Link unique (token 1 lần, expire 7 ngày).</li>
+      <li>UI làm bài trên web (no external tool).</li>
+      <li>Auto-save progress, submit khi hết giờ.</li>
+    </ul>
+  </li>
+  <li><strong>F11.4.</strong> Chấm điểm:
+    <ul>
+      <li>IQ: so đáp án multiple choice → điểm 0–100.</li>
+      <li>English: LLM chấm theo rubric → điểm 0–100 + nhận xét.</li>
+      <li>Lưu <code>test_results</code> JSONB + gửi email cho HR.</li>
+    </ul>
+  </li>
+  <li><strong>F11.5.</strong> HR quyết định pass/fail dựa trên <code>test_score</code> (mặc định threshold 60).</li>
+</ul>
+
+<h3>F12. Interview Scheduling</h3>
+<ul>
+  <li><strong>F12.1.</strong> HR tạo interview slot:
+    <ul>
+      <li>Chọn JD, candidate, interviewer, location/online, thời gian.</li>
+      <li>Hệ thống check conflict (interviewer không có 2 slot trùng giờ).</li>
+      <li>Sinh Google Meet / Zoom link (optional — tích hợp sau).</li>
+    </ul>
+  </li>
+  <li><strong>F12.2.</strong> Gửi email phỏng vấn (qua n8n) tới ứng viên:
+    <ul>
+      <li>Template HTML: thời gian, location/link, tên interviewer, JD.</li>
+      <li>2 nút: <strong>Xác nhận</strong> / <strong>Đề xuất lại lịch</strong>.</li>
+      <li>Token unique, link <code>/interview/confirm?token=...</code>.</li>
+    </ul>
+  </li>
+  <li><strong>F12.3.</strong> Ứng viên confirm:
+    <ul>
+      <li>Click "Xác nhận" → status chuyển <code>confirmed</code>, gửi email cho HR.</li>
+      <li>Click "Đề xuất lại" → chọn slot khác từ availability của interviewer.</li>
+    </ul>
+  </li>
+  <li><strong>F12.4.</strong> Reminder tự động (qua n8n):
+    <ul>
+      <li><strong>24 giờ trước</strong> phỏng vấn → gửi email nhắc nhở.</li>
+      <li><strong>2 giờ trước</strong> → gửi email + push notification.</li>
+      <li><strong>15 phút trước</strong> → push notification qua web (nếu user online).</li>
+    </ul>
+  </li>
+  <li><strong>F12.5.</strong> Reschedule / Cancel:
+    <ul>
+      <li>Ứng viên có thể đề xuất reschedule trước 24h.</li>
+      <li>HR có thể cancel bất kỳ lúc nào (gửi email cho ứng viên).</li>
+    </ul>
+  </li>
+  <li><strong>F12.6.</strong> No-show tracking:
+    <ul>
+      <li>Sau 30 phút không xuất hiện → status <code>no_show</code>, log cho HR.</li>
+      <li>HR quyết định reschedule hay reject.</li>
+    </ul>
+  </li>
+</ul>
+
+<h3>F13. Interview Feedback</h3>
+<ul>
+  <li><strong>F13.1.</strong> Sau phỏng vấn, interviewer điền form:
+    <ul>
+      <li>Điểm từng tiêu chí (kỹ năng, giao tiếp, culture fit, technical).</li>
+      <li>Nhận xét tổng quát.</li>
+      <li>Recommendation: <code>strong_hire</code> / <code>hire</code> / <code>no_hire</code> / <code>strong_no_hire</code>.</li>
+    </ul>
+  </li>
+  <li><strong>F13.2.</strong> AI tóm tắt feedback (LLM) → gợi ý offer/letter.</li>
+  <li><strong>F13.3.</strong> Tổng hợp vào ATS: stage tiếp theo (<code>offer</code> / <code>rejected</code>).</li>
+</ul>
+
+<h3>F14. Offer Letter</h3>
+<ul>
+  <li>HR tạo offer (lương, start date, benefits).</li>
+  <li>Gửi qua n8n email với PDF đính kèm (auto-gen từ template).</li>
+  <li>Ứng viên accept/decline bằng nút trong email.</li>
+</ul>
+
+<h3>F15. Chatbot (Dialogflow CX)</h3>
+<ul>
+  <li><strong>F15.1.</strong> Các intent chính: <code>ask_how_to_apply</code>, <code>ask_company_info</code>, <code>ask_status</code>, <code>ask_salary</code>, <code>ask_skill_required</code>, <code>escalate_to_human</code>.</li>
+  <li><strong>F15.2.</strong> Webhook fulfillment gọi backend JobMatch: <code>POST /api/v1/dialogflow/webhook</code>.</li>
+  <li><strong>F15.3.</strong> Embed Dialogflow Messenger widget trên web (góc phải dưới).</li>
+</ul>
+
+<hr>
+
+<h2>4. Yêu cầu phi chức năng</h2>
+
+<h3>4.1 Performance</h3>
+<ul>
+  <li><strong>LCP</strong> &lt; 2.5s trên 4G.</li>
+  <li><strong>API p95</strong> &lt; 500ms (CRUD thường); &lt; 5s cho CV scan pipeline.</li>
+  <li><strong>Search</strong> &lt; 1s cho 10K JD (dùng GIN + Redis cache).</li>
+  <li><strong>CV scan end-to-end</strong> &lt; 30s (async qua BullMQ).</li>
+  <li><strong>Realtime</strong> &lt; 200ms trong region.</li>
+</ul>
+
+<h3>4.2 Security</h3>
+<ul>
+  <li>HTTPS only.</li>
+  <li>JWT (access 15p + refresh 7d) + rotation.</li>
+  <li>bcrypt password (cost 12).</li>
+  <li>Rate limit (express-rate-limit + Redis): 100 req/min/user.</li>
+  <li>OAuth tokens mã hóa AES-256-GCM khi lưu DB.</li>
+  <li>Input validation (Zod) cả server + client.</li>
+  <li>File upload: validate MIME + size + scan virus (ClamAV optional).</li>
+  <li>CSRF cho form non-GET.</li>
+  <li>Audit log cho admin actions.</li>
+</ul>
+
+<h3>4.3 Scalability &amp; Cache</h3>
+<ul>
+  <li>Stateless API → horizontal scale.</li>
+  <li>Redis cache + BullMQ queue.</li>
+  <li>Read replica Postgres (sau).</li>
+  <li>CDN cho static (Cloudflare).</li>
+</ul>
+
+<table>
+<thead><tr><th>Layer</th><th>What</th><th>TTL</th></tr></thead>
+<tbody>
+<tr><td>Browser</td><td>Static assets</td><td>ETag</td></tr>
+<tr><td>Redis</td><td>Search results, JD detail, GitHub lookup</td><td>5–60 min</td></tr>
+<tr><td>Redis</td><td>AI embeddings, LLM FAQ responses</td><td>24h</td></tr>
+<tr><td>Postgres</td><td>Materialized view cho dashboard</td><td>1h</td></tr>
+</tbody>
+</table>
+
+<h3>4.4 Observability &amp; Reliability</h3>
+<ul>
+  <li>Structured logging (pino), Sentry error tracking.</li>
+  <li>Prometheus metrics: API latency, AI calls, queue depth, scan success rate.</li>
+  <li>n8n workflow logs (riêng).</li>
+  <li>PM2 cluster + auto-restart, Postgres backup daily.</li>
+  <li>Health check <code>/health</code> + <code>/ready</code>.</li>
+</ul>
+
+<hr>
+
+<h2>5. Kiến trúc hệ thống (đầy đủ)</h2>
+
+<pre>
+┌─────────────────────────────────────────────────────────────────────┐
+│                  Client (Vue 3 + TS + Vite)                         │
+│   Router + Pinia + Socket.IO + Dialogflow Messenger                 │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │ HTTP REST + Socket.IO
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│              Nginx / Caddy (Reverse Proxy + TLS)                    │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│         Backend (NodeJS + Express + TypeScript)                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ Routes:  /api/v1/{auth, jobs, applications, scan,         │   │
+│  │          schedule, dialogflow, github, references,         │   │
+│  │          tests, admin, ...}                                │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ Services: auth · job · application · cvScan · githubLookup │   │
+│  │           referenceVerify · aiTest · scheduler · chatbot   │   │
+│  │           notification · email · n8n                      │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ AI Layer: OpenAI · DeepSeek · Anthropic · Gemini           │   │
+│  │          (multi-provider abstraction)                       │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└──┬─────────────────┬──────────────────┬──────────────────┬──────────┘
+   │                 │                  │                  │
+   ▼                 ▼                  ▼                  ▼
+┌─────────┐    ┌──────────┐     ┌────────────┐    ┌────────────────┐
+│Postgres │    │  Redis   │     │  BullMQ    │    │  n8n Workflow  │
+│+pgvector│    │ cache+   │     │ workers:   │    │  (Docker)      │
+│+JSONB   │    │ queue    │     │ - scan-cv  │    │                │
+│+pg_trgm │    │          │     │ - send-mail│    │ - Email send   │
+│         │    │          │     │ - score    │    │ - Reminder     │
+│         │    │          │     │ - schedule │    │ - Reference    │
+│         │    │          │     │ - reminder │    │   verify email │
+└─────────┘    └──────────┘     └────────────┘    └────────────────┘
+                       │
+                       │ HTTPS (Dialogflow webhook)
+                       ▼
+              ┌────────────────────┐
+              │  Dialogflow CX     │
+              │  (chatbot agent)   │
+              └────────────────────┘
+</pre>
+
+<h3>Workflow n8n (riêng)</h3>
+<ul>
+  <li><strong>WF1: CV Scan Trigger</strong> — Webhook → chạy scan → callback backend.</li>
+  <li><strong>WF2: Reference Verification</strong> — Gửi email xác minh → chờ reply → update DB.</li>
+  <li><strong>WF3: Interview Reminder</strong> — Cron mỗi 15 phút → gửi email + push.</li>
+  <li><strong>WF4: Auto-Reject</strong> — Trigger khi <code>match_score &lt; 50</code> → gửi email polite reject.</li>
+  <li><strong>WF5: AI Test</strong> — Trigger khi HR approve → sinh test → gửi email link.</li>
+  <li><strong>WF6: Interview Confirmation</strong> — Gửi email → chờ ứng viên click → update status.</li>
+</ul>
+
+<hr>
+
+<h2>6. Cơ sở dữ liệu — Schema (PostgreSQL)</h2>
+
+<h3>6.1 Nguyên tắc</h3>
+<ul>
+  <li><strong>JSONB</strong> cho dữ liệu nặng, schema linh hoạt.</li>
+  <li><strong>pgvector</strong> cho embedding (CV ↔ JD matching).</li>
+  <li><strong>tsvector</strong> cho full-text search JD.</li>
+  <li><strong>GIN index</strong> cho JSONB cần query.</li>
+  <li><strong>UUID v7</strong> cho PK.</li>
+  <li><strong>Soft delete</strong> với <code>deleted_at</code>.</li>
+</ul>
+
+<h3>6.2 ER tổng quan</h3>
+<pre>
+users ─&lt; user_profiles
+users ─&lt; oauth_accounts
+users ─&lt; candidates
+users ─&lt; employers &gt;── companies
+companies ─&lt; jobs ─&lt; job_skills &gt;── skills
+candidates ─&lt; cvs
+candidates ─&lt; applications &gt;── jobs
+candidates ─&lt; saved_jobs
+candidates ─&lt; notifications
+users ─&lt; chat_messages &gt;── conversations
+jobs ─&lt; embeddings (pgvector)
+cvs ─&lt; embeddings (pgvector)
+jobs ─&lt; interviews &gt;── applications
+applications ─&lt; test_results
+applications ─&lt; reference_verifications
+candidates ─&lt; reference_verifications
+audit_logs
+</pre>
+
+<h3>6.3 Bảng chính (key tables)</h3>
+
+<pre><code>-- ============ USERS (multi-role) ============
+CREATE TABLE users (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email         CITEXT UNIQUE NOT NULL,
+  password_hash TEXT,
+  role          user_role NOT NULL,           -- 'candidate' | 'employer' | 'admin'
+  status        user_status DEFAULT 'active',
+  email_verified_at TIMESTAMPTZ,
+  last_login_at TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  updated_at    TIMESTAMPTZ DEFAULT now(),
+  deleted_at    TIMESTAMPTZ,
+  metadata      JSONB DEFAULT '{}'::jsonb
+);
+
+-- ============ OAUTH ACCOUNTS ============
+CREATE TABLE oauth_accounts (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider          oauth_provider NOT NULL,    -- 'google' | 'facebook' | 'github'
+  provider_user_id  TEXT NOT NULL,
+  provider_email    CITEXT,
+  access_token      TEXT,                        -- encrypted AES-256-GCM
+  refresh_token     TEXT,                        -- encrypted
+  token_expires_at  TIMESTAMPTZ,
+  scopes            TEXT[],
+  raw_profile       JSONB,
+  linked_at         TIMESTAMPTZ DEFAULT now(),
+  last_used_at      TIMESTAMPTZ,
+  UNIQUE(provider, provider_user_id)
+);
+
+-- ============ COMPANIES ============
+CREATE TABLE companies (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  slug        TEXT UNIQUE NOT NULL,
+  logo_url    TEXT,
+  cover_url   TEXT,
+  description TEXT,
+  industry    TEXT,
+  size_range  TEXT,
+  website     TEXT,
+  social      JSONB,
+  address     JSONB,
+  verified_at TIMESTAMPTZ,
+  verified_by UUID REFERENCES users(id),
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  metadata    JSONB DEFAULT '{}'::jsonb
+);
+
+-- ============ JOBS (JD) ============
+CREATE TABLE jobs (
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id             UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  posted_by              UUID NOT NULL REFERENCES users(id),
+  title                  TEXT NOT NULL,
+  slug                   TEXT,
+  description            TEXT NOT NULL,
+  requirements           TEXT,
+  benefits               TEXT,
+  -- Yêu cầu scan tự động (Phase 2)
+  required_skills        JSONB DEFAULT '[]'::jsonb,
+  nice_to_have_skills    JSONB DEFAULT '[]'::jsonb,
+  experience_years_min   INT,
+  experience_years_max   INT,
+  education_level        TEXT,
+  certifications         JSONB DEFAULT '[]'::jsonb,
+  industry_required      TEXT,
+  job_level              job_level,
+  job_type               job_type,
+  salary_min             NUMERIC(15,0),
+  salary_max             NUMERIC(15,0),
+  salary_currency        CHAR(3) DEFAULT 'VND',
+  salary_visible         BOOLEAN DEFAULT true,
+  location               JSONB,
+  remote_ok              BOOLEAN DEFAULT false,
+  deadline               TIMESTAMPTZ,
+  status                 job_status DEFAULT 'draft',
+  featured               BOOLEAN DEFAULT false,
+  views_count            INT DEFAULT 0,
+  applies_count          INT DEFAULT 0,
+  created_at             TIMESTAMPTZ DEFAULT now(),
+  published_at           TIMESTAMPTZ,
+  extra_data             JSONB DEFAULT '{}'::jsonb,
+  search_tsv             TSVECTOR GENERATED ALWAYS AS (
+    setweight(to_tsvector('simple', coalesce(title,'')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(description,'')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(requirements,'')), 'C')
+  ) STORED
+);
+CREATE INDEX idx_jobs_search_tsv ON jobs USING GIN (search_tsv);
+CREATE INDEX idx_jobs_required_skills ON jobs USING GIN (required_skills);
+
+-- ============ CVs ============
+CREATE TABLE cvs (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  candidate_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title             TEXT NOT NULL,
+  file_url          TEXT,
+  file_type         TEXT,
+  is_primary        BOOLEAN DEFAULT false,
+  parsed_data       JSONB,                              -- {name, email, education[], experience[], skills[], references[], github_url, ...}
+  ai_score          JSONB,
+  score_updated_at  TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  updated_at        TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_cvs_parsed_data ON cvs USING GIN (parsed_data);
+
+-- ============ APPLICATIONS ============
+CREATE TABLE applications (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  candidate_id        UUID NOT NULL REFERENCES users(id),
+  job_id              UUID NOT NULL REFERENCES jobs(id),
+  cv_id               UUID REFERENCES cvs(id),
+  cover_letter        TEXT,
+  status              application_status DEFAULT 'pending',
+  stage               TEXT DEFAULT 'new',
+  -- Phase 2: AI auto-screening
+  ai_match_score      NUMERIC(5,2),
+  ai_match_reasoning  JSONB,
+  scan_completed_at   TIMESTAMPTZ,
+  -- Phase 3
+  test_score          NUMERIC(5,2),
+  test_taken_at       TIMESTAMPTZ,
+  interview_status    TEXT,
+  is_anonymous        BOOLEAN DEFAULT false,
+  applied_at          TIMESTAMPTZ DEFAULT now(),
+  updated_at          TIMESTAMPTZ DEFAULT now(),
+  metadata            JSONB,
+  UNIQUE(candidate_id, job_id)
+);
+CREATE INDEX idx_applications_match_score ON applications(job_id, ai_match_score DESC);
+
+-- ============ REFERENCE VERIFICATIONS (Phase 2) ============
+CREATE TABLE reference_verifications (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  application_id      UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+  referee_name        TEXT NOT NULL,
+  referee_email       CITEXT NOT NULL,
+  referee_phone       TEXT,
+  relationship        TEXT,
+  company             TEXT,
+  duration            TEXT,
+  verification_token  TEXT UNIQUE NOT NULL,
+  status              reference_status DEFAULT 'pending',
+  sent_at             TIMESTAMPTZ,
+  verified_at         TIMESTAMPTZ,
+  response            JSONB,
+  expires_at          TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_ref_token ON reference_verifications(verification_token);
+CREATE INDEX idx_ref_status ON reference_verifications(status, expires_at);
+
+-- ============ AI TESTS (Phase 3) ============
+CREATE TABLE ai_tests (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_id        UUID NOT NULL REFERENCES jobs(id),
+  test_type     ai_test_type NOT NULL,                   -- 'iq' | 'english'
+  level         TEXT,
+  questions     JSONB NOT NULL,
+  total_points  INT NOT NULL,
+  duration_min  INT NOT NULL,
+  passing_score NUMERIC(5,2) DEFAULT 60.00,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE test_assignments (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  application_id UUID NOT NULL REFERENCES applications(id),
+  test_id       UUID NOT NULL REFERENCES ai_tests(id),
+  access_token  TEXT UNIQUE NOT NULL,
+  status        test_assignment_status DEFAULT 'pending',
+  answers       JSONB,
+  score         NUMERIC(5,2),
+  feedback      JSONB,
+  sent_at       TIMESTAMPTZ,
+  submitted_at  TIMESTAMPTZ,
+  expires_at    TIMESTAMPTZ
+);
+
+-- ============ INTERVIEWS (Phase 3) ============
+CREATE TABLE interviews (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  application_id  UUID NOT NULL REFERENCES applications(id),
+  interviewer_id  UUID NOT NULL REFERENCES users(id),
+  scheduled_at    TIMESTAMPTZ NOT NULL,
+  duration_min    INT DEFAULT 60,
+  location        TEXT,
+  meeting_link    TEXT,
+  status          interview_status DEFAULT 'pending',
+  confirmation_token TEXT UNIQUE,
+  confirmed_at    TIMESTAMPTZ,
+  cancelled_at    TIMESTAMPTZ,
+  cancel_reason   TEXT,
+  reminder_24h_sent BOOLEAN DEFAULT false,
+  reminder_2h_sent  BOOLEAN DEFAULT false,
+  reminder_15m_sent BOOLEAN DEFAULT false,
+  feedback        JSONB,
+  feedback_submitted_at TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_interviews_scheduled ON interviews(scheduled_at, status);
+
+-- ============ INTERVIEWER AVAILABILITY ============
+CREATE TABLE interviewer_availability (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  interviewer_id  UUID NOT NULL REFERENCES users(id),
+  day_of_week     INT,
+  start_time      TIME,
+  end_time        TIME,
+  specific_date   DATE,
+  is_recurring    BOOLEAN DEFAULT true
+);
+
+-- ============ EMBEDDINGS (pgvector) ============
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE embeddings (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  content_type  TEXT NOT NULL,
+  content_id    UUID NOT NULL,
+  vector        VECTOR(1536) NOT NULL,
+  model         TEXT NOT NULL,
+  text_hash     CHAR(64) NOT NULL,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(content_type, content_id, model)
+);
+CREATE INDEX idx_embeddings_hnsw ON embeddings USING HNSW (vector vector_cosine_ops);
+
+-- ============ GITHUB LOOKUPS (cache) ============
+CREATE TABLE github_lookups (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username        TEXT NOT NULL UNIQUE,
+  exists          BOOLEAN NOT NULL,
+  profile_data    JSONB,
+  fetched_at      TIMESTAMPTZ DEFAULT now(),
+  expires_at      TIMESTAMPTZ DEFAULT now() + interval '7 days'
+);
+
+-- ============ N8N WORKFLOW LOGS ============
+CREATE TABLE n8n_workflow_logs (
+  id            BIGSERIAL PRIMARY KEY,
+  workflow_name TEXT NOT NULL,
+  execution_id  TEXT,
+  status        TEXT,
+  input         JSONB,
+  output        JSONB,
+  error         JSONB,
+  duration_ms   INT,
+  triggered_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- ============ EMAIL LOGS ============
+CREATE TABLE email_logs (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID REFERENCES users(id),
+  to_email      TEXT NOT NULL,
+  subject       TEXT,
+  template      TEXT,
+  provider      TEXT DEFAULT 'n8n',
+  status        TEXT,
+  payload       JSONB,
+  sent_at       TIMESTAMPTZ DEFAULT now()
+);
+
+-- ============ NOTIFICATIONS ============
+CREATE TABLE notifications (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  body       TEXT,
+  data       JSONB,
+  read_at    TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_notifications_user_unread ON notifications(user_id, created_at DESC) WHERE read_at IS NULL;
+
+-- ============ CHAT ============
+CREATE TABLE conversations (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_a          UUID NOT NULL REFERENCES users(id),
+  user_b          UUID NOT NULL REFERENCES users(id),
+  job_id          UUID REFERENCES jobs(id),
+  last_message_at TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE chat_messages (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_id       UUID NOT NULL REFERENCES users(id),
+  content         TEXT NOT NULL,
+  read_at         TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ DEFAULT now(),
+  metadata        JSONB
+);
+
+-- ============ AUDIT LOG ============
+CREATE TABLE audit_logs (
+  id          BIGSERIAL PRIMARY KEY,
+  actor_id    UUID REFERENCES users(id),
+  action      TEXT NOT NULL,
+  target_type TEXT,
+  target_id   UUID,
+  ip          INET,
+  user_agent  TEXT,
+  diff        JSONB,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- ============ USAGE LOGS ============
+CREATE TABLE usage_logs (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     UUID NOT NULL REFERENCES users(id),
+  feature     TEXT NOT NULL,
+  count       INT DEFAULT 1,
+  metadata    JSONB,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);</code></pre>
+
+<h3>6.4 Vì sao dùng JSONB?</h3>
+<table>
+<thead><tr><th>Entity / field</th><th>JSONB dùng cho</th><th>Lý do</th></tr></thead>
+<tbody>
+<tr><td><code>users.metadata</code></td><td>OAuth provider, device tokens, marketing consent</td><td>Biến động, không cần join</td></tr>
+<tr><td><code>cvs.parsed_data</code></td><td>education[], experience[], skills[], references[], github_url</td><td>CV structure đa dạng</td></tr>
+<tr><td><code>jobs.required_skills</code>, <code>nice_to_have_skills</code>, <code>certifications</code></td><td>List skill riêng JD</td><td>Query nhanh bằng GIN</td></tr>
+<tr><td><code>applications.ai_match_reasoning</code></td><td>breakdown điểm từng tiêu chí</td><td>Schema thay đổi theo version</td></tr>
+<tr><td><code>test_assignments.answers</code>, <code>feedback</code></td><td>câu trả lời + LLM grading</td><td>Đa dạng theo test type</td></tr>
+<tr><td><code>reference_verifications.response</code></td><td>JSON tự do từ người tham chiếu</td><td>Không ép schema</td></tr>
+<tr><td><code>interviews.feedback</code></td><td>interviewer scores + comments</td><td>Linh hoạt theo form</td></tr>
+<tr><td><code>github_lookups.profile_data</code>, <code>n8n_workflow_logs</code>, <code>email_logs.payload</code></td><td>Response từ external services</td><td>Toàn bộ payload debug</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>7. Tech Stack chi tiết</h2>
+
+<h3>7.1 Backend</h3>
+<table>
+<thead><tr><th>Component</th><th>Technology</th></tr></thead>
+<tbody>
+<tr><td>Runtime</td><td>NodeJS 20 LTS</td></tr>
+<tr><td>Framework</td><td>Express 5 + TypeScript</td></tr>
+<tr><td>ORM</td><td>Drizzle ORM + Knex (migration)</td></tr>
+<tr><td>Validation</td><td>Zod</td></tr>
+<tr><td>Auth</td><td>JWT (jose), bcrypt, OAuth (passport-google, passport-facebook, passport-github2, PKCE)</td></tr>
+<tr><td>Realtime</td><td>Socket.IO + @socket.io/redis-adapter</td></tr>
+<tr><td>Queue</td><td>BullMQ</td></tr>
+<tr><td>Cache</td><td>ioredis</td></tr>
+<tr><td>File</td><td>Multer + MinIO SDK</td></tr>
+<tr><td>PDF parse</td><td>pdf-parse, mammoth</td></tr>
+<tr><td>Email</td><td>nodemailer + n8n (gửi qua workflow)</td></tr>
+<tr><td>AI</td><td>OpenAI, DeepSeek, Anthropic, Gemini (multi-provider)</td></tr>
+<tr><td>Vector</td><td>pgvector</td></tr>
+<tr><td>Logging</td><td>pino + pino-http</td></tr>
+<tr><td>Error</td><td>Sentry</td></tr>
+<tr><td>Test</td><td>Jest + Supertest</td></tr>
+</tbody>
+</table>
+
+<h3>7.2 Frontend</h3>
+<table>
+<thead><tr><th>Component</th><th>Technology</th></tr></thead>
+<tbody>
+<tr><td>Framework</td><td>Vue 3.4 + Composition API + <code>&lt;script setup&gt;</code></td></tr>
+<tr><td>Build</td><td>Vite 5 + TypeScript 5</td></tr>
+<tr><td>Router</td><td>Vue Router 4 + guards</td></tr>
+<tr><td>State</td><td>Pinia</td></tr>
+<tr><td>HTTP</td><td>Axios + interceptors (auto refresh)</td></tr>
+<tr><td>Realtime</td><td>socket.io-client</td></tr>
+<tr><td>UI</td><td>Tailwind CSS 4 + shadcn-vue</td></tr>
+<tr><td>Form</td><td>VeeValidate + Zod</td></tr>
+<tr><td>Chart</td><td>ApexCharts</td></tr>
+<tr><td>i18n</td><td>vue-i18n</td></tr>
+<tr><td>Test</td><td>Vitest + Playwright</td></tr>
+</tbody>
+</table>
+
+<h3>7.3 Database &amp; Infrastructure</h3>
+<table>
+<thead><tr><th>Component</th><th>Technology</th></tr></thead>
+<tbody>
+<tr><td>Database</td><td>PostgreSQL 16 + pgvector + pg_trgm + citext</td></tr>
+<tr><td>Cache + Queue</td><td>Redis 7</td></tr>
+<tr><td>File storage</td><td>MinIO (S3-compatible)</td></tr>
+<tr><td><strong>Workflow automation</strong></td><td><strong>n8n</strong> (Docker, self-hosted)</td></tr>
+<tr><td><strong>Chatbot</strong></td><td><strong>Dialogflow CX</strong> (Google Cloud)</td></tr>
+<tr><td>Reverse proxy</td><td>Nginx / Caddy</td></tr>
+<tr><td>Process manager</td><td>PM2</td></tr>
+<tr><td>Containerization</td><td>Docker + docker-compose</td></tr>
+<tr><td>CI/CD</td><td>GitHub Actions</td></tr>
+<tr><td>Monitoring</td><td>Sentry + Pino logs + Prometheus</td></tr>
+</tbody>
+</table>
+
+<h3>7.4 AI Provider Matrix</h3>
+<table>
+<thead><tr><th>Use case</th><th>Primary</th><th>Fallback</th></tr></thead>
+<tbody>
+<tr><td>CV parse</td><td>OpenAI GPT-4o-mini (JSON mode)</td><td>Gemini 2.5 Flash</td></tr>
+<tr><td>CV scan theo JD</td><td>OpenAI GPT-4o-mini (structured output)</td><td>DeepSeek</td></tr>
+<tr><td>Embedding</td><td>OpenAI text-embedding-3-small</td><td>—</td></tr>
+<tr><td>AI Test (IQ/English)</td><td>OpenAI GPT-4o-mini</td><td>DeepSeek</td></tr>
+<tr><td>AI Test grading (essay)</td><td>OpenAI GPT-4o-mini</td><td>Anthropic Claude Haiku</td></tr>
+<tr><td>Chatbot (FAQ)</td><td>Dialogflow CX</td><td>—</td></tr>
+<tr><td>Chatbot (advanced)</td><td>OpenAI GPT-4o-mini</td><td>—</td></tr>
+<tr><td>AI cover letter / JD gen</td><td>OpenAI GPT-4o-mini</td><td>DeepSeek</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>8. API Design (key endpoints)</h2>
+
+<h3>8.1 Phase 1</h3>
+<pre><code>AUTH   POST /auth/register /auth/login /auth/refresh /auth/logout
+       POST /auth/forgot-password /auth/reset-password
+       GET  /auth/oauth/:provider /auth/oauth/:provider/callback
+       POST /auth/oauth/:provider/link /auth/oauth/accounts
+       DELETE /auth/oauth/:provider
+
+USERS  GET /users/me  PATCH /users/me
+
+JOBS   GET /jobs (search + filter)  GET /jobs/:id
+       POST /jobs  PATCH /jobs/:id  DELETE /jobs/:id
+       POST /jobs/:id/apply
+
+CVs    GET /cvs  POST /cvs/upload  GET /cvs/:id
+
+APPS   GET /applications/me  GET /applications/:id  PATCH /applications/:id/status
+
+SEARCH GET /search  GET /search/insight
+
+CHAT   GET /conversations  GET /conversations/:id/messages  POST /conversations/:id/messages
+
+NOTIF  GET /notifications  PATCH /notifications/:id/read
+
+ADMIN  GET /admin/stats /admin/users /admin/jobs/pending
+       PATCH /admin/users/:id/ban /admin/jobs/:id/approve</code></pre>
+
+<h3>8.2 Phase 2 (Auto-screening)</h3>
+<pre><code>SCAN   POST /scan/run/:applicationId   (chạy scan ngay hoặc queue)
+       GET  /scan/result/:applicationId
+       POST /scan/bulk
+
+GITHUB GET  /github/lookup/:username
+       GET  /github/lookup/cv/:cvId
+       POST /github/refresh/:cvId
+
+REF    GET  /references/application/:id
+       POST /references/:id/send
+       GET  /references/verify?token=
+       POST /references/:id/respond</code></pre>
+
+<h3>8.3 Phase 3 (AI Test + Schedule)</h3>
+<pre><code>TEST   POST /tests/generate  GET /tests/:id
+       POST /tests/assign
+       GET  /tests/take/:token
+       POST /tests/submit/:token
+       GET  /tests/result/:assignmentId
+
+SCHED  GET  /schedule/availability/:interviewerId
+       POST /schedule/interview
+       GET  /schedule/interview/confirm?token=
+       POST /schedule/interview/:id/cancel
+       POST /schedule/interview/:id/feedback
+
+DFLOW  POST /dialogflow/webhook</code></pre>
+
+<hr>
+
+<h2>9. Tích hợp n8n — Workflows chi tiết</h2>
+
+<h3>9.1 Kiến trúc</h3>
+<p>n8n chạy riêng như 1 Docker container. Backend giao tiếp qua webhook:</p>
+<pre>
+Backend --(POST webhook)--> n8n workflow --> gọi action --> (callback) Backend
+</pre>
+
+<h3>9.2 Workflows</h3>
+
+<h4>WF1: CV Scan Trigger</h4>
+<ul>
+  <li>Webhook nhận <code>{applicationId, jobId, cvId}</code>.</li>
+  <li>Gọi backend API để lấy CV parsed + JD requirements.</li>
+  <li>Gọi OpenAI API để chấm điểm.</li>
+  <li>Tính GitHub lookup.</li>
+  <li>Gọi OpenAI để verify references có email.</li>
+  <li>Tổng hợp <code>ai_match_reasoning</code> + <code>ai_match_score</code>.</li>
+  <li>Callback backend <code>PATCH /applications/:id</code> với kết quả.</li>
+  <li>Nếu <code>score &lt; 50</code> → trigger WF4 (auto-reject).</li>
+</ul>
+
+<h4>WF2: Reference Verification</h4>
+<ul>
+  <li>Webhook nhận <code>{referenceId, refereeEmail}</code>.</li>
+  <li>Sinh token xác minh 32 char.</li>
+  <li>Gửi email qua SMTP với link <code>/references/verify?token=...</code>.</li>
+  <li>Lưu log vào <code>n8n_workflow_logs</code>.</li>
+</ul>
+
+<h4>WF3: Interview Reminder (Cron)</h4>
+<ul>
+  <li>Cron mỗi 15 phút.</li>
+  <li>Query <code>interviews</code> có <code>scheduled_at</code> trong 24h/2h/15m tới và chưa gửi reminder.</li>
+  <li>Gửi email + push notification qua backend webhook.</li>
+  <li>Update <code>reminder_*_sent = true</code>.</li>
+</ul>
+
+<h4>WF4: Auto-Reject</h4>
+<ul>
+  <li>Webhook nhận <code>{applicationId, reason}</code>.</li>
+  <li>Render email template (tiếng Việt + Anh).</li>
+  <li>Gửi qua SMTP.</li>
+  <li>Lưu <code>email_logs</code>.</li>
+  <li>Update application status = <code>rejected</code>.</li>
+</ul>
+
+<h4>WF5: AI Test</h4>
+<ul>
+  <li>Webhook nhận <code>{testId, applicationId}</code>.</li>
+  <li>LLM sinh câu hỏi (IQ hoặc English theo level).</li>
+  <li>Sinh access token, link <code>/tests/take/{token}</code>.</li>
+  <li>Gửi email cho ứng viên.</li>
+  <li>Lưu <code>test_assignments</code>.</li>
+</ul>
+
+<h4>WF6: Interview Confirmation</h4>
+<ul>
+  <li>Webhook nhận <code>{interviewId, action: 'confirm' | 'reschedule' | 'cancel'}</code>.</li>
+  <li>Cập nhật status.</li>
+  <li>Gửi email xác nhận cho HR.</li>
+  <li>Nếu reschedule → mở lịch interviewer.</li>
+</ul>
+
+<hr>
+
+<h2>10. Tích hợp Dialogflow CX</h2>
+
+<h3>10.1 Setup</h3>
+<ul>
+  <li>Tạo Agent trên Google Cloud Dialogflow CX.</li>
+  <li>Enable Webhook fulfillment.</li>
+  <li>Public webhook URL: <code>https://api.jobmatch.vn/api/v1/dialogflow/webhook</code>.</li>
+</ul>
+
+<h3>10.2 Intents</h3>
+<table>
+<thead><tr><th>Intent</th><th>Training phrases</th><th>Webhook action</th></tr></thead>
+<tbody>
+<tr><td><code>ask_how_to_apply</code></td><td>"làm sao để apply", "cách nộp CV"</td><td>Trả response cố định</td></tr>
+<tr><td><code>ask_company_info</code></td><td>"công ty X ở đâu", "giới thiệu công ty"</td><td><code>getCompany(name)</code></td></tr>
+<tr><td><code>ask_status</code></td><td>"trạng thái application của tôi"</td><td><code>getApplicationStatus(email)</code></td></tr>
+<tr><td><code>ask_salary</code></td><td>"lương vị trí X bao nhiêu"</td><td><code>getSalaryInsight(position, location)</code></td></tr>
+<tr><td><code>ask_skill_required</code></td><td>"JD cần kỹ năng gì"</td><td><code>getJobRequirements(jobId)</code></td></tr>
+<tr><td><code>escalate_to_human</code></td><td>"tôi muốn nói chuyện với HR"</td><td>Tạo support ticket</td></tr>
+</tbody>
+</table>
+
+<h3>10.3 Backend webhook (NodeJS)</h3>
+<pre><code>router.post('/dialogflow/webhook', async (req, res) =&gt; {
+  const intent = req.body.queryResult.intent.displayName;
+  const params = req.body.queryResult.parameters;
+
+  switch (intent) {
+    case 'ask_company_info': {
+      const data = await companyService.getByName(params.company);
+      return res.json({ fulfillmentText: data ? `${data.name} - ${data.description}` : 'Không tìm thấy' });
+    }
+    case 'ask_salary': {
+      const insight = await insightService.getSalary(params.position, params.location);
+      return res.json({ fulfillmentText: insight });
+    }
+    // ...
+  }
+});</code></pre>
+
+<h3>10.4 Embed</h3>
+<ul>
+  <li>Thêm Dialogflow Messenger widget vào Vue app (script + div).</li>
+  <li>Style lại cho phù hợp với JobMatch.</li>
+</ul>
+
+<hr>
+
+<h2>11. KPIs (đánh giá khóa luận)</h2>
+
+<table>
+<thead><tr><th>Nhóm</th><th>Metric</th><th>Target</th></tr></thead>
+<tbody>
+<tr><td><strong>User</strong></td><td>MAU mô phỏng</td><td>1,000</td></tr>
+<tr><td><strong>JD</strong></td><td>JD đăng tải mẫu</td><td>100</td></tr>
+<tr><td><strong>Application</strong></td><td>Apply per JD (trung bình)</td><td>≥ 5</td></tr>
+<tr><td><strong>AI — CV Scan</strong></td><td>Match accuracy (HR verify)</td><td>≥ 75%</td></tr>
+<tr><td><strong>AI — CV Scan</strong></td><td>Auto-reject đúng (HR đồng ý)</td><td>≥ 60%</td></tr>
+<tr><td><strong>AI — Test</strong></td><td>IQ test phân loại đúng</td><td>≥ 70%</td></tr>
+<tr><td><strong>AI — Test</strong></td><td>English correlation với IELTS</td><td>≥ 0.6</td></tr>
+<tr><td><strong>Schedule</strong></td><td>Confirm rate</td><td>≥ 60%</td></tr>
+<tr><td><strong>Schedule</strong></td><td>No-show rate</td><td>&lt; 15%</td></tr>
+<tr><td><strong>GitHub Lookup</strong></td><td>Tỷ lệ candidate có GitHub</td><td>≥ 30%</td></tr>
+<tr><td><strong>GitHub</strong></td><td>Verify thành công</td><td>≥ 90%</td></tr>
+<tr><td><strong>Reference</strong></td><td>Email deliverability</td><td>≥ 95%</td></tr>
+<tr><td><strong>Reference</strong></td><td>Verify rate (người tham chiếu reply)</td><td>≥ 40%</td></tr>
+<tr><td><strong>Chatbot</strong></td><td>Dialogflow CSAT</td><td>≥ 4.0/5</td></tr>
+<tr><td><strong>Performance</strong></td><td>LCP</td><td>&lt; 2.5s</td></tr>
+<tr><td><strong>Performance</strong></td><td>CV scan end-to-end</td><td>&lt; 30s</td></tr>
+<tr><td><strong>Realtime</strong></td><td>Notification latency</td><td>&lt; 1s</td></tr>
+<tr><td><strong>n8n</strong></td><td>Workflow success rate</td><td>≥ 95%</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>12. Risks &amp; Mitigation</h2>
+
+<table>
+<thead><tr><th>Risk</th><th>Impact</th><th>Probability</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>AI provider down</td><td>High</td><td>Medium</td><td>Multi-provider + circuit breaker + cache</td></tr>
+<tr><td>AI cost vượt budget</td><td>High</td><td>Medium</td><td>Per-user quota, smaller models, aggressive cache</td></tr>
+<tr><td>CV scan sai (false positive/negative)</td><td>High</td><td>Medium</td><td>HR review stage, threshold điều chỉnh, feedback loop</td></tr>
+<tr><td>GitHub API rate limit</td><td>Medium</td><td>High</td><td>Cache 7 ngày, fallback graceful</td></tr>
+<tr><td>Reference email bị bounce</td><td>Medium</td><td>Medium</td><td>Validate email format, retry, HR manual verify</td></tr>
+<tr><td>Ứng viên không reply confirm</td><td>High</td><td>High</td><td>Reminder 24h/2h/15m, HR manual follow up</td></tr>
+<tr><td>n8n downtime</td><td>High</td><td>Low</td><td>Self-hosted Docker, monitor, fallback manual email</td></tr>
+<tr><td>Dialogflow quota</td><td>Medium</td><td>Low</td><td>Google free tier đủ cho demo</td></tr>
+<tr><td>Cold start (không có data training)</td><td>High</td><td>High</td><td>Rule-based hybrid, collect feedback</td></tr>
+<tr><td>Bias trong AI test</td><td>Medium</td><td>High</td><td>Diverse question pool, human review</td></tr>
+<tr><td>Spam JD</td><td>Medium</td><td>High</td><td>AI moderation + report system</td></tr>
+<tr><td>Data leak (CV)</td><td>High</td><td>Low</td><td>Encrypted at rest, signed URL, strict access</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>13. Demo &amp; Báo cáo</h2>
+
+<h3>13.1 Báo cáo Phase 1 (Tuần 5)</h3>
+<ul>
+  <li>Demo: HR đăng JD → ứng viên tìm + apply + nộp CV.</li>
+  <li>10 JD mẫu, 30 CV mẫu.</li>
+  <li>Slide: kiến trúc, schema, API list, screenshot.</li>
+</ul>
+
+<h3>13.2 Báo cáo Phase 2 (Tuần 9)</h3>
+<ul>
+  <li>Demo: HR xem application → click "Scan" → AI trả điểm + GitHub + reference.</li>
+  <li>Auto-reject email qua n8n.</li>
+  <li>Slide: scan pipeline, prompt design, matching rubric, edge cases.</li>
+</ul>
+
+<h3>13.3 Báo cáo Phase 3 (Tuần 15)</h3>
+<ul>
+  <li>Demo: HR schedule interview → email cho ứng viên → confirm → reminder → feedback.</li>
+  <li>AI test: ứng viên làm bài trên web → chấm điểm.</li>
+  <li>Slide: scheduler, reminder cron, Dialogflow chatbot, end-to-end flow.</li>
+</ul>
+
+<h3>13.4 Báo cáo cuối khóa</h3>
+<ul>
+  <li>Full thesis (PDF).</li>
+  <li>Demo video 10 phút end-to-end.</li>
+  <li>Source code trên GitHub.</li>
+</ul>
+
+<hr>
+
+<h2>14. References</h2>
+<ul>
+  <li><a href="https://cloud.google.com/dialogflow/cx/docs/concept/webhook">Dialogflow CX Webhook</a> — webhook fulfillment</li>
+  <li><a href="https://cloud.google.com/dialogflow/docs/integrations">Dialogflow Integrations</a></li>
+  <li><a href="https://docs.n8n.io/">n8n Documentation</a> — workflow automation</li>
+  <li><a href="https://platform.openai.com/docs">OpenAI API</a></li>
+  <li><a href="https://platform.deepseek.com/docs">DeepSeek API</a></li>
+  <li><a href="https://github.com/pgvector/pgvector">pgvector</a></li>
+  <li><a href="https://socket.io/docs/v4/redis-adapter/">Socket.IO Redis adapter</a></li>
+  <li>Project môn học tham khảo: <code>C:\Users\hp\JobPortal</code></li>
+</ul>
+
+<hr>
+
+<p class="meta"><em>Hết tài liệu. Nhóm sinh viên thực hiện khóa luận tốt nghiệp — JobMatch VN — 2026.</em></p>
+
+</body>
+</html>

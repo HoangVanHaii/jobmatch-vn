@@ -1,0 +1,73 @@
+{
+  "name": "Auto Reject Email",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "auto_reject",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "auto-reject-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build email content\nconst applicationId = $input.item.json.applicationId;\nconst reason = $input.item.json.reason || 'Hồ sơ chưa phù hợp với yêu cầu công việc';\n\nreturn {\n  json: {\n    subject: 'Thông báo kết quả ứng tuyển - JobMatch VN',\n    body: `Xin chào,\n\nCảm ơn bạn đã quan tâm và ứng tuyển vào vị trí tại công ty chúng tôi.\n\nSau khi xem xét kỹ lưỡng hồ sơ của bạn qua hệ thống ATS, chúng tôi nhận thấy rằng:\n${reason}\n\nRất tiếc hồ sơ của bạn chưa phù hợp với yêu cầu của vị trí này. Tuy nhiên, chúng tôi sẽ lưu hồ sơ của bạn vào talent pool và có thể liên hệ khi có cơ hội phù hợp hơn.\n\nChúc bạn sớm tìm được công việc ưng ý!\n\nTrân trọng,\nĐội ngũ JobMatch VN`,\n    applicationId,\n  }\n};"
+      },
+      "id": "build-email",
+      "name": "Build Email",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "no-reply@jobmatch.vn",
+        "toEmail": "={{$node[\"Webhook\"].json[\"body\"][\"candidateEmail\"]}}",
+        "subject": "={{$json.subject}}",
+        "text": "={{$json.body}}",
+        "options": {
+          "host": "localhost",
+          "port": 1025,
+          "secure": false
+        }
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://backend:5000/api/v1/applications/{{$json.applicationId}}/reject",
+        "method": "POST",
+        "options": {}
+      },
+      "id": "callback",
+      "name": "Callback Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{"node": "Build Email", "type": "main", "index": 0}]]
+    },
+    "Build Email": {
+      "main": [[{"node": "Send Email", "type": "main", "index": 0}]]
+    },
+    "Send Email": {
+      "main": [[{"node": "Callback Backend", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1"
+}

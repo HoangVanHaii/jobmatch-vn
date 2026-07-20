@@ -1,0 +1,84 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: jobmatch_postgres
+    environment:
+      POSTGRES_USER: jobmatch
+      POSTGRES_PASSWORD: jobmatch_dev_pwd
+      POSTGRES_DB: jobmatch_vn
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/src/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobmatch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: jobmatch_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: jobmatch_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: jobmatch_minio
+      MINIO_ROOT_PASSWORD: jobmatch_minio_pwd
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: jobmatch_mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+
+  # n8n — workflow automation cho Phase 2 & 3
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: jobmatch_n8n
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - GENERIC_TIMEZONE=Asia/Ho_Chi_Minh
+      - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8ndata:/home/node/.n8n
+    depends_on:
+      - postgres
+      - redis
+    # Mount thư mục workflows (export từ n8n UI → JSON)
+    # - ./n8n-workflows:/home/node/.n8n/workflows
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  n8ndata:
