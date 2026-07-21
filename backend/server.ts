@@ -22,7 +22,7 @@ const bootstrap = async (): Promise<void> => {
   setupSocket(server);
 
   server.listen(PORT, () => {
-    logger.info({ port: PORT, env: process.env.NODE_ENV }, `🚀 JobMatch VN API listening on http://localhost:${PORT}`);
+    logger.info({ port: PORT, env: process.env.NODE_ENV }, `JobMatch VN API listening on http://localhost:${PORT}`);
   });
 
   // Graceful shutdown

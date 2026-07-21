@@ -223,7 +223,7 @@ CREATE TABLE embeddings (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   content_type  TEXT NOT NULL,
   content_id    UUID NOT NULL,
-  vector        VECTOR(1536) NOT NULL,
+  vector        VECTOR(768) NOT NULL,
   model         TEXT NOT NULL,
   text_hash     CHAR(64) NOT NULL,
   created_at    TIMESTAMPTZ DEFAULT now(),

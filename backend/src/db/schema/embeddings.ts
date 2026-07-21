@@ -2,7 +2,7 @@ import { pgTable, uuid, text, timestamp, customType, unique, index } from 'drizz
 
 // pgvector type
 const vector = customType<{ data: number[]; driverData: string }>({
-  dataType() { return 'vector(1536)'; },
+  dataType() { return 'vector(768)'; },
   toDriver(value: number[]) { return `[${value.join(',')}]`; },
   fromDriver(value: string) {
     return value.slice(1, -1).split(',').map(Number);

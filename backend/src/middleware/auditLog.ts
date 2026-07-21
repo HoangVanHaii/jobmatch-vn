@@ -3,7 +3,7 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../config/database';
-import { auditLogs } from '../db/schema/auditLogs';
+import { auditLogs } from '../db/schema';
 import { logger } from '../config/logger';
 
 export const auditLog = (action: string) =>

@@ -10,7 +10,7 @@ export const redis = new Redis(env.REDIS_URL, {
   enableReadyCheck: true,
 });
 
-redis.on('connect', () => logger.info('✅ Redis connected'));
+redis.on('connect', () => logger.info(' Redis connected'));
 redis.on('error', (err) => logger.error({ err }, 'Redis error'));
 
 export const disconnectRedis = async (): Promise<void> => {

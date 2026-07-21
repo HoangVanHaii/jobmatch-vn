@@ -24,7 +24,7 @@ export const connectDatabase = async (): Promise<void> => {
     const client = await pool.connect();
     await client.query('SELECT 1');
     client.release();
-    logger.info('✅ Database connected');
+    logger.info('Database connected');
   } catch (err) {
     logger.fatal({ err }, '❌ Database connection failed');
     process.exit(1);

@@ -20,7 +20,7 @@
 - **Database**: PostgreSQL 16 + pgvector + pg_trgm + citext
 - **Cache + Queue**: Redis 7 + BullMQ
 - **Realtime**: Socket.IO + Redis adapter
-- **AI**: OpenAI GPT-4o-mini, DeepSeek, Anthropic Claude, Gemini (multi-provider)
+- **AI**: **Google Gemini** (single provider — `gemini-1.5-pro` / `gemini-1.5-flash` / `text-embedding-004`)
 - **Workflow automation**: **n8n** (self-hosted, Docker)
 - **Chatbot**: **Dialogflow CX** (Google Cloud)
 - **File storage**: MinIO (S3-compatible)
@@ -54,7 +54,7 @@ docker compose up -d
 
 # 2. Backend
 cd backend
-cp .env.example .env          # điền API keys (OpenAI, GitHub, JWT secrets...) nếu dùng AI
+cp .env.example .env          # điền API keys (Gemini, GitHub, JWT secrets...) nếu dùng AI
 npm install
 npm run db:migrate            # apply schema (lần đầu / khi có migration mới)
 npm run db:seed               # (tuỳ chọn) seed 46 skills IT
@@ -157,7 +157,7 @@ jobmatch-vn/
 │   │   │   ├── n8n.service.ts            # webhook caller
 │   │   │   └── dialogflow.service.ts      # chatbot
 │   │   ├── ai/
-│   │   │   ├── providers/      # OpenAI, DeepSeek, Gemini, Anthropic
+│   │   │   ├── providers/      # Gemini (single provider)
 │   │   │   └── prompts/        # cv_parse, cv_score, cv_scan, ai_test
 │   │   ├── db/
 │   │   │   ├── schema/         # Drizzle schemas (15+ tables)

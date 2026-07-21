@@ -49,13 +49,17 @@ export class GeminiProvider implements LLMProvider {
   }
 
   async embed(text: string | string[]): Promise<EmbeddingResponse | EmbeddingResponse[]> {
-    const model = this.client.getGenerativeModel({ model: 'text-embedding-004' });
+    const model = this.client.getGenerativeModel({ model: this.model });
     const inputs = Array.isArray(text) ? text : [text];
-    const result = await model.batchEmbedContents({ requests: inputs.map((t) => ({ content: { parts: [{ text: t }] } })) });
+    const result = await model.batchEmbedContents({
+      requests: inputs.map((t) => ({
+        content: { role: 'user', parts: [{ text: t }] },
+      })),
+    });
     if (!Array.isArray(text)) {
       const e = result.embeddings[0];
-      return { vector: e.values, model: 'text-embedding-004', usage: { totalTokens: 0 }, costUsd: 0 };
+      return { vector: e.values, model: this.model, usage: { totalTokens: 0 }, costUsd: 0 };
     }
-    return result.embeddings.map((e) => ({ vector: e.values, model: 'text-embedding-004', usage: { totalTokens: 0 }, costUsd: 0 }));
+    return result.embeddings.map((e) => ({ vector: e.values, model: this.model, usage: { totalTokens: 0 }, costUsd: 0 }));
   }
 }

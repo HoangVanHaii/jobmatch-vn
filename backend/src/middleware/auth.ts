@@ -43,3 +43,12 @@ export const optionalAuth = (req: Request, _res: Response, next: NextFunction): 
   } catch {/* ignore */}
   next();
 };
+
+// Role guards live in ./role — re-exported here so routers can import both
+// `auth` and role guards from the same module ('../middleware/auth').
+export {
+  candidateOnly,
+  employerOnly,
+  adminOnly,
+  candidateOrEmployer,
+} from './role';

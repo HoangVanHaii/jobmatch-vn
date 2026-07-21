@@ -5,7 +5,7 @@
 **Date:** 2026-07-10  
 **Owner:** Nhóm sinh viên thực hiện nghiên cứu
 
-> **Stack:** Backend NodeJS (Express + TypeScript) · Frontend Vue 3 + TypeScript · Database PostgreSQL + pgvector · AI đa provider (OpenAI, DeepSeek, Anthropic, Gemini) · **n8n** cho workflow tự động hóa · **Dialogflow CX** cho chatbot · Redis · Socket.IO realtime · PayOS (VN).
+> **Stack:** Backend NodeJS (Express + TypeScript) · Frontend Vue 3 + TypeScript · Database PostgreSQL + pgvector · AI **Google Gemini** (single provider — gemini-1.5-pro / gemini-1.5-flash / text-embedding-004) · **n8n** cho workflow tự động hóa · **Dialogflow CX** cho chatbot · Redis · Socket.IO realtime · PayOS (VN).
 
 > **Phạm vi ngành:** Tất cả các ngành (theo yêu cầu mở rộng từ giới hạn CNTT ban đầu của thầy).
 
@@ -402,8 +402,8 @@ Khi ứng viên apply JD, hệ thống **tự động** chạy scan pipeline:
 │  │           notification · email                             │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ AI Layer: OpenAI · DeepSeek · Anthropic · Gemini           │   │
-│  │          (multi-provider abstraction)                       │   │
+│  │ AI Layer: Google Gemini (single provider)                  │   │
+│  │          gemini-1.5-pro / gemini-1.5-flash / text-embedding  │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 └──┬─────────────────┬──────────────────┬──────────────────┬──────────┘
    │                 │                  │                  │
@@ -850,7 +850,7 @@ CREATE TABLE usage_logs (
 | File | Multer + MinIO SDK |
 | PDF parse | pdf-parse, mammoth |
 | Email | nodemailer + n8n (gửi qua workflow) |
-| AI | OpenAI, DeepSeek, Anthropic, Gemini (multi-provider) |
+| AI | Google Gemini (single provider — `gemini-1.5-pro` / `gemini-1.5-flash` / `text-embedding-004`) |
 | Vector | pgvector |
 | Logging | pino + pino-http |
 | Error | Sentry |
@@ -885,17 +885,20 @@ CREATE TABLE usage_logs (
 | CI/CD | GitHub Actions |
 | Monitoring | Sentry + Pino logs + Prometheus |
 
-### 8.4 AI Provider Matrix
-| Use case | Primary | Fallback |
+### 8.4 AI Provider Matrix (single model — Google Gemini)
+
+> Sản phẩm đã chuyển sang 1 provider duy nhất (Gemini). Bảng dưới chỉ rõ **model Gemini** nào dùng cho từng use case.
+
+| Use case | Model | Ghi chú |
 |---|---|---|
-| CV parse | OpenAI GPT-4o-mini (JSON mode) | Gemini 2.5 Flash |
-| CV scan theo JD | OpenAI GPT-4o-mini (structured output) | DeepSeek |
-| Embedding | OpenAI text-embedding-3-small | — |
-| AI Test generation (IQ/English) | OpenAI GPT-4o-mini | DeepSeek |
-| AI Test grading (essay) | OpenAI GPT-4o-mini | Anthropic Claude Haiku |
-| Chatbot (FAQ) | Dialogflow CX | — |
-| Chatbot (advanced) | OpenAI GPT-4o-mini | — |
-| AI cover letter / JD gen | OpenAI GPT-4o-mini | DeepSeek |
+| Embedding (CV, JD) | `text-embedding-004` | 768-dim → `embeddings.vector VECTOR(768)` |
+| CV parse (JSON mode) | `gemini-1.5-flash` | nhanh, rẻ |
+| CV scan theo JD (structured output) | `gemini-1.5-pro` | cần lý luận chuẩn để chấm điểm |
+| AI Test generation (IQ / English) | `gemini-1.5-pro` | sinh đề, cần lý luận |
+| AI Test grading (essay) | `gemini-1.5-pro` | chấm bài luận |
+| Chatbot FAQ | Dialogflow CX | (giữ nguyên) |
+| Chatbot advanced (AI tư vấn) | `gemini-1.5-flash` | 1M context, rẻ |
+| AI cover letter / JD gen | `gemini-1.5-pro` | cần văn phong chuẩn |
 
 ---
 
@@ -1004,9 +1007,9 @@ Backend --(POST webhook)--> n8n workflow --> gọi action --> (callback) Backend
 **WF1: CV Scan Trigger**
 - Webhook nhận `{applicationId, jobId, cvId}`.
 - Gọi backend API để lấy CV parsed + JD requirements.
-- Gọi OpenAI API để chấm điểm.
+- Gọi **Gemini** (`gemini-1.5-pro`) để chấm điểm theo JD.
 - Tính GitHub lookup.
-- Gọi OpenAI để verify references có email.
+- Dùng Gemini để verify references có email.
 - Tổng hợp `ai_match_reasoning` + `ai_match_score`.
 - Callback backend `PATCH /applications/:id` với kết quả.
 - Nếu `score < 50` → trigger WF4 (auto-reject).
@@ -1181,7 +1184,7 @@ src/
 │   ├── email.service.ts
 │   └── notification.service.ts
 ├── ai/
-│   ├── providers/           # openai, deepseek, gemini, anthropic
+│   ├── providers/           # gemini (single provider)
 │   ├── prompts/             # cv_parse, cv_score, jd_extract, jd_scan, cover_letter, ai_test_iq, ai_test_english (NEW)
 │   ├── tools/
 │   └── embeddings.ts
@@ -1288,8 +1291,7 @@ src/
 - [Dialogflow CX Webhook](https://cloud.google.com/dialogflow/cx/docs/concept/webhook) — webhook fulfillment
 - [Dialogflow Integrations](https://cloud.google.com/dialogflow/docs/integrations)
 - [n8n Documentation](https://docs.n8n.io/) — workflow automation
-- [OpenAI API](https://platform.openai.com/docs)
-- [DeepSeek API](https://platform.deepseek.com/docs)
+- [Google Gemini API](https://ai.google.dev/docs)
 - [pgvector](https://github.com/pgvector/pgvector)
 - [Socket.IO Redis adapter](https://socket.io/docs/v4/redis-adapter/)
 - Project môn học tham khảo: `C:\Users\hp\JobPortal`

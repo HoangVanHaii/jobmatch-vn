@@ -1,46 +1,36 @@
 /**
- * AI Provider factory — swap provider qua env
+ * AI Provider — single-model (Google Gemini).
+ * Project đã chuyển từ multi-provider về 1 model duy nhất (sản phẩm nghiên cứu).
+ *
+ * Mỗi role giữ API chung của LLMProvider nhưng dùng Gemini model phù hợp:
+ *   - embedding: text-embedding-004 (768-dim)
+ *   - chatbot  : gemini-1.5-flash (nhanh, rẻ, 1M context)
+ *   - parsing  : gemini-1.5-flash (CV parse cần JSON nhanh, rẻ)
+ *   - generation: gemini-1.5-pro   (chấm điểm / cover letter / JD gen — cần lý luận chuẩn)
  */
-import { OpenAIProvider } from '../ai/providers/openai';
-import { DeepSeekProvider } from '../ai/providers/deepseek';
 import { GeminiProvider } from '../ai/providers/gemini';
-import { AnthropicProvider } from '../ai/providers/anthropic';
-import type { LLMProvider } from '../ai/providers/base';
 import { logger } from './logger';
 
-const buildProvider = (name: string, model: string): LLMProvider => {
-  switch (name) {
-    case 'openai': return new OpenAIProvider(model);
-    case 'deepseek': return new DeepSeekProvider(model);
-    case 'gemini': return new GeminiProvider(model);
-    case 'anthropic': return new AnthropicProvider(model);
-    default: throw new Error(`Unknown AI provider: ${name}`);
-  }
-};
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
+  // Không throw để app vẫn boot — Google Generative AI sẽ báo lỗi khi gọi.
+  logger.warn('GEMINI_API_KEY missing — AI calls will fail until configured');
+}
 
-export const embeddingProvider = buildProvider(
-  process.env.EMBEDDING_PROVIDER || 'openai',
-  process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
-);
-export const chatbotProvider = buildProvider(
-  process.env.LLM_CHATBOT_PROVIDER || 'deepseek',
-  process.env.LLM_CHATBOT_MODEL || 'deepseek-chat',
-);
-export const parsingProvider = buildProvider(
-  process.env.LLM_PARSING_PROVIDER || 'openai',
-  process.env.LLM_PARSING_MODEL || 'gpt-4o-mini',
-);
-export const generationProvider = buildProvider(
-  process.env.LLM_GENERATION_PROVIDER || 'openai',
-  process.env.LLM_GENERATION_MODEL || 'gpt-4o-mini',
-);
-export const rerankProvider = buildProvider(
-  process.env.LLM_RERANK_PROVIDER || 'deepseek',
-  process.env.LLM_RERANK_MODEL || 'deepseek-chat',
-);
+const gemini = (modelEnv: string, fallback: string): GeminiProvider =>
+  new GeminiProvider(process.env[modelEnv] ?? fallback);
 
-logger.info({
-  embedding: process.env.EMBEDDING_PROVIDER,
-  chatbot: process.env.LLM_CHATBOT_PROVIDER,
-  parsing: process.env.LLM_PARSING_PROVIDER,
-}, 'AI providers initialized');
+export const embeddingProvider = gemini('GEMINI_EMBEDDING_MODEL', 'text-embedding-004');
+export const chatbotProvider   = gemini('GEMINI_CHAT_MODEL',        'gemini-1.5-flash');
+export const parsingProvider   = gemini('GEMINI_CHAT_MODEL',        'gemini-1.5-flash');
+export const generationProvider = gemini('GEMINI_PRO_MODEL',        'gemini-1.5-pro');
+
+logger.info(
+  {
+    embedding: embeddingProvider.model,
+    chatbot:   chatbotProvider.model,
+    parsing:   parsingProvider.model,
+    generation: generationProvider.model,
+  },
+  'AI providers initialized (single model: Gemini)',
+);

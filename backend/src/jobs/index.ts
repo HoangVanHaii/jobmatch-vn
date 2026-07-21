@@ -24,6 +24,7 @@ export const startWorkers = (): void => {
   void interviewReminderWorker;
   void aiTestGenerateWorker;
 
+
   // Schedule periodic jobs
   // Interview reminder — mỗi 15 phút
   const reminderQueue = new Queue('ai', { connection: redis });
@@ -33,5 +34,5 @@ export const startWorkers = (): void => {
     { repeat: { pattern: '*/15 * * * *' } },
   );
 
-  logger.info('✅ All BullMQ workers started (CV parse/score, scan, GitHub, test, interview reminder)');
+  logger.info('All BullMQ workers started (CV parse/score, scan, GitHub, test, interview reminder)');
 };
