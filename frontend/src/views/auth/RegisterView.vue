@@ -8,7 +8,6 @@ const auth = useAuthStore();
 
 const email = ref('');
 const password = ref('');
-const fullName = ref('');
 const role = ref<'candidate' | 'employer'>('candidate');
 const error = ref('');
 const loading = ref(false);
@@ -20,10 +19,9 @@ const onSubmit = async () => {
     await auth.register({
       email: email.value,
       password: password.value,
-      fullName: fullName.value,
       role: role.value,
     });
-    router.push(role.value === 'candidate' ? '/candidate' : '/employer');
+    router.push({ name: 'verify-otp', query: { email: email.value } });
   } catch (e: any) {
     error.value = e?.response?.data?.error?.message ?? 'Đăng ký thất bại';
   } finally { loading.value = false; }
@@ -45,7 +43,6 @@ const onSubmit = async () => {
       </div>
 
       <form @submit.prevent="onSubmit" class="space-y-4">
-        <input v-model="fullName" required class="input" placeholder="Họ và tên" />
         <input v-model="email" type="email" required class="input" placeholder="Email" />
         <input v-model="password" type="password" required minlength="8" class="input" placeholder="Mật khẩu (≥ 8 ký tự)" />
         <p v-if="error" class="text-red-500 text-sm">{{ error }}</p>

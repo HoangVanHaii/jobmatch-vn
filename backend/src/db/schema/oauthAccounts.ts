@@ -1,3 +1,4 @@
+import { relations } from 'drizzle-orm';
 import { pgTable, uuid, text, timestamp, jsonb, index, unique } from 'drizzle-orm/pg-core';
 import { users } from './users';
 import { oauthProviderEnum } from './enums';
@@ -19,4 +20,11 @@ export const oauthAccounts = pgTable('oauth_accounts', {
   userIdx: index('idx_oauth_user').on(t.userId),
   providerEmailIdx: index('idx_oauth_provider_email').on(t.provider, t.providerEmail),
   uniqProviderUser: unique('uniq_oauth_provider_user').on(t.provider, t.providerUserId),
+}));
+
+export const oauthAccountsRelations = relations(oauthAccounts, ({ one }) => ({
+  user: one(users, {
+    fields: [oauthAccounts.userId],
+    references: [users.id],
+  }),
 }));

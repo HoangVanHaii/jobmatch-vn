@@ -31,8 +31,8 @@ export const useOAuthStore = defineStore('oauth', () => {
     const challenge = await generateCodeChallenge(verifier);
     sessionStorage.setItem('pkce_verifier', verifier);
 
-    // 2. Gọi backend lấy authorization URL + state
-    const { data } = await oauthApi.initiate(provider);
+    // 2. Gọi backend lấy authorization URL + state (gửi codeChallenge cho PKCE)
+    const { data } = await oauthApi.initiate(provider, challenge);
     sessionStorage.setItem('oauth_state', extractState(data.data.url));
 
     // 3. Redirect đến provider

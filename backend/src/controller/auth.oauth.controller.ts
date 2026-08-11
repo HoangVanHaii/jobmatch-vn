@@ -12,7 +12,8 @@ export const oauthController = {
   initiate: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const provider = req.params.provider as Provider;
-      const { url, state } = await oauthService.initiate(provider);
+      const { codeChallenge } = (req.body ?? {}) as { codeChallenge?: string };
+      const { url, state } = await oauthService.initiate(provider, codeChallenge);
       // Lưu state vào cookie/Redis để verify khi callback
       res.cookie('oauth_state', state, { httpOnly: true, sameSite: 'lax', maxAge: 5 * 60 * 1000 });
       res.json({ success: true, data: { url } });
@@ -31,7 +32,7 @@ export const oauthController = {
       const result = await oauthService.handleCallback(provider, code, codeVerifier, state);
       res.clearCookie('oauth_state');
       res.json({ success: true, data: result });
-    } catch (err) { next(err); }
+    } catch (err: any) {console.error(err.message); next(err); }
   },
 
   /** List các OAuth đã link */

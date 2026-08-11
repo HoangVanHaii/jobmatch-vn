@@ -13,17 +13,20 @@ const { loginWith } = useOAuth();
 const email = ref('');
 const password = ref('');
 const error = ref('');
+const errorCode = ref('');
 const loading = ref(false);
 
 const onSubmit = async () => {
   loading.value = true;
   error.value = '';
+  errorCode.value = '';
   try {
     await auth.login(email.value, password.value);
     const redirect = route.query.redirect as string;
     router.push(redirect || '/');
   } catch (e: any) {
     error.value = e?.response?.data?.error?.message ?? 'Đăng nhập thất bại';
+    errorCode.value = e?.response?.data?.error?.code ?? '';
   } finally { loading.value = false; }
 };
 
@@ -55,6 +58,11 @@ const onOAuth = async (provider: 'google' | 'facebook' | 'github') => {
           <input v-model="password" type="password" required class="input" placeholder="••••••••" />
         </div>
         <p v-if="error" class="text-red-500 text-sm">{{ error }}</p>
+        <p v-if="errorCode === 'EMAIL_NOT_VERIFIED'" class="text-sm text-center">
+          <RouterLink :to="{ name: 'verify-otp', query: { email } }" class="text-primary-600 font-medium">
+            Xác thực email ngay →
+          </RouterLink>
+        </p>
         <button type="submit" :disabled="loading" class="btn-primary w-full">
           {{ loading ? 'Đang đăng nhập...' : 'Đăng nhập' }}
         </button>

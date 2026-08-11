@@ -9,12 +9,14 @@ import { logger } from './src/config/logger';
 import { setupSocket } from './src/socket';
 import { connectDatabase, disconnectDatabase } from './src/config/database';
 import { disconnectRedis } from './src/config/redis';
+import { verifyMail } from './src/config/mail';
 import { startWorkers } from './src/jobs';
 
 const PORT = parseInt(process.env.PORT || '5000', 10);
 
 const bootstrap = async (): Promise<void> => {
   await connectDatabase();
+  await verifyMail();
   startWorkers();
 
   const app = createApp();

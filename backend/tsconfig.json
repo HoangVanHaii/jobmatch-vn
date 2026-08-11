@@ -43,9 +43,9 @@
       "@socket/*": ["src/socket/*"],
       "@jobs/*": ["src/jobs/*"],
       "@utils/*": ["src/utils/*"],
-      "@types/*": ["src/type/*"]
+      "@types/*": ["src/types/*"]
     },
-    "typeRoots": ["./node_modules/@types", "./src/type"]
+    "typeRoots": ["./node_modules/@types", "src/types"]
   },
   "include": ["server.ts", "src/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist", "tests"]

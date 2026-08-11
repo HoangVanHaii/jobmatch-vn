@@ -1,48 +1,61 @@
-/**
- * Auth controller — register, login, refresh, logout
- */
 import { Request, Response, NextFunction } from 'express';
-import bcrypt from 'bcrypt';
 import { db } from '../config/database';
 import { users } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, revokeRefreshToken } from '../utils/jwt';
-import { logger } from '../config/logger';
+import { otpService } from '../service/otp.service';
+import { authService } from '../service/auth.service';
 
 export const authController = {
-  register: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  registerRequestOtp: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { email, password, fullName, role } = req.body as { email: string; password: string; fullName: string; role: 'candidate' | 'employer' };
+      const { email, password, role } = req.body as { email: string; password: string; role: 'candidate' | 'employer' };
       const existing = await db.query.users.findFirst({ where: eq(users.email, email) });
       if (existing) throw new AppError(409, 'EMAIL_TAKEN', 'Email already registered');
-
-      const passwordHash = await bcrypt.hash(password, 12);
-      const [user] = await db.insert(users).values({ email, passwordHash, role, metadata: {} }).returning();
-      // TODO: create profile, send verification email
-
-      const payload = { userId: user.id, role: user.role as any, email: user.email };
+     
+      await authService.requestOtp(email, password, role);
+     
+      await otpService.requestOtp(email, 'register');
+      
       res.status(201).json({
         success: true,
-        data: {
-          user: { id: user.id, email: user.email, role: user.role },
-          accessToken: signAccessToken(payload),
-          refreshToken: signRefreshToken(payload),
-        },
+        message: 'User registered successfully. Please verify your email with the OTP sent.'
       });
+    } catch (err) { next(err); }
+  },
+  registerVerifyOtp: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { email, otp } = req.body as { email: string; otp: string };
+      const user = await db.query.users.findFirst({ where: eq(users.email, email) });
+
+      if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'Không tìm thấy tài khoản');
+      if (user.emailVerifiedAt) throw new AppError(400, 'ALREADY_VERIFIED', 'Email đã được xác thực');
+
+      await otpService.verifyOtp(email, 'register', otp); 
+      await authService.verifyEmail(email); 
+
+      res.json({ success: true, message: 'Email đã được xác thực. Bạn có thể đăng nhập.' });
+    } catch (err) { next(err); }
+  },
+
+  resendOtp: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { email } = req.body as { email: string };
+      const user = await db.query.users.findFirst({ where: eq(users.email, email) });
+      if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'Không tìm thấy tài khoản');
+      if (user.emailVerifiedAt) throw new AppError(400, 'ALREADY_VERIFIED', 'Email đã được xác thực');
+
+      await otpService.requestOtp(email, 'register'); 
+
+      res.json({ success: true, message: 'Mã OTP mới đã được gửi tới email của bạn' });
     } catch (err) { next(err); }
   },
 
   login: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { email, password } = req.body as { email: string; password: string };
-      const user = await db.query.users.findFirst({ where: eq(users.email, email) });
-      if (!user || !user.passwordHash) throw new AppError(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
-
-      const ok = await bcrypt.compare(password, user.passwordHash);
-      if (!ok) throw new AppError(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
-
-      await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
+      const user = await authService.verifyPassword(email, password);
       const payload = { userId: user.id, role: user.role as any, email: user.email };
       res.json({
         success: true,
@@ -79,13 +92,57 @@ export const authController = {
     } catch (err) { next(err); }
   },
 
-  forgotPassword: async (_req: Request, res: Response): Promise<void> => {
-    // TODO: send reset email
-    res.json({ success: true, message: 'If email exists, reset link has been sent' });
+  forgotPassword: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { email } = req.body as { email: string };
+      const user = await db.query.users.findFirst({ where: eq(users.email, email) });
+
+      if (user) await otpService.requestOtp(email, 'reset_password');
+      res.json({ success: true, message: 'Nếu email tồn tại, mã đặt lại mật khẩu đã được gửi' });
+    } catch (err) { next(err); }
   },
 
-  resetPassword: async (_req: Request, res: Response): Promise<void> => {
-    // TODO: validate token, hash new password
-    res.json({ success: true });
+  resetPassword: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { email, otp, newPassword } = req.body as { email: string; otp: string; newPassword: string };
+      // verifyOtp ném lỗi nếu sai/hết hạn/quá lần thử — đây chính là ủy quyền để đặt lại
+      await otpService.verifyOtp(email, 'reset_password', otp);
+      await authService.resetPassword(email, newPassword);
+      res.json({ success: true, message: 'Đặt lại mật khẩu thành công. Bạn có thể đăng nhập.' });
+    } catch (err) { next(err); }
   },
+  changeAvatar: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+      const avatarUrl = req.body.avatarUrl as string;
+      await authService.changeAvatar(userId, avatarUrl);
+      res.json({ success: true, message: 'Avatar updated successfully' });
+    } catch (err) { next(err); }
+  },
+  upsertProfile: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+      const { fullName, phone, location, social, preference } = req.body;
+      await authService.upsertProfile(userId, { fullName, phone, location, social, preference });
+      res.json({ success: true, message: 'Profile updated successfully' });
+    } catch (err) { next(err); }
+  },
+  getProfile: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+      const data = await authService.getProfile(userId);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+  softDeleteAccount: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+      await authService.softDeleteAccount(userId);
+      res.json({ success: true, message: 'Account soft-deleted successfully' });
+    } catch (err) { next(err); }
+  }
 };

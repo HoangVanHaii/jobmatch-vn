@@ -1,0 +1,1 @@
+export type OtpPurpose = 'login' | 'register' | 'reset_password';

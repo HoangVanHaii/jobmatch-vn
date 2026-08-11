@@ -18,6 +18,7 @@ export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(localStorage.getItem('access_token'));
   const refreshToken = ref<string | null>(localStorage.getItem('refresh_token'));
   const isLoading = ref(false);
+  let initPromise: Promise<void> | null = null;
 
   const isAuthenticated = computed(() => !!user.value && !!accessToken.value);
 
@@ -26,6 +27,14 @@ export const useAuthStore = defineStore('auth', () => {
       const { data } = await authApi.me();
       user.value = data.data;
     } catch { logout(); }
+  };
+
+  // Khôi phục auth state 1 lần (cho route guard). Cache promise để không gọi lại.
+  const ensureInit = (): Promise<void> => {
+    if (!initPromise) {
+      initPromise = accessToken.value ? fetchMe() : Promise.resolve();
+    }
+    return initPromise;
   };
 
   const login = async (email: string, password: string): Promise<void> => {
@@ -40,14 +49,20 @@ export const useAuthStore = defineStore('auth', () => {
   const register = async (payload: {
     email: string;
     password: string;
-    fullName: string;
     role: 'candidate' | 'employer';
   }): Promise<void> => {
     isLoading.value = true;
     try {
-      const { data } = await authApi.register(payload);
-      setTokens(data.data.accessToken, data.data.refreshToken);
-      user.value = data.data.user;
+      await authApi.registerRequestOtp(payload);
+      // Không set token — user phải xác thực OTP trước (xem verifyOtp)
+    } finally { isLoading.value = false; }
+  };
+
+  const verifyOtp = async (email: string, otp: string): Promise<void> => {
+    isLoading.value = true;
+    try {
+      await authApi.registerVerifyOtp({ email, otp });
+      // Xác thực xong → về trang đăng nhập (không auto-login)
     } finally { isLoading.value = false; }
   };
 
@@ -73,6 +88,6 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     user, accessToken, refreshToken, isLoading,
     isAuthenticated,
-    fetchMe, login, register, logout, setTokens,
+    fetchMe, ensureInit, login, register, verifyOtp, logout, setTokens,
   };
 });

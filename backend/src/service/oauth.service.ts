@@ -28,11 +28,22 @@ interface OAuthProfile {
 const STATE_TTL_SECONDS = 300;
 
 export const oauthService = {
-  initiate: async (provider: Provider): Promise<{ url: string; state: string }> => {
+  initiate: async (provider: Provider, codeChallenge?: string): Promise<{ url: string; state: string }> => {
     const state = crypto.randomBytes(32).toString('hex');
     await redis.setex(`oauth:state:${state}`, STATE_TTL_SECONDS, provider);
     const config = getProviderConfig(provider);
-    const url = `${config.authorizeUrl}?client_id=${config.clientId}&redirect_uri=${config.callbackUrl}&state=${state}&scope=${config.scopes.join(' ')}&response_type=code`;
+    const params = new URLSearchParams({
+      client_id: config.clientId,
+      redirect_uri: config.callbackUrl,
+      state,
+      scope: config.scopes.join(' '),
+      response_type: 'code',
+    });
+    if (codeChallenge) {
+      params.set('code_challenge', codeChallenge);
+      params.set('code_challenge_method', 'S256');
+    }
+    const url = `${config.authorizeUrl}?${params.toString()}`;
     return { url, state };
   },
 
@@ -42,7 +53,6 @@ export const oauthService = {
       throw new AppError(400, 'INVALID_STATE', 'OAuth state mismatch or expired');
     }
     await redis.del(`oauth:state:${state}`);
-
     const profile = await verifyAndGetProfile(provider, code, codeVerifier);
     const result = await upsertUser(profile);
     return result;
@@ -60,7 +70,7 @@ export const oauthService = {
     const profile = await verifyAndGetProfile(provider, code, codeVerifier);
     await db.insert(oauthAccounts).values({
       userId,
-      provider,
+      provider, 
       providerUserId: profile.providerUserId,
       providerEmail: profile.email,
       rawProfile: profile.rawProfile,
@@ -116,7 +126,6 @@ const upsertUser = async (profile: OAuthProfile) => {
     where: and(eq(oauthAccounts.provider, profile.provider), eq(oauthAccounts.providerUserId, profile.providerUserId)),
     with: { user: true },
   });
-
   let userId: string;
   if (existing) {
     userId = existing.userId;

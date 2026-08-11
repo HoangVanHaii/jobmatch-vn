@@ -3,10 +3,9 @@
  */
 import { http } from './http';
 
-export interface RegisterPayload {
+export interface RegisterRequestPayload {
   email: string;
   password: string;
-  fullName: string;
   role: 'candidate' | 'employer';
 }
 
@@ -15,13 +14,20 @@ export interface LoginPayload {
   password: string;
 }
 
+export interface RegisterVerifyOtpPayload {
+  email: string;
+  otp: string;
+}
 export const authApi = {
-  register: (data: RegisterPayload) => http.post('/auth/register', data),
+  registerRequestOtp: (data: RegisterRequestPayload) => http.post('/auth/register/request-otp', data),
+  registerVerifyOtp: (data: RegisterVerifyOtpPayload) => http.post('/auth/register/verify-otp', data),
+  resendOtp: (email: string) => http.post('/auth/register/resend-otp', { email }),
   login: (data: LoginPayload) => http.post('/auth/login', data),
   refresh: (refreshToken: string) => http.post('/auth/refresh', { refreshToken }),
   logout: (refreshToken: string) => http.post('/auth/logout', { refreshToken }),
   forgotPassword: (email: string) => http.post('/auth/forgot-password', { email }),
-  resetPassword: (token: string, password: string) => http.post('/auth/reset-password', { token, password }),
+  resetPassword: (email: string, otp: string, newPassword: string) =>
+    http.post('/auth/reset-password', { email, otp, newPassword }),
   me: () => http.get('/users/me'),
   usage: () => http.get('/users/me/usage'),
 };
