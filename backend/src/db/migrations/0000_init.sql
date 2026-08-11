@@ -43,7 +43,7 @@ CREATE INDEX idx_users_role ON users(role) WHERE deleted_at IS NULL;
 
 CREATE TABLE user_profiles (
   user_id      UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  full_name    TEXT NOT NULL,
+  full_name    TEXT,
   avatar_url   TEXT,
   phone        TEXT,
   location     JSONB,
@@ -90,7 +90,7 @@ CREATE TABLE companies (
   verified_at  TIMESTAMPTZ,
   verified_by  UUID REFERENCES users(id),
   created_at   TIMESTAMPTZ DEFAULT now(),
-  metadata     JSONB
+  metadata     JSONB 
 );
 CREATE INDEX idx_companies_industry ON companies(industry);
 CREATE INDEX idx_companies_metadata ON companies USING GIN (metadata);
