@@ -22,6 +22,10 @@ CREATE TYPE job_type AS ENUM ('full-time', 'part-time', 'contract', 'internship'
 CREATE TYPE application_status AS ENUM ('pending', 'viewed', 'screening', 'interview', 'offered', 'hired', 'rejected', 'withdrawn');
 CREATE TYPE subscription_status AS ENUM ('active', 'expired', 'cancelled', 'pending');
 CREATE TYPE payment_status AS ENUM ('pending', 'paid', 'failed', 'refunded');
+CREATE TYPE company_status AS ENUM ('active', 'banned', 'removed'); -- company lifecycle
+CREATE TYPE company_member_role AS ENUM ('owner', 'member');
+CREATE TYPE company_member_status AS ENUM ('active', 'invited', 'inactive');
+CREATE TYPE notification_type AS ENUM ('company_invite', 'job_match', 'message', 'system');
 
 -- ============================================================================
 -- Users
@@ -87,13 +91,27 @@ CREATE TABLE companies (
   website      TEXT,
   social       JSONB,
   address      JSONB,
-  verified_at  TIMESTAMPTZ,
-  verified_by  UUID REFERENCES users(id),
+  status       company_status NOT NULL DEFAULT 'active',
+  created_by   UUID REFERENCES users(id),
   created_at   TIMESTAMPTZ DEFAULT now(),
   metadata     JSONB
 );
 CREATE INDEX idx_companies_industry ON companies(industry);
 CREATE INDEX idx_companies_metadata ON companies USING GIN (metadata);
+
+-- ============================================================================
+-- company_members
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS company_members (
+  company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role        company_member_role NOT NULL,
+  status      company_member_status NOT NULL DEFAULT 'active',
+  joined_at   TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (company_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_company_members_user ON company_members(user_id);
 
 -- ============================================================================
 -- Jobs
@@ -262,15 +280,14 @@ CREATE INDEX idx_chat_messages_convo ON chat_messages(conversation_id, created_a
 CREATE TABLE notifications (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  type       TEXT NOT NULL,
-  title      TEXT NOT NULL,
-  body       TEXT,
-  data       JSONB,
+  type       notification_type  NOT NULL,
+  title      VARCHAR(255) NOT NULL,
+  payload    JSONB NOT NULL DEFAULT '{}',
   read_at    TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now()
 );
-CREATE INDEX idx_notifications_user_unread ON notifications(user_id, created_at DESC) WHERE read_at IS NULL;
-CREATE INDEX idx_notifications_data ON notifications USING GIN (data);
+CREATE INDEX idx_notifications_user_created ON notifications(user_id, created_at DESC);
+CREATE INDEX idx_notifications_payload ON notifications USING GIN (payload);
 
 -- ============================================================================
 -- AI Chat
