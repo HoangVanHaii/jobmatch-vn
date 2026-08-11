@@ -7,8 +7,8 @@ export type OAuthProvider = 'google' | 'facebook' | 'github';
 
 export const oauthApi = {
   /** Bắt đầu OAuth flow — backend trả authorization URL + state */
-  initiate: (provider: OAuthProvider) =>
-    http.get<{ success: true; data: { url: string } }>(`/auth/oauth/${provider}`),
+  initiate: (provider: OAuthProvider, codeChallenge: string) =>
+    http.post<{ success: true; data: { url: string } }>(`/auth/oauth/${provider}`, { codeChallenge }),
 
   /** Sau khi provider redirect về SPA, gửi code + PKCE verifier lên backend */
   callback: (provider: OAuthProvider, code: string, codeVerifier: string, state: string) =>
