@@ -3,7 +3,7 @@
  */
 import axios from 'axios';
 
-export const facebookVerify = async (code: string, _codeVerifier: string) => {
+export const facebookVerify = async (code: string, codeVerifier: string) => {
   // Đổi code lấy access_token
   const tokenRes = await axios.get('https://graph.facebook.com/v18.0/oauth/access_token', {
     params: {
@@ -11,6 +11,7 @@ export const facebookVerify = async (code: string, _codeVerifier: string) => {
       client_secret: process.env.FACEBOOK_APP_SECRET,
       redirect_uri: process.env.FACEBOOK_CALLBACK_URL,
       code,
+      code_verifier: codeVerifier,
     },
   });
   const accessToken = tokenRes.data.access_token;

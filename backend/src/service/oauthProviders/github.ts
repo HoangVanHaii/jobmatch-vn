@@ -4,7 +4,7 @@
 import axios from 'axios';
 import { Octokit } from '@octokit/rest';
 
-export const githubVerify = async (code: string, _codeVerifier: string) => {
+export const githubVerify = async (code: string, codeVerifier: string) => {
   // Đổi code lấy access_token
   const tokenRes = await axios.post(
     'https://github.com/login/oauth/access_token',
@@ -13,6 +13,7 @@ export const githubVerify = async (code: string, _codeVerifier: string) => {
       client_secret: process.env.GITHUB_CLIENT_SECRET,
       code,
       redirect_uri: process.env.GITHUB_CALLBACK_URL,
+      code_verifier: codeVerifier,
     },
     { headers: { Accept: 'application/json' } },
   );
@@ -20,7 +21,7 @@ export const githubVerify = async (code: string, _codeVerifier: string) => {
 
   const octokit = new Octokit({ auth: accessToken });
   const { data: user } = await octokit.users.getAuthenticated();
-  const { data: emails } = await octokit.users.listEmails({ visibility: 'public' });
+  const { data: emails } = await octokit.users.listEmailsForAuthenticatedUser({ visibility: 'public' });
   const primaryEmail = emails.find((e) => e.primary)?.email ?? user.email ?? '';
 
   return {

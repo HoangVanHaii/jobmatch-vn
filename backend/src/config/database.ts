@@ -11,6 +11,11 @@ export const pool = new Pool({
   connectionString: env.DATABASE_URL,
   min: 2,
   max: 10,
+  connectionTimeoutMillis: 10000, // 10 giây
+
+  idleTimeoutMillis: 30000, // 30 giây
+
+  maxLifetimeSeconds: 300, // 5 phút
 });
 
 pool.on('error', (err) => {
@@ -26,7 +31,7 @@ export const connectDatabase = async (): Promise<void> => {
     client.release();
     logger.info('Database connected');
   } catch (err) {
-    logger.fatal({ err }, '❌ Database connection failed');
+    logger.fatal({ err }, 'Database connection failed');
     process.exit(1);
   }
 };

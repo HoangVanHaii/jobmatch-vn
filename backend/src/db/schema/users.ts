@@ -6,7 +6,7 @@ export const users = pgTable('users', {
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash'),
   role: userRoleEnum('role').notNull(),
-  status: userStatusEnum('status').default('active').notNull(),
+  status: userStatusEnum('status').default('pending').notNull(),
   emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -19,7 +19,7 @@ export const users = pgTable('users', {
 
 export const userProfiles = pgTable('user_profiles', {
   userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
-  fullName: text('full_name').notNull(),
+  fullName: text('full_name'),
   avatarUrl: text('avatar_url'),
   phone: text('phone'),
   location: jsonb('location').$type<{ city?: string; district?: string; lat?: number; lng?: number }>(),

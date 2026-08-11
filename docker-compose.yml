@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: jobmatch_dev_pwd
       POSTGRES_DB: jobmatch_vn
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/src/db/migrations:/docker-entrypoint-initdb.d:ro
