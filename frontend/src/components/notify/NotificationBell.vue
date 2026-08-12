@@ -17,7 +17,7 @@ import { useNotificationStore } from '@stores/notification';
 import { useAuthStore } from '@stores/auth';
 import { useSocket } from '@composables/useSocket';
 import { getSocket } from '@services/socket';
-import type { Notification } from '../types/notification';
+import type { Notification } from '../../types/notification';
 
 const store = useNotificationStore();
 const auth = useAuthStore();
