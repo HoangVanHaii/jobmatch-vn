@@ -1,18 +1,20 @@
-import { pgTable, uuid, text, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
 import { users } from './users';
-import { isNull } from 'drizzle-orm'; // thêm import này
+import { notificationTypeEnum } from './enums';
 
-
+/**
+ * Bảng notifications — lưu thông báo cho user.
+ * Cấu trúc khớp với DB sau migration 0003_update_notifications.sql.
+ */
 export const notifications = pgTable('notifications', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  type: text('type').notNull(),
-  title: text('title').notNull(),
-  body: text('body'),
-  data: jsonb('data').$type<Record<string, unknown>>(),
+  type: notificationTypeEnum('type').notNull(),
+  title: varchar('title', { length: 255 }).notNull(),
+  payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
   readAt: timestamp('read_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
-  userUnreadIdx: index('idx_notifications_user_unread').on(t.userId, t.createdAt).where(isNull(t.readAt)),
-  dataIdx: index('idx_notifications_data').using('gin', t.data),
+  userCreatedIdx: index('idx_notifications_user_created').on(t.userId, t.createdAt),
+  payloadIdx: index('idx_notifications_payload').using('gin', t.payload),
 }));
