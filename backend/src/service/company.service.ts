@@ -120,7 +120,7 @@ export const companyService = {
    *  trong cùng 1 transaction (atomic: insert company fail → không insert member).
    */
   create: async (input: CreateCompanyInput, userId: string): Promise<Company> => {
-    const existing = await companyMemberService.getMembership(userId);
+    const existing = await companyMemberService.findMembershipByUserId(userId);
     if (existing) {
       throw new AppError(409, 'ALREADY_IN_COMPANY', 'Bạn đã thuộc một công ty khác, không thể tạo công ty mới');
     }
