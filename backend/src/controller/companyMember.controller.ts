@@ -101,7 +101,7 @@ export const companyMemberController = {
       const { companyId } = req.params as { companyId: string };
       const userId = req.user!.userId;
 
-      const otherMembership = await companyMemberService.getMembership(userId);
+      const otherMembership = await companyMemberService.findMembershipByUserId(userId);
       if (otherMembership) {
         throw new AppError(409, 'ALREADY_IN_COMPANY', 'Bạn đã thuộc một công ty khác');
       }
