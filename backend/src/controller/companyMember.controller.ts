@@ -53,7 +53,7 @@ export const companyMemberController = {
       const existing = await companyMemberService.getByCompanyAndUser(companyId, input.userId);
       if (existing) throw new AppError(409, 'MEMBER_EXISTS', 'User đã là member của công ty');
       
-      const otherMembership = await companyMemberService.getMembership(input.userId);
+      const otherMembership = await companyMemberService.findMembershipByUserId(input.userId);
       if (otherMembership) {
         throw new AppError(409, 'ALREADY_IN_COMPANY', 'User đã thuộc một công ty khác');
       }

@@ -58,7 +58,7 @@ export const companyMemberService = {
     return row ?? null;
   },
   
-  getMembership: async (userId: string): Promise<{ companyId: string } | null> => {
+  findMembershipByUserId: async (userId: string): Promise<{ companyId: string } | null> => {
     const [row] = await db
       .select({ companyId: companyMembers.companyId })
       .from(companyMembers)
