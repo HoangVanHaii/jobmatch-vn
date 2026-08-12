@@ -47,7 +47,7 @@ const migrate = async (): Promise<void> => {
   const pending = files.filter((f) => !applied.has(f));
 
   if (pending.length === 0) {
-    logger.info('✅ No new migrations to apply.');
+    logger.info('No new migrations to apply.');
     await pool.end();
     return;
   }
@@ -64,17 +64,17 @@ const migrate = async (): Promise<void> => {
         [file],
       );
       await client.query('COMMIT');
-      logger.info({ file }, '✅ Applied');
+      logger.info({ file }, 'Applied');
     } catch (err) {
       await client.query('ROLLBACK');
-      logger.fatal({ err, file }, '❌ Migration failed, rolled back');
+      logger.fatal({ err, file }, 'Migration failed, rolled back');
       throw err;
     } finally {
       client.release();
     }
   }
 
-  logger.info(`✅ Applied ${pending.length} new migration(s).`);
+  logger.info(`Applied ${pending.length} new migration(s).`);
   await pool.end();
 };
 

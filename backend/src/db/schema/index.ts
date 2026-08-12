@@ -2,6 +2,7 @@ export * from './enums';
 export * from './users';
 export * from './oauthAccounts';
 export * from './companies';
+export * from './companyMembers';
 export * from './jobs';
 export * from './cvs';
 export * from './applications';
