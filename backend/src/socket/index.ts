@@ -7,8 +7,8 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import { redis } from '../config/redis';
 import { socketAuth } from '../middleware/socketAuth';
 import { chatHandler } from './chat.handler';
-import { notificationHandler } from './notification.handler';
 import { logger } from '../config/logger';
+import { setNotificationGateway } from './notificationGateway';
 
 export const setupSocket = (server: HttpServer): IOServer => {
   const io = new IOServer(server, {
@@ -24,6 +24,8 @@ export const setupSocket = (server: HttpServer): IOServer => {
   // Auth middleware
   io.use(socketAuth);
 
+  setNotificationGateway(io);  
+    
   io.on('connection', (socket) => {
     const userId = (socket as any).user?.userId;
     logger.info({ socketId: socket.id, userId }, 'Socket connected');
@@ -33,7 +35,6 @@ export const setupSocket = (server: HttpServer): IOServer => {
     }
 
     chatHandler(io, socket);
-    notificationHandler(io, socket);
 
     socket.on('disconnect', () => {
       logger.info({ socketId: socket.id }, 'Socket disconnected');
