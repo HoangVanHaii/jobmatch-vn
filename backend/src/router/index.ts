@@ -27,6 +27,7 @@ import { testRouter } from './test';
 import { scheduleRouter } from './schedule';
 import { dialogflowRouter } from './dialogflow';
 import { notificationRouter } from "./notification";
+import { skillsRouter } from "./skills";
 
 export const apiRouter = Router();
 
@@ -48,6 +49,7 @@ apiRouter.use('/', paymentRouter);
 apiRouter.use('/webhooks', webhooksRouter);
 apiRouter.use('/admin', adminRouter);
 apiRouter.use("/notifications", notificationRouter);
+apiRouter.use("/skills", skillsRouter);
 // Phase 2
 apiRouter.use('/scan', scanRouter);
 apiRouter.use('/github', githubRouter);
