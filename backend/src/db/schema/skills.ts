@@ -1,15 +1,15 @@
 import { pgTable, uuid, text, integer, boolean, primaryKey, index } from 'drizzle-orm/pg-core';
 import { users } from './users';
 import { jobs } from './jobs';
+import { skillStatusEnum } from './enums';
 
 export const skills = pgTable('skills', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull().unique(),
   slug: text('slug').notNull().unique(),
-  category: text('category'),
-  demandCount: integer('demand_count').default(0).notNull(),
+  status: skillStatusEnum('status').default('active').notNull(),
 }, (t) => ({
-  demandIdx: index('idx_skills_demand').on(t.demandCount),
+  statusIdx: index('idx_skills_status').on(t.status),
 }));
 
 export const jobSkills = pgTable('job_skills', {
