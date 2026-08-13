@@ -26,6 +26,7 @@ CREATE TYPE company_status AS ENUM ('active', 'banned', 'removed'); -- company l
 CREATE TYPE company_member_role AS ENUM ('owner', 'member');
 CREATE TYPE company_member_status AS ENUM ('active', 'invited', 'inactive');
 CREATE TYPE notification_type AS ENUM ('company_invite', 'job_match', 'message', 'system');
+CREATE TYPE skill_status AS ENUM ('active', 'deleted'); -- skill soft-delete lifecycle
 
 -- ============================================================================
 -- Users
@@ -166,10 +167,9 @@ CREATE TABLE skills (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name          TEXT UNIQUE NOT NULL,
   slug          TEXT UNIQUE NOT NULL,
-  category      TEXT,
-  demand_count  INT DEFAULT 0
+  status        skill_status NOT NULL DEFAULT 'active'
 );
-CREATE INDEX idx_skills_demand ON skills(demand_count DESC);
+CREATE INDEX idx_skills_status ON skills(status);
 
 CREATE TABLE job_skills (
   job_id    UUID REFERENCES jobs(id) ON DELETE CASCADE,

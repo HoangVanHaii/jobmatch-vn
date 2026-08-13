@@ -25,7 +25,6 @@ const seed = async (): Promise<void> => {
   await db.insert(skills).values(techSkills.map((name) => ({
     name,
     slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-    category: 'tech',
   }))).onConflictDoNothing();
 
   logger.info(`✅ Seeded ${techSkills.length} skills`);
