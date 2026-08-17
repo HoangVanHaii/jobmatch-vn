@@ -7,6 +7,7 @@ export * from './jobs';
 export * from './cvs';
 export * from './applications';
 export * from './skills';
+export * from './candidateSkills';
 export * from './notifications';
 export * from './chat';
 export * from './ai';
