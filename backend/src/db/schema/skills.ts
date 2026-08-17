@@ -1,5 +1,4 @@
-import { pgTable, uuid, text, integer, boolean, primaryKey, index } from 'drizzle-orm/pg-core';
-import { users } from './users';
+import { pgTable, uuid, text, boolean, primaryKey, index } from 'drizzle-orm/pg-core';
 import { jobs } from './jobs';
 import { skillStatusEnum } from './enums';
 
@@ -18,12 +17,4 @@ export const jobSkills = pgTable('job_skills', {
   required: boolean('required').default(true),
 }, (t) => ({
   pk: primaryKey({ columns: [t.jobId, t.skillId] }),
-}));
-
-export const candidateSkills = pgTable('candidate_skills', {
-  candidateId: uuid('candidate_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  skillId: uuid('skill_id').notNull().references(() => skills.id),
-  level: integer('level'),
-}, (t) => ({
-  pk: primaryKey({ columns: [t.candidateId, t.skillId] }),
 }));

@@ -28,6 +28,8 @@ import { scheduleRouter } from './schedule';
 import { dialogflowRouter } from './dialogflow';
 import { notificationRouter } from "./notification";
 import { skillsRouter } from "./skills";
+import { cvRouter } from './cv';
+import { candidateSkillRouter } from './candidateSkill';
 
 export const apiRouter = Router();
 
@@ -50,6 +52,8 @@ apiRouter.use('/webhooks', webhooksRouter);
 apiRouter.use('/admin', adminRouter);
 apiRouter.use("/notifications", notificationRouter);
 apiRouter.use("/skills", skillsRouter);
+apiRouter.use("/cvs", cvRouter)
+apiRouter.use("/skills", candidateSkillRouter);
 // Phase 2
 apiRouter.use('/scan', scanRouter);
 apiRouter.use('/github', githubRouter);
