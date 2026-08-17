@@ -178,20 +178,13 @@ CREATE TABLE job_skills (
   PRIMARY KEY (job_id, skill_id)
 );
 
-CREATE TABLE candidate_skills (
-  candidate_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  skill_id     UUID REFERENCES skills(id),
-  level        INT,
-  PRIMARY KEY (candidate_id, skill_id)
-);
-
 -- ============================================================================
 -- CVs
 -- ============================================================================
 CREATE TABLE cvs (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   candidate_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  title             TEXT NOT NULL,
+  title             TEXT,
   file_url          TEXT,
   file_type         TEXT,
   is_primary        BOOLEAN DEFAULT false,
@@ -203,6 +196,13 @@ CREATE TABLE cvs (
 );
 CREATE INDEX idx_cvs_candidate ON cvs(candidate_id);
 CREATE INDEX idx_cvs_parsed_data ON cvs USING GIN (parsed_data);
+
+CREATE TABLE candidate_skills (
+  candidate_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  skill_id     UUID NOT NULL REFERENCES skills(id),
+  level        INT CHECK (level BETWEEN 1 AND 5),
+  PRIMARY KEY (candidate_id, skill_id)
+);
 
 -- ============================================================================
 -- Applications
