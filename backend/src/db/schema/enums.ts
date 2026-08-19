@@ -19,3 +19,11 @@ export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'me
 export const companyMemberStatusEnum = pgEnum('company_member_status', ['active', 'invited', 'inactive']);
 export const notificationTypeEnum = pgEnum('notification_type', ['company_invite', 'job_match', 'message', 'system']);
 export const skillStatusEnum = pgEnum('skill_status', ['active', 'deleted']);
+export const cvStatusEnum = pgEnum('cv_status', [
+  'pending',
+  'parsing',
+  'ready',
+  'failed',
+  'deleted',
+]);
+export const cvSourceEnum = pgEnum('cv_source', ['upload', 'direct']);

@@ -1,17 +1,36 @@
-import { pgTable, uuid, text, boolean, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
+import {
+  pgTable, uuid, text, boolean, timestamp, jsonb, index, integer,
+} from 'drizzle-orm/pg-core';
 import { users } from './users';
+import { cvStatusEnum, cvSourceEnum } from './enums';
+import type { AiScore } from '../../interface/cv';
 
+/**
+ * CV của candidate — 2 loại:
+ * - source='upload': fileUrl + fileType, parsedData điền bởi worker (status: pending → parsing → ready).
+ * - source='direct': templateId 1-5 bắt buộc, parsedData user nhập tay qua form (status='ready' ngay).
+ *
+ * 'deleted' = soft delete (API list/get của owner ẩn row), giữ row + fileUrl cho cleanup sau.
+ */
 export const cvs = pgTable('cvs', {
   id: uuid('id').primaryKey().defaultRandom(),
   candidateId: uuid('candidate_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   title: text('title'),
   fileUrl: text('file_url'),
   fileType: text('file_type'),
-  isPrimary: boolean('is_primary').default(false),
+  isPrimary: boolean('is_primary').notNull().default(false),
+  status: cvStatusEnum('status').notNull().default('pending'),
+  source: cvSourceEnum('source').notNull().default('upload'),
+  templateId: integer('template_id'),
   parsedData: jsonb('parsed_data').$type<{
     name?: string;
     email?: string;
     phone?: string;
+    portfolio?: string;
+    github?: string;
+    linkedin?: string;
+    facebook?: string;
+    avatarUrl?: string;
     summary?: string;
     education?: Array<Record<string, unknown>>;
     experience?: Array<Record<string, unknown>>;
@@ -20,14 +39,7 @@ export const cvs = pgTable('cvs', {
     projects?: Array<Record<string, unknown>>;
     certifications?: Array<Record<string, unknown>>;
   }>(),
-  aiScore: jsonb('ai_score').$type<{
-    total: number;
-    breakdown?: Record<string, number>;
-    strengths?: string[];
-    weaknesses?: string[];
-    suggestions?: string[];
-    missingKeywords?: string[];
-  }>(),
+  aiScore: jsonb('ai_score').$type<AiScore>(),
   scoreUpdatedAt: timestamp('score_updated_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
