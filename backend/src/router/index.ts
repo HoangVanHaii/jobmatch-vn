@@ -30,6 +30,7 @@ import { notificationRouter } from "./notification";
 import { skillsRouter } from "./skills";
 import { cvRouter } from './cv';
 import { candidateSkillRouter } from './candidateSkill';
+import { uploadRouter } from './upload';
 
 export const apiRouter = Router();
 
@@ -53,6 +54,7 @@ apiRouter.use('/admin', adminRouter);
 apiRouter.use("/notifications", notificationRouter);
 apiRouter.use("/skills", skillsRouter);
 apiRouter.use("/cvs", cvRouter)
+apiRouter.use("/uploads", uploadRouter);
 apiRouter.use("/skills", candidateSkillRouter);
 // Phase 2
 apiRouter.use('/scan', scanRouter);

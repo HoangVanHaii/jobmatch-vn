@@ -27,6 +27,8 @@ CREATE TYPE company_member_role AS ENUM ('owner', 'member');
 CREATE TYPE company_member_status AS ENUM ('active', 'invited', 'inactive');
 CREATE TYPE notification_type AS ENUM ('company_invite', 'job_match', 'message', 'system');
 CREATE TYPE skill_status AS ENUM ('active', 'deleted'); -- skill soft-delete lifecycle
+CREATE TYPE cv_status AS ENUM ('pending', 'parsing', 'ready', 'failed', 'deleted');
+CREATE TYPE cv_source AS ENUM ('upload', 'direct');
 
 -- ============================================================================
 -- Users
@@ -187,15 +189,25 @@ CREATE TABLE cvs (
   title             TEXT,
   file_url          TEXT,
   file_type         TEXT,
-  is_primary        BOOLEAN DEFAULT false,
+  is_primary        BOOLEAN NOT NULL DEFAULT false,
+  status            cv_status NOT NULL DEFAULT 'pending',
+  source            cv_source NOT NULL DEFAULT 'upload',
+  template_id       INTEGER,
   parsed_data       JSONB,
   ai_score          JSONB,
   score_updated_at  TIMESTAMPTZ,
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now()
 );
+-- CHECK template_id range (NULL luôn pass qua CHECK trong Postgres)
+ALTER TABLE cvs
+  ADD CONSTRAINT cvs_template_id_range CHECK (
+    template_id IS NULL OR (template_id BETWEEN 1 AND 5)
+  );
 CREATE INDEX idx_cvs_candidate ON cvs(candidate_id);
 CREATE INDEX idx_cvs_parsed_data ON cvs USING GIN (parsed_data);
+-- Partial index cho filter CV direct (report / admin query)
+CREATE INDEX idx_cvs_source_direct ON cvs(candidate_id) WHERE source = 'direct';
 
 CREATE TABLE candidate_skills (
   candidate_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
