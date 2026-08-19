@@ -25,6 +25,8 @@ export const jobs = pgTable('jobs', {
   remoteOk: boolean('remote_ok').default(false),
   experienceYearsMin: integer('experience_years_min'),
   experienceYearsMax: integer('experience_years_max'),
+  requiredSkills: jsonb('required_skills').$type<string[]>().default([]).notNull(),
+  niceToHaveSkills: jsonb('nice_to_have_skills').$type<string[]>().default([]).notNull(),
   deadline: timestamp('deadline', { withTimezone: true }),
   status: jobStatusEnum('status').default('draft').notNull(),
   featured: boolean('featured').default(false),
