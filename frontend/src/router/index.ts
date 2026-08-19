@@ -49,8 +49,13 @@ const routes: RouteRecordRaw[] = [
   //   ],
   // },
 
-  // Chat
-  // { path: '/chat', name: 'chat', component: () => import('@views/chat/ChatView.vue'), meta: { auth: true } },
+  // Chat — `/chat` empty, `/chat/:id` mở 1 conversation, `/chat?peer=<userId>` deep-link
+  {
+    path: '/chat/:id?',
+    name: 'chat',
+    component: () => import('@views/chat/ChatView.vue'),
+    meta: { auth: true },
+  },
 
   // Admin
   // {

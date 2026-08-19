@@ -1,6 +1,3 @@
-/**
- * Socket.IO setup + Redis adapter (cho scale)
- */
 import { Server as HttpServer } from 'http';
 import { Server as IOServer } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
