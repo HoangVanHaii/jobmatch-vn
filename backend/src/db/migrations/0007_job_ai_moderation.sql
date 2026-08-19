@@ -6,14 +6,23 @@ ALTER TYPE job_status
 ADD VALUE
 IF NOT EXISTS 'ai_flagged';
 
--- Enum mới
-CREATE TYPE scan_verdict AS ENUM
-('approved', 'flagged');
-CREATE TYPE flag_severity AS ENUM
-('block', 'warn');
+-- Enum mới (CREATE TYPE không hỗ trợ IF NOT EXISTS, phải check thủ công qua pg_type)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'scan_verdict') THEN
+        CREATE TYPE scan_verdict AS ENUM ('approved', 'flagged');
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'flag_severity') THEN
+        CREATE TYPE flag_severity AS ENUM ('block', 'warn');
+    END IF;
+END $$;
 
 -- Bảng scan (1 job có N scan)
-CREATE TABLE job_ai_scans
+CREATE TABLE IF NOT EXISTS job_ai_scans
 (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -26,10 +35,10 @@ CREATE TABLE job_ai_scans
     scanned_by TEXT NOT NULL DEFAULT 'system'
     -- 'system' | userId
 );
-CREATE INDEX idx_job_ai_scans_job ON job_ai_scans(job_id, scanned_at DESC);
+CREATE INDEX IF NOT EXISTS idx_job_ai_scans_job ON job_ai_scans(job_id, scanned_at DESC);
 
 -- Bảng flags (1 scan có N flags)
-CREATE TABLE job_ai_flags
+CREATE TABLE IF NOT EXISTS job_ai_flags
 (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     scan_id UUID NOT NULL REFERENCES job_ai_scans(id) ON DELETE CASCADE,
@@ -42,4 +51,4 @@ CREATE TABLE job_ai_flags
     suggestion TEXT,
     law_ref TEXT
 );
-CREATE INDEX idx_job_ai_flags_scan ON job_ai_flags(scan_id);
+CREATE INDEX IF NOT EXISTS idx_job_ai_flags_scan ON job_ai_flags(scan_id);
