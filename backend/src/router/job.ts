@@ -3,7 +3,7 @@
  *   optionalAuth | auth → employerOnly → jobWriteRateLimiter → validate → controller.method
  */
 import { Router } from 'express';
-import { auth, optionalAuth, employerOnly } from '../middleware/auth';
+import { auth, optionalAuth, employerOnly, adminOnly } from '../middleware/auth';
 import { jobWriteRateLimiter } from '../middleware/rateLimit';
 import { validate } from '../middleware/validate';
 import { jobController } from '../controller/job.controller';
@@ -12,17 +12,20 @@ import {
   jobCreateSchema,
   jobUpdateSchema,
   jobIdParamsSchema,
+  jobGenerateSchema,
+  jobSearchQuerySchema,
+  jobSemanticSearchQuerySchema,
 } from '../middleware/job';
 
 export const jobRouter = Router();
 
-// Public — list job live (search/filter/pagination ở query)
+jobRouter.get('/search/semantic', optionalAuth, validate(jobSemanticSearchQuerySchema, 'query'), jobController.searchSemantic);
+jobRouter.get('/search', optionalAuth, validate(jobSearchQuerySchema, 'query'), jobController.searchByKeyWord);
+jobRouter.get('/company', optionalAuth, validate(jobListQuerySchema, 'query'), jobController.listOfCompany);
 jobRouter.get('/', optionalAuth, validate(jobListQuerySchema, 'query'), jobController.list);
-
-// Public — chi tiết + auto +1 views_count (atomic ở service)
 jobRouter.get('/:id', optionalAuth, validate(jobIdParamsSchema, 'params'), jobController.getById);
 
-// Employer tạo job
+
 jobRouter.post(
   '/',
   auth,
@@ -32,7 +35,15 @@ jobRouter.post(
   jobController.create,
 );
 
-// Employer cập nhật (ownership check ở service)
+jobRouter.post(
+  '/generate',
+  auth,
+  employerOnly,
+  jobWriteRateLimiter,
+  validate(jobGenerateSchema),
+  jobController.generate,
+);
+
 jobRouter.patch(
   '/:id',
   auth,
@@ -43,7 +54,6 @@ jobRouter.patch(
   jobController.update,
 );
 
-// Employer xóa (hard delete; cascade applications/job_skills)
 jobRouter.delete(
   '/:id',
   auth,
@@ -60,4 +70,33 @@ jobRouter.get(
   employerOnly,
   validate(jobIdParamsSchema, 'params'),
   jobController.getMatches,
+);
+
+// Employer submit job để AI scan (status: draft|ai_flagged → ai_scanning)
+jobRouter.post(
+  '/:id/submit',
+  auth,
+  employerOnly,
+  jobWriteRateLimiter,
+  validate(jobIdParamsSchema, 'params'),
+  jobController.submit,
+);
+
+// Admin force re-scan (không check status)
+jobRouter.post(
+  '/:id/resubmit',
+  auth,
+  adminOnly,
+  jobWriteRateLimiter,
+  validate(jobIdParamsSchema, 'params'),
+  jobController.resubmit,
+);
+
+// Employer xem scan mới nhất + flags (chỉ chủ job; admin bypass)
+jobRouter.get(
+  '/:id/scan-result',
+  auth,
+  employerOnly,
+  validate(jobIdParamsSchema, 'params'),
+  jobController.getScanResult,
 );
