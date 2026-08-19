@@ -1,6 +1,8 @@
 import { pgTable, uuid, text, timestamp, customType, unique, index } from 'drizzle-orm/pg-core';
 
-// pgvector type
+// pgvector type — 768-dim (matryoshka truncated output of gemini-embedding-001)
+// Note: gemini-embedding-001 max 3072-dim, but HNSW index max 2000.
+//       768 là sweet spot — chất lượng tốt + HNSW index available.
 const vector = customType<{ data: number[]; driverData: string }>({
   dataType() { return 'vector(768)'; },
   toDriver(value: number[]) { return `[${value.join(',')}]`; },

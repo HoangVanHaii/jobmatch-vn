@@ -1,38 +1,53 @@
-/**
- * Zod schemas cho jobs — validate body/query/params ở router/job.ts
- * Đối chiếu với src/db/schema/jobs.ts (Drizzle) để bám cứng cấu trúc cột.
- */
 import { z } from 'zod';
 
 const jobLevelEnum = z.enum(['intern', 'fresher', 'junior', 'mid', 'senior', 'lead', 'manager']);
 const jobTypeEnum  = z.enum(['full-time', 'part-time', 'contract', 'internship', 'freelance']);
 const jobStatusEnum = z.enum(['draft', 'pending', 'live', 'expired', 'closed']);
+const skillsSchema = z.array(z.string().min(1).max(100)).max(50);
 
-const locationSchema = z
-  .object({
+const locationSchema = z.object({
     city: z.string().optional(),
     district: z.string().optional(),
     address: z.string().optional(),
     lat: z.number().optional(),
     lng: z.number().optional(),
-  })
-  .optional();
+  }).optional();
 
-// Params
 export const jobIdParamsSchema = z.object({
   id: z.string().uuid(),
 });
 
-// Query GET /jobs
+
 export const jobListQuerySchema = z.object({
   search: z.string().min(1).optional(),
   jobLevel: jobLevelEnum.optional(),
   jobType: jobTypeEnum.optional(),
+
+  locationCity: z.string().min(1).max(100).optional(),
+  salaryMin: z.coerce.number().int().nonnegative().optional(),
+  remoteOk: z.coerce.boolean().optional(),
+  industry: z.string().min(1).max(100).optional(),
+
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
 });
 
-// Body POST /jobs
+export const jobSearchQuerySchema = z.object({
+  keyword: z.string().min(2).max(200),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+});
+
+// Query GET /jobs/search/semantic — embedding-based search (cosine similarity)
+export const jobSemanticSearchQuerySchema = z.object({
+  query: z.string().min(3).max(500),
+  threshold: z.coerce.number().min(0).max(1).default(0.55), // 0..1, default 50% similar
+  locationCity: z.string().min(1).max(100).optional(),
+  jobLevel: jobLevelEnum.optional(),
+  jobType: jobTypeEnum.optional(),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+});
+
 export const jobCreateSchema = z
   .object({
     companyId: z.string().uuid(),
@@ -51,6 +66,8 @@ export const jobCreateSchema = z
     remoteOk: z.boolean().default(false),
     experienceYearsMin: z.coerce.number().int().nonnegative().optional(),
     experienceYearsMax: z.coerce.number().int().nonnegative().optional(),
+    requiredSkills: skillsSchema.optional().default([]),
+    niceToHaveSkills: skillsSchema.optional().default([]),
     deadline: z.string().datetime().optional(),
     status: jobStatusEnum.default('draft'),
     extraData: z.record(z.unknown()).default({}),
@@ -78,6 +95,8 @@ export const jobUpdateSchema = z
     remoteOk: z.boolean().optional(),
     experienceYearsMin: z.coerce.number().int().nonnegative().optional(),
     experienceYearsMax: z.coerce.number().int().nonnegative().optional(),
+    requiredSkills: skillsSchema.optional().default([]),
+    niceToHaveSkills: skillsSchema.optional().default([]),
     deadline: z.string().datetime().optional(),
     status: jobStatusEnum.optional(),
     extraData: z.record(z.unknown()).optional(),
@@ -93,3 +112,12 @@ export const jobUpdateSchema = z
 export type JobListQuery = z.infer<typeof jobListQuerySchema>;
 export type JobCreateBody = z.infer<typeof jobCreateSchema>;
 export type JobUpdateBody = z.infer<typeof jobUpdateSchema>;
+export type JobSemanticSearchQuery = z.infer<typeof jobSemanticSearchQuerySchema>;
+
+// Body POST /jobs/generate — keyword input cho AI generate JD draft
+export const jobGenerateSchema = z.object({
+  keyword: z.string().min(5).max(500),
+  companyName: z.string().max(200).optional(),
+});
+
+export type JobGenerateBody = z.infer<typeof jobGenerateSchema>;

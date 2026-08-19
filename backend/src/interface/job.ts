@@ -10,7 +10,7 @@ export type JobType =
   | 'full-time' | 'part-time' | 'contract' | 'internship' | 'freelance';
 
 export type JobStatus =
-  | 'draft' | 'pending' | 'live' | 'expired' | 'closed';
+  | 'draft' | 'pending' | 'ai_scanning' | 'ai_flagged' | 'live' | 'expired' | 'closed';
 
 export interface JobLocation {
   city?: string;
@@ -45,6 +45,8 @@ export interface Job {
   remoteOk: boolean | null;
   experienceYearsMin: number | null;
   experienceYearsMax: number | null;
+  requiredSkills: string[];
+  niceToHaveSkills: string[];
   deadline: Date | null;
   status: JobStatus;
   featured: boolean | null;
@@ -58,7 +60,30 @@ export interface Job {
   /** @internal tsvector GENERATED — không nên lộ ra response client. */
   searchTsv: string | null;
 }
-
+// src/interface/job.ts — thêm
+export interface JobListItem {
+  id: string;
+  title: string;
+  slug: string | null;
+  companyId: string;
+  jobLevel: JobLevel | null;
+  jobType: JobType | null;
+  industry: string | null;
+  salaryMin: string | null;
+  salaryMax: string | null;
+  // requiredSkills: string[];
+  // niceToHaveSkills: string[];
+  salaryCurrency: string | null;
+  salaryVisible: boolean | null;
+  location: JobLocation | null;
+  remoteOk: boolean | null;
+  deadline: Date | null;
+  status: JobStatus;
+  viewsCount: number;
+  appliesCount: number;
+  publishedAt: Date | null;
+  // KHÔNG có: description, requirements, benefits, extraData, postedBy, searchTsv
+}
 /** GET /api/v1/jobs — danh sách có phân trang. */
 export interface JobListResponse {
   success: boolean;
@@ -66,6 +91,8 @@ export interface JobListResponse {
   pagination: {
     page: number;
     limit: number;
+    total: number;
+    totalPages: number;
   };
 }
 
