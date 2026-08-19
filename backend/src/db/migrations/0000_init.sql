@@ -26,6 +26,7 @@ CREATE TYPE company_status AS ENUM ('active', 'banned', 'removed'); -- company l
 CREATE TYPE company_member_role AS ENUM ('owner', 'member');
 CREATE TYPE company_member_status AS ENUM ('active', 'invited', 'inactive');
 CREATE TYPE notification_type AS ENUM ('company_invite', 'job_match', 'message', 'system');
+CREATE TYPE skill_status AS ENUM ('active', 'deleted'); -- skill soft-delete lifecycle
 
 -- ============================================================================
 -- Users
@@ -166,10 +167,9 @@ CREATE TABLE skills (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name          TEXT UNIQUE NOT NULL,
   slug          TEXT UNIQUE NOT NULL,
-  category      TEXT,
-  demand_count  INT DEFAULT 0
+  status        skill_status NOT NULL DEFAULT 'active'
 );
-CREATE INDEX idx_skills_demand ON skills(demand_count DESC);
+CREATE INDEX idx_skills_status ON skills(status);
 
 CREATE TABLE job_skills (
   job_id    UUID REFERENCES jobs(id) ON DELETE CASCADE,
@@ -178,20 +178,13 @@ CREATE TABLE job_skills (
   PRIMARY KEY (job_id, skill_id)
 );
 
-CREATE TABLE candidate_skills (
-  candidate_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  skill_id     UUID REFERENCES skills(id),
-  level        INT,
-  PRIMARY KEY (candidate_id, skill_id)
-);
-
 -- ============================================================================
 -- CVs
 -- ============================================================================
 CREATE TABLE cvs (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   candidate_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  title             TEXT NOT NULL,
+  title             TEXT,
   file_url          TEXT,
   file_type         TEXT,
   is_primary        BOOLEAN DEFAULT false,
@@ -203,6 +196,13 @@ CREATE TABLE cvs (
 );
 CREATE INDEX idx_cvs_candidate ON cvs(candidate_id);
 CREATE INDEX idx_cvs_parsed_data ON cvs USING GIN (parsed_data);
+
+CREATE TABLE candidate_skills (
+  candidate_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  skill_id     UUID NOT NULL REFERENCES skills(id),
+  level        INT CHECK (level BETWEEN 1 AND 5),
+  PRIMARY KEY (candidate_id, skill_id)
+);
 
 -- ============================================================================
 -- Applications

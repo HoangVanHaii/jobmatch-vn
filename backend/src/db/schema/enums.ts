@@ -20,3 +20,4 @@ export const companyMemberStatusEnum = pgEnum('company_member_status', ['active'
 export const notificationTypeEnum = pgEnum('notification_type', ['company_invite', 'job_match', 'message', 'system']);
 export const scanVerdictEnum = pgEnum('scan_verdict', ['approved', 'flagged']);
 export const flagSeverityEnum = pgEnum('flag_severity', ['block', 'warn']);
+export const skillStatusEnum = pgEnum('skill_status', ['active', 'deleted']);
