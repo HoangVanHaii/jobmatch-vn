@@ -1,0 +1,71 @@
+-- ============================================================================
+-- 0009_make_cv_title_nullable.sql
+-- Bỏ NOT NULL trên cvs.title vì title chỉ có SAU khi parse CV xong.
+--
+-- Lý do nghiệp vụ:
+--   - Luồng upload CV hiện nay là eager parse (async) — đã thống nhất ở
+--     phân tích trước: user upload file → insert row cvs với file_url +
+--     file_type + parse_status='pending' → worker pick up parse → ghi
+--     parsed_data + cập nhật parse_status='ready'.
+--   - title thực chất là dữ liệu "dẫn xuất" từ parsed_data (vd. "<Họ tên> -
+--     <Vị trí hiện tại>", hoặc tên file gốc đã slugify). Trước khi parse
+--     xong thì CHƯA có title thật.
+--   - Nếu giữ NOT NULL buộc phải nhét placeholder ("Untitled CV", "CV 1")
+--     → frontend hiển thị sai → UX tệ, và row có dữ liệu rác.
+--   - Ngoài ra: nếu user upload nhầm file rồi xoá ngay, hoặc parse fail,
+--     row vẫn tồn tại với title = NULL là chấp nhận được (không hiển thị
+--     trong UI khi parse_status != 'ready').
+--
+-- Migration:
+--   - ALTER TABLE cvs ALTER COLUMN title DROP NOT NULL;
+--   - Idempotent: chạy nhiều lần đều an toàn (PostgreSQL trả về no-op nếu
+--     cột đã nullable).
+--
+-- Ảnh hưởng code:
+--   - src/db/schema/cvs.ts: bỏ `.notNull()` khỏi `title: text('title')` để
+--     Drizzle khớp với DB (xem NOTE bên dưới).
+--   - cv.controller.ts / cv.service.ts: KHÔNG bắt buộc title trong input —
+--     vẫn nhận optional, default null nếu không truyền.
+--   - resumeRouter (legacy): vẫn fallback `req.body.title ?? 'Untitled CV'`
+--     nhưng sẽ được thay thế khi flow mới ổn định.
+--
+-- CÁCH CHẠY:
+--   1) Tất cả migration (Node, đứng từ backend/):
+--        cd backend && npm run db:migrate
+--      (script scripts/migrate.ts tự pick file mới theo alphabet)
+--
+--   2) Riêng file này qua psql (Git Bash / PowerShell):
+--        Get-Content backend/src/db/migrations/0009_make_cv_title_nullable.sql `
+--          | docker exec -i jobmatch_postgres psql -U jobmatch -d jobmatch_vn -v ON_ERROR_STOP=1
+--
+--   3) DB mới (volume trống): container chạy file 0000 trước (có title NOT
+--      NULL), sau đó 0009 sửa lại. Kết quả cuối cùng: title NULL-able.
+-- ============================================================================
+
+BEGIN;
+
+-- Bỏ ràng buộc NOT NULL trên cvs.title.
+-- Idempotent: chạy lại nhiều lần vẫn OK.
+ALTER TABLE cvs ALTER COLUMN title DROP NOT NULL;
+
+COMMIT;
+
+-- ============================================================================
+-- NOTE về cập nhật Drizzle schema (cần làm thủ công SAU khi chạy migration):
+--
+--   File: backend/src/db/schema/cvs.ts
+--   Trước:
+--     title: text('title').notNull(),
+--   Sau:
+--     title: text('title'),
+--
+-- Lý do: Drizzle dùng `.notNull()` để generate schema TS + migration. Nếu
+-- không bỏ thì:
+--   - Insert qua Drizzle vẫn ép title (TypeScript error + runtime).
+--   - drizzle-kit diff có thể sinh ra migration "ngược" trong tương lai.
+--
+-- Nếu muốn DB schema là source of truth, có thể chạy:
+--   npx drizzle-kit pull
+-- để Drizzle regenerate type từ DB thật. Cách an toàn nhất là sửa tay như
+-- NOTE ở trên để giữ intent rõ ràng.
+-- ============================================================================

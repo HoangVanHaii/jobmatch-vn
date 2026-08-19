@@ -4,7 +4,7 @@ import { users } from './users';
 export const cvs = pgTable('cvs', {
   id: uuid('id').primaryKey().defaultRandom(),
   candidateId: uuid('candidate_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  title: text('title').notNull(),
+  title: text('title'),
   fileUrl: text('file_url'),
   fileType: text('file_type'),
   isPrimary: boolean('is_primary').default(false),
