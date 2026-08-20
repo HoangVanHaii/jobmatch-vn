@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, numeric, boolean, timestamp, jsonb, index, unique } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, numeric, boolean, timestamp, jsonb, index, unique, primaryKey } from 'drizzle-orm/pg-core';
 import { users } from './users';
 import { jobs } from './jobs';
 import { cvs } from './cvs';
@@ -33,4 +33,6 @@ export const savedJobs = pgTable('saved_jobs', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   jobId: uuid('job_id').notNull().references(() => jobs.id, { onDelete: 'cascade' }),
   savedAt: timestamp('saved_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  pk: primaryKey({ columns: [t.userId, t.jobId] }),
+}));
