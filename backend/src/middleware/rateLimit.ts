@@ -57,3 +57,20 @@ export const jobWriteRateLimiter = rateLimit({
   keyGenerator: (req) => `job_write:${req.ip}`,
   message: { success: false, error: { code: 'JOB_WRITE_RATE_LIMITED', message: 'Too many job write requests' } },
 });
+
+export const cvAiRateLimiter = rateLimit({
+  ...baseConfig,
+  store: createRedisStore('cv_ai'),
+  windowMs: 60_000,
+  max: 3,
+  keyGenerator: (req: any) => `cv_ai:${req.user?.userId || req.ip}`,
+  message: { success: false, error: { code: 'CV_AI_RATE_LIMITED', message: 'Too many Cv Ai requests' } },
+});
+export const cvWriteRateLimiter = rateLimit({
+  ...baseConfig,
+  store: createRedisStore('cv_write'),
+  windowMs: 60_000,
+  max: 20,
+  keyGenerator: (req) => `cv_write:${req.user?.userId || req.ip}`,
+  message: { success: false, error: { code: 'CV_WRITE_RATE_LIMITED', message: 'Too many cv write requests' } },
+});
