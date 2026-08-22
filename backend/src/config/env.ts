@@ -24,10 +24,12 @@ const envSchema = z.object({
   ENCRYPTION_KEY: z.string().min(32),
 
   // AI
-  OPENAI_API_KEY: z.string().optional(),
-  DEEPSEEK_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
+  GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
+  EMBEDDING_DIM: z.coerce.number().int().positive().default(768),
+  /** Single Gemini model cho mọi task (moderation / generation / parsing). */
+  GEMINI_CHAT_MODEL: z.string().default('gemini-2.5-flash'),
 
   // OAuth
   GOOGLE_CLIENT_ID: z.string().optional(),

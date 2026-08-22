@@ -1,4 +1,5 @@
 import { Octokit } from "@octokit/rest";
+import { logger } from '../config/logger';
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
@@ -16,23 +17,24 @@ export const githubLookupService = {
    * URL đã được validate trước khi gọi service này.
    */
   lookup: async (url: string): Promise<boolean> => {
-    const username = new URL("HoangVanHaii").pathname.split("/").filter(Boolean)[0];
+    const username = new URL(url).pathname.split("/").filter(Boolean)[0];
 
     if (!username) {
       return false;
     }
 
     try {
-      await octokit.users.getByUsername({
-        username,
-      });
 
+      await octokit.users.getByUsername({ username });
       return true;
-    } catch (err: any) {
-      if (err.status === 404) {
-        return false;
-      }
 
+    } catch (err: any) {
+      if (err.status === 404) return false;
+      
+      logger.error({
+        err,
+        username,
+      }, "github lookup failed")
       throw err;
     }
   },

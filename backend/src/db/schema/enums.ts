@@ -6,7 +6,7 @@ import { pgEnum } from 'drizzle-orm/pg-core';
 export const userRoleEnum = pgEnum('user_role', ['candidate', 'employer', 'admin']);
 export const userStatusEnum = pgEnum('user_status', ['active', 'suspended', 'pending', 'banned']);
 export const oauthProviderEnum = pgEnum('oauth_provider', ['google', 'facebook', 'github']);
-export const jobStatusEnum = pgEnum('job_status', ['draft', 'pending', 'live', 'expired', 'closed']);
+export const jobStatusEnum = pgEnum('job_status', ['draft', 'pending', 'ai_scanning', 'ai_flagged', 'live', 'expired', 'closed']);
 export const jobLevelEnum = pgEnum('job_level', ['intern', 'fresher', 'junior', 'mid', 'senior', 'lead', 'manager']);
 export const jobTypeEnum = pgEnum('job_type', ['full-time', 'part-time', 'contract', 'internship', 'freelance']);
 export const applicationStatusEnum = pgEnum('application_status', [
@@ -27,3 +27,5 @@ export const cvStatusEnum = pgEnum('cv_status', [
   'deleted',
 ]);
 export const cvSourceEnum = pgEnum('cv_source', ['upload', 'direct']);
+export const scanVerdictEnum = pgEnum('scan_verdict', ['approved', 'flagged']);
+export const flagSeverityEnum = pgEnum('flag_severity', ['block', 'warn']);

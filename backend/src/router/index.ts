@@ -15,15 +15,12 @@ import { resumeRouter } from './resume';
 import { messageRouter } from './message';
 import { savedJobRouter } from './savedJob';
 import { searchRouter } from './search';
-import { aiRouter } from './ai';
 import { paymentRouter } from './payment';
 import { webhooksRouter } from './webhooks';
 import { adminRouter } from './admin';
 // Phase 2 & 3
-import { scanRouter } from './scan';
 import { githubRouter } from './github';
 import { referenceRouter } from './reference';
-import { testRouter } from './test';
 import { scheduleRouter } from './schedule';
 import { dialogflowRouter } from './dialogflow';
 import { notificationRouter } from "./notification";
@@ -47,7 +44,6 @@ apiRouter.use('/resumes', resumeRouter);
 apiRouter.use('/messages', messageRouter);
 apiRouter.use('/saved-jobs', savedJobRouter);
 apiRouter.use('/search', searchRouter);
-apiRouter.use('/ai', aiRouter);
 apiRouter.use('/', paymentRouter);
 apiRouter.use('/webhooks', webhooksRouter);
 apiRouter.use('/admin', adminRouter);
@@ -57,10 +53,8 @@ apiRouter.use("/cvs", cvRouter)
 apiRouter.use("/uploads", uploadRouter);
 apiRouter.use("/skills", candidateSkillRouter);
 // Phase 2
-apiRouter.use('/scan', scanRouter);
 apiRouter.use('/github', githubRouter);
 apiRouter.use('/references', referenceRouter);
 // Phase 3
-apiRouter.use('/tests', testRouter);
 apiRouter.use('/schedule', scheduleRouter);
 apiRouter.use('/dialogflow', dialogflowRouter);

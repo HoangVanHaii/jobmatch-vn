@@ -3,7 +3,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { users } from './users';
 import { cvStatusEnum, cvSourceEnum } from './enums';
-import type { AiScore } from '../../interface/cv';
+import type { AiAnalysis } from '../../interface/cv';
 
 /**
  * CV của candidate — 2 loại:
@@ -26,11 +26,12 @@ export const cvs = pgTable('cvs', {
     name?: string;
     email?: string;
     phone?: string;
-    portfolio?: string;
-    github?: string;
-    linkedin?: string;
-    facebook?: string;
-    avatarUrl?: string;
+    // URL fields cho phép null: PATCH semantics (RFC 7396) — null = xoá field.
+    portfolio?: string | null;
+    github?: string | null;
+    linkedin?: string | null;
+    facebook?: string | null;
+    avatarUrl?: string | null;
     summary?: string;
     education?: Array<Record<string, unknown>>;
     experience?: Array<Record<string, unknown>>;
@@ -39,7 +40,7 @@ export const cvs = pgTable('cvs', {
     projects?: Array<Record<string, unknown>>;
     certifications?: Array<Record<string, unknown>>;
   }>(),
-  aiScore: jsonb('ai_score').$type<AiScore>(),
+  ai_analysis: jsonb('ai_analysis').$type<AiAnalysis>(),
   scoreUpdatedAt: timestamp('score_updated_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

@@ -1,12 +1,9 @@
 import type { cvs } from "../db/schema/cvs";
 import type { cvStatusEnum, cvSourceEnum } from "../db/schema/enums";
 
-/**
- * Shape của cột `ai_score` jsonb — do AI chấm sau khi parse CV xong.
- * Single source of truth: BE Drizzle schema + BE interface + FE types đều
- * dùng shape này (FE copy thủ công vì FE chưa share types với BE).
- */
-export interface AiScore {
+
+export interface AiAnalysis {
+  isCv: boolean;
   total: number;
   strengths: string[];
   weaknesses: string[];
@@ -39,37 +36,28 @@ export interface ListCv {
   templateId: number | null;
   status: CvStatus;
   source: CvSource;
-  aiScoreTotal: number | null;
+  aiAnalysisTotal: number | null;
 }
 
 export type CreateCvResponse = Cv;
 
-/* ============================================================================
- * Response của GET /cvs — phân trang.
- * - items: trang hiện tại (limit rows, bắt đầu từ offset).
- * - total: tổng số CV khớp filter (không phụ thuộc limit/offset) — FE dùng
- *   để tính tổng số trang.
- * ==========================================================================*/
+
 export interface ListCvResponse {
   items: ListCv[];
   total: number;
 }
 
-/* ============================================================================
- * Direct CV (web form, không upload file) — lưu vào cvs.parsedData jsonb.
- * Schema parse_data trong DB dùng Record<string, unknown> cho items → các
- * interface dưới đây có field typed chặt hơn, Drizzle sẽ cast tự động.
- * ==========================================================================*/
 
 export interface DirectCvContact {
   name?: string;
   email?: string;
   phone?: string;
-  portfolio?: string;
-  github?: string;
-  linkedin?: string;
-  facebook?: string;
-  avatarUrl?: string;
+  // URL fields cho phép null: PATCH semantics (RFC 7396) — null = xoá field.
+  portfolio?: string | null;
+  github?: string | null;
+  linkedin?: string | null;
+  facebook?: string | null;
+  avatarUrl?: string | null;
 }
 
 export interface DirectCvEducation {
@@ -97,7 +85,7 @@ export interface DirectCvLanguage {
 export interface DirectCvProject {
   name: string;
   description?: string;
-  link?: string;
+  link?: string | null;
 }
 
 export interface DirectCvCertification {
@@ -107,11 +95,6 @@ export interface DirectCvCertification {
 }
 
 
-/**
- * Body của POST /cvs/direct — user nhập CV thủ công qua form web.
- * - title, templateId bắt buộc.
- * - các field khác optional.
- */
 export interface CreateDirectCvInput {
   title: string;
   templateId: number;
@@ -126,22 +109,20 @@ export interface CreateDirectCvInput {
   certifications?: DirectCvCertification[];
 }
 
-/* ============================================================================
- * GET /cvs/:cvId — 1 endpoint duy nhất, trả về toàn bộ row.
- *
- * Trả luôn `Cv` (drizzle inferred type) — đã có đủ mọi field:
- * id, candidateId, title, fileUrl, fileType, isPrimary, status, source,
- * templateId, parsedData, aiScore, scoreUpdatedAt, createdAt, updatedAt.
- *
- * FE đọc `source` để switch UX:
- * - source='upload': dùng fileUrl để mở file gốc; parsedData do AI sở hữu.
- * - source='direct': dùng templateId để render; parsedData là form user nhập.
- *
- * Vài field có thể null:
- * - fileUrl/fileType: NULL với direct CV.
- * - templateId: NULL với upload CV.
- * - parsedData: NULL khi upload CV status=pending/parsing/failed.
- * - aiScore/scoreUpdatedAt: NULL khi upload CV chưa score xong, hoặc luôn NULL với direct.
- * ==========================================================================*/
+
+export interface UpdateDirectCvInput {
+  title?: string;
+  parsedData?: Pick<
+    CreateDirectCvInput,
+    | "summary"
+    | "contact"
+    | "education"
+    | "experience"
+    | "skills"
+    | "languages"
+    | "projects"
+    | "certifications"
+  >;
+}
 
 export type CvDetail = Cv;

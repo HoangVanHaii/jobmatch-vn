@@ -16,6 +16,7 @@ import { cvApi } from '@services/cv.api';
 import type {
   CvDetail,
   CvSource,
+  CvStatus,
   ListCv,
   ListCvQuery,
 } from '@/types/cv';
@@ -126,6 +127,38 @@ export const useCvStore = defineStore('cv', () => {
     }
   };
 
+  /**
+   * Patch status của 1 CV trong local list — dùng khi nhận socket
+   * `cv:status-changed` từ BE (worker xong analyze / PATCH trigger / failed).
+   * Không gọi API — chỉ đồng bộ UI với state BE vừa báo.
+   * Nếu CV không có trong list hiện tại (do pagination) → bỏ qua.
+   */
+  const updateStatus = (cvId: string, status: CvStatus): void => {
+    const idx = items.value.findIndex((c) => c.id === cvId);
+    if (idx === -1) return;
+    items.value[idx] = { ...items.value[idx], status };
+  };
+
+  /**
+   * Re-fetch detail 1 CV để lấy aiAnalysisTotal mới (sau khi status='ready').
+   * Im lặng nếu lỗi — list vẫn hiển thị status cũ.
+   */
+  const refreshDetail = async (cvId: string): Promise<void> => {
+    try {
+      const { data } = await cvApi.getDetail(cvId);
+      const updated = data.data;
+      const idx = items.value.findIndex((c) => c.id === cvId);
+      if (idx === -1) return;
+      items.value[idx] = {
+        ...items.value[idx],
+        status: updated.status,
+        aiAnalysisTotal: updated.aiAnalysis?.total ?? null,
+      };
+    } catch {
+      // ignore — UI vẫn giữ state cũ
+    }
+  };
+
   return {
     // state
     items, total, page, pageSize, loading, error, query,
@@ -133,5 +166,6 @@ export const useCvStore = defineStore('cv', () => {
     primary, totalPages,
     // actions
     fetchList, fetchDetail, setPrimary, remove,
+    updateStatus, refreshDetail,
   };
 });

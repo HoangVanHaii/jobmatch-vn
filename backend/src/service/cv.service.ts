@@ -1,16 +1,16 @@
 import { db } from "../config/database";
 import { cvs } from "../db/schema";
 import { desc, eq, and, ne, sql } from "drizzle-orm";
-import type { CreateCvInput, CreateDirectCvInput, Cv, CvDetail, CvStatus, CvSource, ListCvResponse, AiScore } from "../interface/cv";
+import type { CreateCvInput, CreateDirectCvInput, Cv, VerificationWarning, CvDetail, CvStatus, CvSource, ListCvResponse, AiAnalysis, UpdateDirectCvInput } from "../interface/cv";
 import { notificationGateway } from "../socket/notificationGateway";
 import { githubLookupService } from "./githubLookup.service";
 import { logger } from "../config/logger";
+import { redis } from "../config/redis";
+import { cvAnalysisQueue, cvParsingQueue } from "../config/queue";
+import { AppError } from "../middleware/errorHandler";
 
 
-/**
- * Tạo parsedData từ input form direct CV.
- * Helper tách ra để tránh duplicate code giữa 2 path (có/không isPrimary).
- */
+
 const buildParsedData = (input: CreateDirectCvInput): NonNullable<typeof cvs.$inferSelect.parsedData> => {
   const parsedData: NonNullable<typeof cvs.$inferSelect.parsedData> = {};
   if (input.contact) {
@@ -33,8 +33,62 @@ const buildParsedData = (input: CreateDirectCvInput): NonNullable<typeof cvs.$in
   return parsedData;
 };
 
-const LINKEDIN_URL_RE = /^https?:\/\/(www\.)?linkedin\.com\/in\/[A-Za-z0-9_-]+\/?$/;
-const GITHUB_URL_RE = /^https?:\/\/(www\.)?github\.com\/[A-Za-z0-9_-]+\/?$/;
+/**
+ * Deep merge `update` vào `target` — RFC 7396 (JSON Merge Patch) semantics.
+ * Dùng cho PATCH /cvs/:cvId để chỉ update field user gửi, giữ nguyên các
+ * field khác trong parsedData.
+ *
+ * - Field không có trong `update` → giữ nguyên từ `target`.
+ * - `null` trong `update` → xoá field kh�i kết quả.
+ * - Primitive (string/number/boolean) → replace.
+ * - Object (không phải array) → đệ quy merge.
+ * - Array → REPLACE toàn bộ (theo RFC 7396 — không concat).
+ * - `undefined` → bỏ qua (giữ giá trị target, không xoá).
+ *
+ * Không mutate `target` — trả về object mới.
+ */
+export const deepMerge = (
+  target: Record<string, unknown>,
+  update: Record<string, unknown>,
+): Record<string, unknown> => {
+  const result: Record<string, unknown> = { ...target };
+
+  for (const key of Object.keys(update)) {
+    const sourceVal = update[key];
+    const targetVal = target[key];
+
+    // null = xoá field
+    if (sourceVal === null) {
+      delete result[key];
+      continue;
+    }
+
+    // Cả 2 là plain object → đệ quy merge
+    if (
+      typeof sourceVal === "object" &&
+      !Array.isArray(sourceVal) &&
+      targetVal !== null &&
+      typeof targetVal === "object" &&
+      !Array.isArray(targetVal)
+    ) {
+      result[key] = deepMerge(
+        targetVal as Record<string, unknown>,
+        sourceVal as Record<string, unknown>,
+      );
+      continue;
+    }
+
+    // undefined → bỏ qua, giữ giá trị target
+    if (sourceVal === undefined) {
+      continue;
+    }
+
+    // Primitive / array → replace
+    result[key] = sourceVal;
+  }
+
+  return result;
+};
 
 export const cvService = {
   /**
@@ -54,6 +108,7 @@ export const cvService = {
         source: "upload",
       })
       .returning();
+    await cvParsingQueue.add("cv-parse", { cvId: cv.id });
 
     return cv;
   },
@@ -82,7 +137,7 @@ export const cvService = {
     const whereExpr = and(...whereClauses);
 
     // Items của trang hiện tại.
-    // `aiScoreTotal` chỉ lấy con số `total` từ jsonb (response gọn) —
+    // `aiAnalysisTotal` chỉ lấy con số `total` từ jsonb (response gọn) —
     // full object xem � GET /cvs/:cvId.
     const rows = await db
       .select({
@@ -95,7 +150,9 @@ export const cvService = {
         templateId: cvs.templateId,
         status: cvs.status,
         source: cvs.source,
-        aiScoreTotal: sql<number | null>`(${cvs.aiScore}->>'total')::int`,
+        aiAnalysisTotal: sql<
+          number | null
+        >`(${cvs.ai_analysis}->>'total')::int`,
       })
       .from(cvs)
       .where(whereExpr)
@@ -114,13 +171,13 @@ export const cvService = {
 
   /**
    * GET /cvs/:cvId — trả về toàn bộ row (1 endpoint duy nhất).
-   * Bao gồm: summary fields + parsedData + aiScore + scoreUpdatedAt.
+   * Bao gồm: summary fields + parsedData + aiAnalysis + scoreUpdatedAt.
    *
    * Vài field nullable tùy `source`:
    * - fileUrl/fileType: NULL với direct CV; có với upload CV.
    * - templateId: NULL với upload CV; có (1-5) với direct CV.
    * - parsedData: NULL khi upload CV đang pending/parsing/failed; có khi 'ready'.
-   * - aiScore/scoreUpdatedAt: NULL khi upload CV chưa score, hoặc luôn NULL với direct.
+   * - aiAnalysis/scoreUpdatedAt: NULL khi upload CV chưa analyze, hoặc luôn NULL với direct.
    *
    * Trả null nếu không tồn tại / không thuộc candidate / đã soft-delete.
    */
@@ -195,7 +252,7 @@ export const cvService = {
       templateId: input.templateId,
       parsedData,
       source: "direct" as const,
-      status: "ready" as const,
+      status: "pending" as const,
     };
 
     if (input.isPrimary === true) {
@@ -210,6 +267,8 @@ export const cvService = {
           .insert(cvs)
           .values({ ...baseValues, isPrimary: true })
           .returning();
+
+        await cvAnalysisQueue.add("cv-analysis", { cvId: cv.id });
         return cv;
       });
     }
@@ -218,7 +277,85 @@ export const cvService = {
       .insert(cvs)
       .values({ ...baseValues, isPrimary: false })
       .returning();
+
+    await cvAnalysisQueue.add("cv-analysis", { cvId: cv.id });
     return cv;
+  },
+
+  update: async (
+    candidateId: string,
+    cvId: string,
+    input: UpdateDirectCvInput,
+  ): Promise<Cv | null> => {
+    return db.transaction(async (tx) => {
+      // 1. Verify ownership + source.
+      const [target] = await tx
+        .select({ id: cvs.id, source: cvs.source })
+        .from(cvs)
+        .where(
+          and(
+            eq(cvs.id, cvId),
+            eq(cvs.candidateId, candidateId),
+            ne(cvs.status, "deleted"),
+          ),
+        )
+        .limit(1);
+
+      if (!target) return null;
+      if (target.source !== "direct") {
+        throw new AppError(
+          400,
+          "INVALID_SOURCE",
+          "Cannot update upload CV via this endpoint",
+        );
+      }
+
+      // 2. Nếu user gửi parsedData → load existing + deep merge (RFC 7396).
+      // Nếu không gửi → giữ nguyên parsedData trong DB.
+      let mergedParsedData: NonNullable<
+        typeof cvs.$inferSelect.parsedData
+      > | undefined;
+
+      if (input.parsedData !== undefined) {
+        const [existing] = await tx
+          .select({ parsedData: cvs.parsedData })
+          .from(cvs)
+          .where(eq(cvs.id, cvId))
+          .limit(1);
+
+        mergedParsedData = deepMerge(
+          (existing?.parsedData ?? {}) as Record<string, unknown>,
+          input.parsedData as unknown as Record<string, unknown>,
+        ) as NonNullable<typeof cvs.$inferSelect.parsedData>;
+      }
+
+      // 3. Build SET fields — luôn reset status/ai_analysis/scoreUpdatedAt vì
+      // content (có thể) đã đổi, analysis cũ stale.
+      const setFields: Partial<typeof cvs.$inferInsert> = {
+        status: "parsing",
+        ai_analysis: null,
+        scoreUpdatedAt: null,
+        updatedAt: new Date(),
+      };
+      if (input.title !== undefined) {
+        setFields.title = input.title;
+      }
+      if (mergedParsedData !== undefined) {
+        setFields.parsedData = mergedParsedData;
+      }
+
+      const [updated] = await tx
+        .update(cvs)
+        .set(setFields)
+        .where(eq(cvs.id, cvId))
+        .returning();
+
+      if (!updated) return null;
+
+      await cvAnalysisQueue.add("cv-analysis", { cvId: updated.id });
+
+      return updated;
+    });
   },
   softDelete: async (cvId: string, candidateId: string): Promise<Cv | null> => {
     return db.transaction(async (tx) => {
@@ -264,21 +401,15 @@ export const cvService = {
       return deleted ?? null;
     });
   },
-  chageStatus: async (
+  changeStatus: async (
     candidateId: string,
     cvId: string,
-    newStatus: Exclude<CvStatus, "pending" | "deleted">,
+    newStatus: CvStatus,
   ): Promise<boolean> => {
     const [updated] = await db
       .update(cvs)
       .set({ status: newStatus, updatedAt: new Date() })
-      .where(
-        and(
-          eq(cvs.id, cvId),
-          eq(cvs.candidateId, candidateId),
-          ne(cvs.status, "deleted"),
-        ),
-      )
+      .where(and(eq(cvs.id, cvId), ne(cvs.status, "deleted")))
       .returning({ id: cvs.id });
     if (!updated) return false;
 
@@ -288,10 +419,62 @@ export const cvService = {
     });
     return true;
   },
+
+  changeAnalysisAsNotCv: async (
+    candidateId: string,
+    cvId: string,
+  ): Promise<boolean> => {
+    const [updated] = await db
+      .update(cvs)
+      .set({
+        ai_analysis: {
+          isCv: false,
+          total: 0,
+          strengths: [],
+          weaknesses: [],
+          suggestions: [],
+          verificationWarnings: [],
+        },
+        status: "failed",
+        updatedAt: new Date(),
+      })
+      .where(and(eq(cvs.id, cvId), ne(cvs.status, "deleted")))
+      .returning({ id: cvs.id });
+    if (!updated) return false;
+
+    notificationGateway.emitToUser(candidateId, "cv:status-changed", {
+      cvId,
+      status: "failed",
+    });
+    return true;
+  },
+  changeAnalysisAsReady: async (
+    candidateId: string,
+    cvId: string,
+    analysis: AiAnalysis,
+  ): Promise<boolean> => {
+    const [updated] = await db
+      .update(cvs)
+      .set({
+        ai_analysis: analysis,
+        status: "ready",
+        scoreUpdatedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(cvs.id, cvId), ne(cvs.status, "deleted")))
+      .returning({ id: cvs.id });
+    if (!updated) return false;
+
+    notificationGateway.emitToUser(candidateId, "cv:status-changed", {
+      cvId,
+      status: "ready",
+    });
+    return true;
+  },
   saveParseData: async (
     cvId: string,
     title: string,
-    data: NonNullable<typeof cvs.$inferSelect.parsedData>
+    data: NonNullable<typeof cvs.$inferSelect.parsedData>,
   ): Promise<Cv | null> => {
     const [row] = await db
       .update(cvs)
@@ -299,64 +482,65 @@ export const cvService = {
         title,
         parsedData: data,
       })
-      .where(
-        and(
-          eq(cvs.id, cvId),
-          ne(cvs.status, 'deleted')
-        )
-      )
+      .where(and(eq(cvs.id, cvId), ne(cvs.status, "deleted")))
       .returning();
-    
+
     if (!row) return null;
     return row;
   },
-  saveAiScore: async(
-    cvId: string,
-    score: AiScore
-  ): Promise<Cv | null> => {
-    const [row] = await db
-      .update(cvs)
-      .set({
-        aiScore: score,
-        scoreUpdatedAt: new Date(),
-        updatedAt: new Date()
-      })
-      .where(
-        and(
-          eq(cvs.id, cvId),
-          ne(cvs.status, 'deleted')
-        )
-      )
-      .returning();
-    return row ?? null;
-  },
-
-  validateGithubUrl: async (url: string): Promise<void> => {
+  validateGithubUrl: async (
+    url: string,
+  ): Promise<VerificationWarning | null> => {
+    const GITHUB_URL_RE = /^(https?:\/\/)?(www\.)?github\.com\/[A-Za-z0-9-]+\/?$/i;
     if (!GITHUB_URL_RE.test(url)) {
-      throw new Error(`Invalid GitHub URL format: ${url}`);
+      return {
+        type: "github",
+        url,
+        message:
+          "Đường link GitHub không đúng định dạng. Vui lòng kiểm tra lại!",
+      };
     }
     try {
-      const exist = await githubLookupService.lookup(url);
-      if (!exist) {
-        throw new Error(`GitHub user không tồn tại: ${url}`);
-      }
-    } catch (err) {
-      console.error("")
+      const exists = await githubLookupService.lookup(url);
+
+      if (exists) return null;
+
+      return {
+        type: "github",
+        url,
+        message:
+          "Không tìm thấy tài khoản GitHub này. Vui lòng kiểm tra lại đường dẫn.",
+      } as VerificationWarning;
+    } catch {
+      return null;
     }
   },
 
-  validateLinkedinUrl: (url: string): void => {
+  validateLinkedinUrl: async (
+    url: string,
+  ): Promise<VerificationWarning | null> => {
+    const LINKEDIN_URL_RE = /^(https?:\/\/)?(www\.)?linkedin\.com\/in\/[A-Za-z0-9-]+\/?$/i;
     if (!LINKEDIN_URL_RE.test(url)) {
-      throw new Error(`Invalid LinkedIn URL format: ${url}`);
+      return {
+        type: "linkedin",
+        url,
+        message: "Đường link này không đúng định dạng. Vui lòng kiểm tra lại!",
+      } as VerificationWarning;
     }
+    return null;
   },
-
-  validateContactUrls: async (
-    contact: { github?: string; linkedin?: string } | null | undefined,
-  ): Promise<void> => {
-    if (!contact) return;
-    if (contact.github) await cvService.validateGithubUrl(contact.github);
-    if (contact.linkedin) cvService.validateLinkedinUrl(contact.linkedin);
+  buildVerificationWarnings: async (
+    parsedData: NonNullable<typeof cvs.$inferSelect.parsedData>,
+  ): Promise<VerificationWarning[]> => {
+    const warnings: VerificationWarning[] = [];
+    if (parsedData.github) {
+      const w = await cvService.validateGithubUrl(parsedData.github);
+      if (w) warnings.push(w);
+    }
+    if (parsedData.linkedin) {
+      const w = await cvService.validateLinkedinUrl(parsedData.linkedin);
+      if (w) warnings.push(w);
+    }
+    return warnings;
   },
-
 };

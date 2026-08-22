@@ -23,6 +23,7 @@ import { useCvStore } from '@stores/cv';
 import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue';
 import CVTemplateMockup from '@components/cv/CVTemplateMockup.vue';
 import type { CvRenderData, CvSource, CvStatus, ListCv, CvDetail } from '@/types/cv';
+import { useSocket } from '@composables/useSocket';
 
 const router = useRouter();
 const cvStore = useCvStore();
@@ -61,6 +62,31 @@ const goToPage = async (p: number) => {
 
 onMounted(loadList);
 watch(() => router.currentRoute.value.fullPath, () => loadList());
+
+/* ============================================================================
+ * Socket: BE worker / PATCH sẽ emit `cv:status-changed` khi status CV đổi
+ * (`pending → parsing → ready | failed`). Lắng nghe để cập nhật UI realtime,
+ * tránh user phải F5 thủ công.
+ *
+ * Payload BE (xem cv.service.ts changeStatus / changeAnalysisAsReady):
+ *   { cvId: string; status: CvStatus }
+ *
+ * - status='parsing' / 'failed' / ...  → patch ngay status trong list.
+ * - status='ready'                     → patch + refresh detail để lấy
+ *                                         aiAnalysisTotal mới (score vừa chấm).
+ * ==========================================================================*/
+useSocket('cv:status-changed', async (payload: { cvId: string; status: CvStatus }) => {
+  const { cvId, status } = payload;
+  if (!cvId || !status) return;
+
+  // 1. Patch status ngay (UI phản hồi tức thì)
+  cvStore.updateStatus(cvId, status);
+
+  // 2. Khi ready → fetch lại detail để lấy aiAnalysisTotal
+  if (status === 'ready') {
+    await cvStore.refreshDetail(cvId);
+  }
+});
 
 /* ============================================================================
  * Filter phía client theo search (lọc nhẹ trên list hiện tại)
@@ -495,12 +521,12 @@ const handleUploadClick = (): void => {
 
               <div class="flex items-center gap-1 shrink-0">
                 <span
-                  v-if="cv.aiScoreTotal !== null"
+                  v-if="cv.aiAnalysisTotal !== null"
                   class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-700"
-                  :title="`AI score: ${cv.aiScoreTotal}/100`"
+                  :title="`AI score: ${cv.aiAnalysisTotal}/100`"
                 >
                   <Sparkles class="w-2.5 h-2.5" />
-                  {{ cv.aiScoreTotal }}
+                  {{ cv.aiAnalysisTotal }}
                 </span>
                 <span
                   v-if="cv.source === 'direct' && getTemplateId(cv)"

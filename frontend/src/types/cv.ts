@@ -6,10 +6,8 @@
 export type CvSource = 'upload' | 'direct';
 export type CvStatus = 'pending' | 'parsing' | 'ready' | 'failed' | 'deleted';
 
-/* ============================================================================
- * AI grading (BE lưu ở cột `ai_score` jsonb — copy shape từ backend/src/interface/cv.ts).
- * ==========================================================================*/
-export interface AiScore {
+export interface AiAnalysis {
+  isCv: boolean;
   total: number;
   strengths: string[];
   weaknesses: string[];
@@ -21,20 +19,21 @@ export interface VerificationWarning {
   url: string;
   message: string;
 }
-
 /* ============================================================================
  * Direct CV — payload từ form web (CreateResumeView)
+ * URL fields cho phép null: theo RFC 7396 (JSON Merge Patch) — null = xoá field.
+ * Khi PATCH /cvs/:cvId, FE có thể gửi `contact.facebook: null` để clear link.
  * ==========================================================================*/
 
 export interface DirectCvContact {
   name?: string;
   email?: string;
   phone?: string;
-  portfolio?: string;
-  github?: string;
-  linkedin?: string;
-  facebook?: string;
-  avatarUrl?: string;
+  portfolio?: string | null;
+  github?: string | null;
+  linkedin?: string | null;
+  facebook?: string | null;
+  avatarUrl?: string | null;
 }
 
 export interface DirectCvEducation {
@@ -62,7 +61,8 @@ export interface DirectCvLanguage {
 export interface DirectCvProject {
   name: string;
   description?: string;
-  link?: string;
+  /** URL cho phép null: PATCH có thể gửi null để clear link. */
+  link?: string | null;
 }
 
 export interface DirectCvCertification {
@@ -113,7 +113,7 @@ export interface Cv {
   source: CvSource;
   templateId: number | null;
   parsedData: Record<string, unknown> | null;
-  aiScore: AiScore | null;
+  ai_analysis: AiAnalysis | null;
   scoreUpdatedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -124,7 +124,7 @@ export type CvDetail = Cv;
 /** Row rút gọn trong list GET /cvs
  *  - templateId: chỉ có với source='direct' (1-5); null với source='upload'.
  *    Thumbnail dùng field này để render template mockup (KHÔNG render CV thật).
- *  - aiScoreTotal: chỉ trả con số `total` (extract từ jsonb) để response gọn.
+ *  - aiAnalysisTotal: chỉ trả con số `total` (extract từ jsonb) để response gọn.
  *    Xem full object (strengths/weaknesses/suggestions) ở `GET /cvs/:cvId`. */
 export interface ListCv {
   id: string;
@@ -136,7 +136,7 @@ export interface ListCv {
   status: CvStatus;
   source: CvSource;
   templateId: number | null;
-  aiScoreTotal: number | null;
+  aiAnalysisTotal: number | null;
 }
 
 /** Query param GET /cvs — pagination + filter. */

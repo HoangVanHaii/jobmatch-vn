@@ -7,7 +7,14 @@ import { env } from '../config/env';
 import type { JwtPayload } from './auth';
 
 export const socketAuth = (socket: Socket, next: (err?: Error) => void): void => {
-  const token = socket.handshake.auth?.token;
+  let token = socket.handshake.auth?.token;
+  if (!token) {
+    const authorization = socket.handshake.headers.authorization;
+
+    if (authorization?.startsWith('Bearer ')) {
+      token = authorization.substring(7);
+    }
+  }
   if (!token) return next(new Error('Missing auth token'));
   try {
     const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as JwtPayload;

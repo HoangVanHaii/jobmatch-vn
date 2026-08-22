@@ -21,3 +21,8 @@ export * from './test';
 export * from './interview';
 // Workflow + email logs
 export * from './workflowLogs';
+// AI job moderation
+export * from './jobAiScans';
+export * from './jobAiFlags';
+// Embeddings (pgvector — polymorphic: contentType + contentId)
+export * from './embeddings';
