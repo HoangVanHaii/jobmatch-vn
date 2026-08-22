@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { cvService } from '../service/cv.service';
-import type { CreateCvInput, CreateDirectCvInput, CvSource } from '../interface/cv';
+import type { CreateCvInput, CreateDirectCvInput, CvSource, UpdateDirectCvInput } from '../interface/cv';
 import { AppError } from "../middleware/errorHandler";
-import { create } from 'domain';
+import { notificationGateway } from "../socket/notificationGateway";
 
 
 const requireSelfCandidateId = (req: Request): string => {
@@ -88,9 +88,32 @@ export const cvController = {
       const body = req.body as CreateDirectCvInput;
       const cv = await cvService.create(candidateId, body);
       res.status(201).json({ success: true, data: cv });
-      
+
     } catch (err) {
       console.error('[cv.create] error:', err);
+      next(err);
+    }
+  },
+
+  update: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const candidateId = requireSelfCandidateId(req);
+      const { cvId } = req.params as { cvId: string };
+      const body = req.body as UpdateDirectCvInput;
+
+      const updated = await cvService.update(candidateId, cvId, body);
+      if (!updated) {
+        throw new AppError(404, 'CV_NOT_FOUND', 'CV not found or already deleted');
+      }
+
+      notificationGateway.emitToUser(candidateId, "cv:status-changed", {
+        cvId,
+        status: updated.status,
+      });
+
+      res.json({ success: true, data: updated });
+    } catch (err) {
+      console.error('[cv.update] error:', err);
       next(err);
     }
   },

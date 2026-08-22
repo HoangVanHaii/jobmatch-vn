@@ -1,6 +1,3 @@
-/**
- * BullMQ queues — email, AI, indexing, export
- */
 import { Queue } from 'bullmq';
 import { redis } from './redis';
 
@@ -18,13 +15,20 @@ export const emailQueue = new Queue('email', queueOptions);
 export const aiQueue = new Queue('ai', queueOptions);
 export const indexingQueue = new Queue('indexing', queueOptions);
 export const exportQueue = new Queue('export', queueOptions);
+export const jobModerationQueue = new Queue('jobModeration', queueOptions);
+export const jobEmbeddingQueue = new Queue('jobEmbedding', queueOptions);
+export const cvParsingQueue = new Queue('cvParsing', queueOptions);
+export const cvAnalysisQueue = new Queue('cvAnalysis', queueOptions);
 
 export type JobName =
-  | 'send-email'
-  | 'cv-parse'
-  | 'cv-score'
-  | 'match-compute'
-  | 'jd-generate'
-  | 'cover-letter'
-  | 'reindex'
-  | 'export-csv';
+  | "send-email"
+  | "cv-parse"
+  | "cv-analysis"
+  | "cv-score"
+  | "match-compute"
+  | "jd-generate"
+  | "cover-letter"
+  | "reindex"
+  | "export-csv"
+  | "job-scan"
+  | "embed-job";

@@ -194,7 +194,7 @@ CREATE TABLE cvs (
   source            cv_source NOT NULL DEFAULT 'upload',
   template_id       INTEGER,
   parsed_data       JSONB,
-  ai_score          JSONB,
+  ai_analysis       JSONB,
   score_updated_at  TIMESTAMPTZ,
   created_at        TIMESTAMPTZ DEFAULT now(),
   updated_at        TIMESTAMPTZ DEFAULT now()
