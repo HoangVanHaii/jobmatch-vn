@@ -2,29 +2,23 @@
  * Worker registry — start tất cả workers khi app boot
  */
 import { cvParseWorker } from './cvParse.worker';
-import { cvScoreWorker } from './cvScore.worker';
 import { emailWorker } from './email.worker';
 import { matchingWorker } from './matching.worker';
-import { cvScanWorker } from './cvScan.worker';
-import { githubLookupWorker } from './githubLookup.worker';
 import { interviewReminderWorker } from './interviewReminder.worker';
-import { aiTestGenerateWorker } from './aiTestGenerate.worker';
 import { jobModerationWorker } from './jobModeration.worker';
 import { jobEmbeddingWorker } from './jobEmbedding.worker';
 import { jobExpiryWorker, scheduleJobExpiry } from './jobExpiry.worker';
 import { logger } from '../config/logger';
 import { Queue } from 'bullmq';
 import { redis } from '../config/redis';
+import { cvAnalysisWorker } from './cvAnalysis.worker';
 
 export const startWorkers = (): void => {
+  void cvAnalysisWorker;
   void cvParseWorker;
-  void cvScoreWorker;
   void emailWorker;
   void matchingWorker;
-  void cvScanWorker;
-  void githubLookupWorker;
   void interviewReminderWorker;
-  void aiTestGenerateWorker;
   void jobModerationWorker;
   void jobEmbeddingWorker;
   void jobExpiryWorker;

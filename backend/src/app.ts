@@ -18,8 +18,9 @@ export const createApp = (): Application => {
   // Trust proxy nếu chạy sau Nginx/Cloudflare
   app.set('trust proxy', 1);
 
-  // Security
-  app.use(helmet());
+  // Security — disable X-Frame-Options để iframe có thể nhúng file PDF/ảnh
+  // từ MinIO (cross-origin). CORS ở dưới vẫn bảo vệ API.
+  app.use(helmet({ frameguard: false }));
   app.use(cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173',
     credentials: true,

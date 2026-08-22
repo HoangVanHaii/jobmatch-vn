@@ -18,6 +18,14 @@ export const companyStatusEnum = pgEnum('company_status', ['active', 'banned', '
 export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'member']);
 export const companyMemberStatusEnum = pgEnum('company_member_status', ['active', 'invited', 'inactive']);
 export const notificationTypeEnum = pgEnum('notification_type', ['company_invite', 'job_match', 'message', 'system']);
+export const skillStatusEnum = pgEnum('skill_status', ['active', 'deleted']);
+export const cvStatusEnum = pgEnum('cv_status', [
+  'pending',
+  'parsing',
+  'ready',
+  'failed',
+  'deleted',
+]);
+export const cvSourceEnum = pgEnum('cv_source', ['upload', 'direct']);
 export const scanVerdictEnum = pgEnum('scan_verdict', ['approved', 'flagged']);
 export const flagSeverityEnum = pgEnum('flag_severity', ['block', 'warn']);
-export const skillStatusEnum = pgEnum('skill_status', ['active', 'deleted']);

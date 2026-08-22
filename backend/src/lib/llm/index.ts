@@ -19,7 +19,6 @@ export {
 export {
   buildJobEmbeddingText,
   embedText,
-  embedTexts,
   getJobEmbedding,
   upsertJobEmbedding,
   searchSimilarJobs,
@@ -28,3 +27,16 @@ export {
   type SemanticSearchOpts,
   type SemanticSearchResult,
 } from './jobEmbedding';
+
+export {
+    cvParsedDataSchema,
+    type CvParsedData,
+    invokeCvParse
+} from './cvParse'
+
+export {
+    cvAnalysisSchema,
+    type AiAnalysis,
+    invokeCvAnalysis
+} from './cvAnalysis'
+export { isRateLimited, waitForRateLimit } from "./errors";

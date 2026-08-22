@@ -19,20 +19,24 @@ const routes: RouteRecordRaw[] = [
   { path: '/search', name: 'search', component: () => import('@views/SearchView.vue') },
 
   // Candidate
-  // {
-  //   path: '/candidate',
-  //   meta: { auth: true, role: 'candidate' },
-  //   children: [
-  //     { path: '', name: 'candidate-dashboard', component: () => import('@views/candidate/CandidateDashboard.vue') },
-  //     { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
-  //     { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
-  //     { path: 'resumes/:id', name: 'resume-detail', component: () => import('@views/candidate/ResumeDetailView.vue') },
-  //     { path: 'applications', name: 'my-applications', component: () => import('@views/candidate/AppliedJobsView.vue') },
-  //     { path: 'saved', name: 'saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
-  //     { path: 'cv-score', name: 'cv-score', component: () => import('@views/candidate/CVScoringView.vue') },
-  //     { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
-  //   ],
-  // },
+  {
+    path: '/candidate',
+    component: () => import('@views/candidate/CandidateLayout.vue'),
+    meta: { auth: true, role: 'candidate' },
+    children: [
+    //   { path: '', name: 'candidate-dashboard', component: () => import('@views/candidate/CandidateDashboard.vue') },
+      { path: '', redirect: 'resumes' },
+      { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
+      { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
+      // resume-detail (placeholder) đã gỡ — preview CV xem qua modal
+      // trong MyResumesView thay vì riêng 1 trang.
+    //   { path: 'resumes/:id', name: 'resume-detail', component: () => import('@views/candidate/ResumeDetailView.vue') },
+    //   { path: 'applications', name: 'my-applications', component: () => import('@views/candidate/AppliedJobsView.vue') },
+    //   { path: 'saved', name: 'saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
+    //   { path: 'cv-score', name: 'cv-score', component: () => import('@views/candidate/CVScoringView.vue') },
+    //   { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
+    ],
+  },
 
   // Employer
   // {

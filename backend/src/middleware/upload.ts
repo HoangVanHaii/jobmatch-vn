@@ -1,38 +1,16 @@
-/**
- * Multer upload middleware — nhiều profile cho từng use-case.
- *
- *   - `uploadMiddleware` (CV/resume router):
- *       PDF/DOCX/DOC + JPEG/PNG, tối đa 10MB.
- *
- *   - `uploadImage` (module upload dùng chung):
- *       Chỉ ảnh (JPEG/PNG/WebP/GIF), tối đa 5MB.
- *
- * Cả 2 đều memoryStorage để service đọc `req.file.buffer` rồi đẩy thẳng
- * lên MinIO qua `s3.putObject` (xem service/upload.service.ts).
- *
- * Lỗi multer (fileFilter reject, size vượt limit) được wrap thành AppError
- * để middleware errorHandler trả JSON đúng convention project.
- */
+
 import multer from "multer";
 import { AppError } from "./errorHandler";
 
-/** MIME cho CV/resume upload: PDF, DOCX, DOC và JPEG/PNG. */
 const RESUME_MIME = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/msword",
-  "image/jpeg",
-  "image/png",
 ];
 
-/** MIME cho upload ảnh dùng chung: chỉ ảnh. */
 const IMAGE_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 const storage = multer.memoryStorage();
 
-/**
- * middleware hiện có — cho CV/resume. PDF/DOCX/DOC + JPEG/PNG, 10MB.
- */
 export const uploadMiddleware = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -44,12 +22,7 @@ export const uploadMiddleware = multer({
   },
 });
 
-/**
- * Middleware cho upload ảnh dùng chung.
- * - Chỉ nhận image/jpeg | image/png | image/webp | image/gif.
- * - Tối đa 5MB.
- * - Field name mặc định là `file` (xem router/upload.ts).
- */
+
 export const uploadImage = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },

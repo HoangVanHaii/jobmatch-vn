@@ -1,11 +1,128 @@
 import type { cvs } from "../db/schema/cvs";
+import type { cvStatusEnum, cvSourceEnum } from "../db/schema/enums";
 
+
+export interface AiAnalysis {
+  isCv: boolean;
+  total: number;
+  strengths: string[];
+  weaknesses: string[];
+  suggestions: string[];
+  verificationWarnings: VerificationWarning[];
+}
+export interface VerificationWarning {
+  type: "github" | "linkedin";
+  url: string;
+  message: string;
+}
 export type Cv = typeof cvs.$inferSelect;
+export type CvStatus = (typeof cvStatusEnum.enumValues)[number];
+export type CvSource = (typeof cvSourceEnum.enumValues)[number];
 
 export interface CreateCvInput {
+  title?: string;
   fileUrl?: string;
   fileType?: string;
   isPrimary?: boolean;
 }
 
+export interface ListCv {
+  id: string;
+  candidateId: string;
+  title: string | null;
+  fileUrl: string | null;
+  fileType: string | null;
+  isPrimary: boolean;
+  templateId: number | null;
+  status: CvStatus;
+  source: CvSource;
+  aiAnalysisTotal: number | null;
+}
+
 export type CreateCvResponse = Cv;
+
+
+export interface ListCvResponse {
+  items: ListCv[];
+  total: number;
+}
+
+
+export interface DirectCvContact {
+  name?: string;
+  email?: string;
+  phone?: string;
+  // URL fields cho phép null: PATCH semantics (RFC 7396) — null = xoá field.
+  portfolio?: string | null;
+  github?: string | null;
+  linkedin?: string | null;
+  facebook?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface DirectCvEducation {
+  school: string;
+  degree?: string;
+  major?: string;
+  startYear?: number;
+  endYear?: number;
+  description?: string;
+}
+
+export interface DirectCvExperience {
+  company: string;
+  position: string;
+  startDate?: string;
+  endDate?: string | null;
+  description?: string;
+}
+
+export interface DirectCvLanguage {
+  language: string;
+  proficiency?: string;
+}
+
+export interface DirectCvProject {
+  name: string;
+  description?: string;
+  link?: string | null;
+}
+
+export interface DirectCvCertification {
+  name: string;
+  issuer?: string;
+  date?: string;
+}
+
+
+export interface CreateDirectCvInput {
+  title: string;
+  templateId: number;
+  isPrimary?: boolean;
+  summary?: string;
+  contact?: DirectCvContact;
+  education?: DirectCvEducation[];
+  experience?: DirectCvExperience[];
+  skills?: string[];
+  languages?: DirectCvLanguage[];
+  projects?: DirectCvProject[];
+  certifications?: DirectCvCertification[];
+}
+
+
+export interface UpdateDirectCvInput {
+  title?: string;
+  parsedData?: Pick<
+    CreateDirectCvInput,
+    | "summary"
+    | "contact"
+    | "education"
+    | "experience"
+    | "skills"
+    | "languages"
+    | "projects"
+    | "certifications"
+  >;
+}
+
+export type CvDetail = Cv;

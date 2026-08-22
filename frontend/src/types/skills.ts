@@ -2,19 +2,16 @@
  * Skills types — đồng bộ với backend (skills schema + controller response).
  * Frontend dùng các type này làm contract khi gọi skillsApi.
  *
- * Skills là dữ liệu master do admin quản lý. Skill chỉ có name + slug + status
- * (category / demandCount đã được loại bỏ — xem migration 0007 BE).
+ * Skills là dữ liệu master do admin quản lý. Skill chỉ có name + slug (status
+ * là enum DB nhưng FE không cần narrow xuống — chỉ dùng `Skill` nguyên shape).
  */
-
-/** Soft-delete lifecycle status (enum skill_status ở DB) */
-export type SkillStatus = 'active' | 'deleted';
 
 /** Một dòng trong bảng skills */
 export interface Skill {
   id: string;
   name: string;
   slug: string;
-  status: SkillStatus;
+  status: 'active' | 'deleted';
 }
 
 /** Payload tạo skill — POST /skills (admin).
