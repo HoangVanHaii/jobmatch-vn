@@ -28,6 +28,7 @@ import { skillsRouter } from "./skills";
 import { cvRouter } from './cv';
 import { candidateSkillRouter } from './candidateSkill';
 import { uploadRouter } from './upload';
+import { chatbotRouter } from './chatbot';
 
 export const apiRouter = Router();
 
@@ -58,3 +59,6 @@ apiRouter.use('/references', referenceRouter);
 // Phase 3
 apiRouter.use('/schedule', scheduleRouter);
 apiRouter.use('/dialogflow', dialogflowRouter);
+
+// Chatbot AI (candidate + employer)
+apiRouter.use('/chatbot', chatbotRouter);

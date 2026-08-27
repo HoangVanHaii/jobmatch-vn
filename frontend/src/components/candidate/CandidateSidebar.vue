@@ -183,8 +183,8 @@ const groups: MenuGroup[] = [
       {
         label: 'Chatbot AI',
         icon: Bot,
-        to: '/candidate/chatbot',
-        activeOn: ['/candidate/chatbot'],
+        to: '/chatbot',
+        activeOn: ['/chatbot'],
       },
     ],
   },
