@@ -61,6 +61,14 @@ const routes: RouteRecordRaw[] = [
     meta: { auth: true },
   },
 
+  // Chatbot AI JobMatch — trang full-page, candidate + employer đều dùng
+  {
+    path: '/chatbot',
+    name: 'chatbot',
+    component: () => import('@views/chat/ChatbotView.vue'),
+    meta: { auth: true },
+  },
+
   // Admin
   // {
   //   path: '/admin',
