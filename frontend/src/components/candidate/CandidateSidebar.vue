@@ -17,7 +17,8 @@ import {
   MessageCircle,
   Bot,
   CreditCard,
-  History
+  History,
+  X,
 } from 'lucide-vue-next';
 
 interface MenuItem {
@@ -37,6 +38,32 @@ interface MenuGroup {
 }
 
 const route = useRoute();
+
+const props = defineProps<{
+  /**
+   * Trên mobile, sidebar được dùng như 1 overlay trượt từ trái qua phải. Parent
+   * quản lý state `mobileOpen` + hamburger button + backdrop. Khi `mobileOpen=true`
+   * trên mobile, sidebar chiếm w-72 (bỏ qua `collapsed` để luôn mở rộng cho dễ đọc).
+   * Trên md+ `mobileOpen` bị bỏ qua — sidebar là static col bình thường.
+   */
+  mobileOpen?: boolean;
+}>();
+
+const emit = defineEmits<{
+  /** Đóng sidebar overlay trên mobile (user bấm nút X hoặc backdrop). */
+  (e: 'close-mobile'): void;
+}>();
+
+/**
+ * Auto-close overlay khi user navigate sang route khác qua menu link — không
+ * cần bấm X/backdrop. Mobile UX chuẩn: bấm menu → trượt đóng → hiện page mới.
+ */
+watch(
+  () => route.path,
+  () => {
+    if (props.mobileOpen) emit('close-mobile');
+  },
+);
 
 /** Thu nhỏ / m� rộng sidebar — lưu vào localStorage để giữ qua reload. */
 const collapsed = ref<boolean>(false);
@@ -186,7 +213,7 @@ const groups: MenuGroup[] = [
         label: 'Chatbot AI',
         icon: Bot,
         to: '/candidate/chatbot',
-        activeOn: ['/candidate/chatbot'],
+        activeOn: ['/chatbot'],
       },
     ],
   },
@@ -251,27 +278,69 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
 </script>
 
 <template>
+  <!--
+    Responsive:
+      - Mobile: overlay trượt từ trái qua phải (mobileOpen controls visibility).
+        Width cố định w-72 (~288px) khi open, dù user có collapsed hay không — buộc
+        expand trên mobile để dễ đọc.
+      - md+: static col bên trái, w-60 hoặc w-16 tuỳ collapsed.
+    Transition: translate-x + width (300ms) cho slide mượt.
+  -->
   <aside
-    class="shrink-0 h-screen sticky top-0 bg-white border-r border-gray-200 flex flex-col transition-all duration-200"
-    :class="collapsed ? 'w-16' : 'w-60'"
+    class="bg-white border-r border-gray-200 flex flex-col transition-[transform,width] duration-300 ease-out"
+    :class="[
+      // Positioning
+      'absolute inset-y-0 left-0 z-40 md:sticky md:top-0 md:z-auto',
+      // Mobile slide state. `md:transform-none` reset transform trên desktop để
+      // KHÔNG tạo transform-stacking-context (làm kẹt toggle button bên trong,
+      // khiến nó bị phần tử static ở cột bên cạnh đè lên dù z-index cao hơn).
+      props.mobileOpen
+        ? 'translate-x-0 shadow-xl md:transform-none md:shadow-none'
+        : '-translate-x-full md:transform-none',
+      // Width: mobile override (force expanded when open) | desktop collapse state
+      props.mobileOpen ? 'w-72' : 'w-0',
+      collapsed ? 'md:w-16' : 'md:w-60',
+      // Height: full screen on mobile overlay, normal on desktop
+      'h-screen md:h-screen',
+      // Overflow: clip trên mobile khi w-0 (ẩn content khi sidebar đóng), nhưng
+      // md+ cần visible để toggle button ở `-right-3` được stick out qua border.
+      'overflow-hidden md:overflow-visible',
+    ]"
   >
-    <!-- Logo + toggle (icon absolute, tràn qua border-r của aside) -->
+    <!-- Logo + (X close on mobile | toggle on desktop) -->
     <div
       class="relative border-b border-gray-200 flex items-center transition-all duration-200"
-      :class="collapsed ? 'justify-center px-2 py-5' : 'pl-5 pr-8 py-5'"
+      :class="[
+        collapsed && !props.mobileOpen ? 'justify-center px-2 py-5' : 'pl-5 pr-3 py-5',
+      ]"
     >
-      <router-link v-if="!collapsed" to="/candidate/resumes" class="block">
-        <h1 class="text-lg font-bold text-gray-900 tracking-tight">JOBMATCH<span class="text-primary-600">VN</span></h1>
-        <p class="text-xs text-gray-500 mt-0.5">Candidate Workspace</p>
+      <router-link v-if="!collapsed || props.mobileOpen" to="/candidate/resumes" class="block min-w-0">
+        <h1 class="text-lg font-bold text-gray-900 tracking-tight truncate">
+          JOBMATCH<span class="text-primary-600">VN</span>
+        </h1>
+        <p v-if="!collapsed" class="text-xs text-gray-500 mt-0.5">Candidate Workspace</p>
       </router-link>
       <router-link v-else to="/candidate/resumes" class="block" title="JOBMATCH VN">
         <h1 class="text-base font-bold text-primary-600 tracking-tight">JM</h1>
       </router-link>
 
-      <!-- Toggle button: absolute, "đậu" trên border-r, có bg trắng + shadow để nổi -->
+      <!-- Close button (mobile only, chỉ hiện khi overlay mở) -->
       <button
+        v-if="props.mobileOpen"
         type="button"
-        class="absolute top-1/2 -translate-y-1/2 -right-3 w-6 h-6 bg-white border border-gray-200 rounded-full shadow-sm flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition"
+        class="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-900 md:hidden"
+        title="Đóng menu"
+        aria-label="Đóng menu"
+        @click="emit('close-mobile')"
+      >
+        <X class="h-4 w-4" />
+      </button>
+
+      <!-- Toggle button: absolute, "đậu" trên border-r, có bg trắng + shadow để nổi (desktop only) -->
+      <button
+        v-if="!props.mobileOpen"
+        type="button"
+        class="absolute top-1/2 -translate-y-1/2 -right-3 z-20 w-6 h-6 bg-white border border-gray-200 rounded-full shadow-sm items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition hidden md:flex"
         :title="collapsed ? 'Mở rộng' : 'Thu nhỏ'"
         @click="toggleCollapsed"
       >
