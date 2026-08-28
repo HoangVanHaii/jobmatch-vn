@@ -47,6 +47,10 @@ export const cvApi = {
   setPrimary: (cvId: string) =>
     http.patch<ApiResponse<Cv>>(`/cvs/${cvId}/primary`),
 
+  /** POST /cvs/:cvId/analyze — trigger lại CV analysis (enqueue worker). */
+  triggerAnalysis: (cvId: string) =>
+    http.post<ApiResponse<Cv>>(`/cvs/${cvId}/analyze`),
+
   /** DELETE /cvs/:cvId — soft-delete CV (status='deleted', có reset primary invariant). */
   remove: (cvId: string) =>
     http.delete<ApiResponse<Cv>>(`/cvs/${cvId}`),

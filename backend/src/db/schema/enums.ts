@@ -13,7 +13,7 @@ export const applicationStatusEnum = pgEnum('application_status', [
   'pending', 'viewed', 'screening', 'interview', 'offered', 'hired', 'rejected', 'withdrawn',
 ]);
 export const subscriptionStatusEnum = pgEnum('subscription_status', ['active', 'expired', 'cancelled', 'pending']);
-export const paymentStatusEnum = pgEnum('payment_status', ['pending', 'paid', 'failed', 'refunded']);
+export const paymentStatusEnum = pgEnum('payment_status', ['pending', 'paid', 'failed', 'cancelled', 'refunded', 'expired']);
 export const companyStatusEnum = pgEnum('company_status', ['active', 'banned', 'removed']);
 export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'member']);
 export const companyMemberStatusEnum = pgEnum('company_member_status', ['active', 'invited', 'inactive']);

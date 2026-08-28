@@ -25,6 +25,8 @@ cvRouter.post("/direct", auth, cvAiRateLimiter, validateCreateDirectCv, cvContro
 
 cvRouter.patch("/:cvId/primary", auth, validateCvIdParam, cvController.setPrimary);
 
+cvRouter.post("/:cvId/analyze", auth, cvAiRateLimiter, validateCvIdParam, cvController.triggerAnalysis);
+
 cvRouter.patch("/:cvId", auth, cvWriteRateLimiter, cvAiRateLimiter, validateCvIdParam, validateUpdateDirectCv, cvController.update);
 
 cvRouter.delete("/:cvId", auth, cvWriteRateLimiter, validateCvIdParam, cvController.remove)

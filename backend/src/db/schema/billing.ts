@@ -29,10 +29,22 @@ export const subscriptions = pgTable('subscriptions', {
 export const payments = pgTable('payments', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id),
+  planId: uuid('plan_id').references(() => plans.id),
   subscriptionId: uuid('subscription_id').references(() => subscriptions.id),
   amountVnd: numeric('amount_vnd', { precision: 15, scale: 0 }).notNull(),
+  orderCode: text('order_code').notNull().unique(),
   payosTxnId: text('payos_txn_id'),
   status: paymentStatusEnum('status'),
   rawResponse: jsonb('raw_response').$type<Record<string, unknown>>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+  /**
+   * Timestamp cập nhật payment gần nhất (status transition: pending→paid/failed/cancelled).
+   * App code SET thủ công (KHÔNG có trigger tự động).
+   * NULL khi row chưa từng UPDATE sau khi INSERT.
+   * Dùng cho ORDER BY: payment mới finalize sẽ nhảy lên top.
+   * Xem migration 0017_payments_update_at.sql.
+   */
+  updatedAt: timestamp('updated_at', { withTimezone: true }),
+}, (t) => ({
+  planIdx: index('idx_payments_plan').on(t.planId),
+}));
