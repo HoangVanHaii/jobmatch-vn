@@ -86,7 +86,7 @@ watch(isLocked, (locked) => {
         class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
         @click="chooseJob"
       >
-        <Briefcase class="h-4 w-4 text-blue-600" />
+        <Briefcase class="h-4 w-4 text-gray-700" />
         <span>Thêm Job</span>
       </button>
       <button
@@ -94,7 +94,7 @@ watch(isLocked, (locked) => {
         class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
         @click="chooseCv"
       >
-        <FileText class="h-4 w-4 text-purple-600" />
+        <FileText class="h-4 w-4 text-gray-700" />
         <span>Thêm CV</span>
       </button>
     </div>
@@ -106,6 +106,7 @@ watch(isLocked, (locked) => {
     >
       <ChatbotJobPickerDropdown
         :selected-ids="store.jobIds"
+        :selected-items="store.attachedJobs"
         :total-context="totalContext"
         :locked="isLocked"
         :locked-tooltip="lockedTooltip"
@@ -120,6 +121,7 @@ watch(isLocked, (locked) => {
     >
       <ChatbotCvPickerDropdown
         :selected-ids="store.cvIds"
+        :selected-items="store.attachedCvs"
         :total-context="totalContext"
         :locked="isLocked"
         :locked-tooltip="lockedTooltip"

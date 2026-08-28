@@ -7,33 +7,47 @@
  * - Button Reset để xoá context (jobIds + cvIds)
  */
 import { computed } from 'vue';
-import { AlertTriangle, RotateCcw, Coins } from 'lucide-vue-next';
+import { AlertTriangle, ArrowLeft, Coins } from 'lucide-vue-next';
 
 const props = defineProps<{
   title?: string | null;
   totalTokens: number;
+  /**
+   * Mobile only: hiển thị nút back để quay về danh sách phiên. Parent tự
+   * quyết định — thường bind theo `!isMobileSidebar` (đang ở chat view).
+   * Desktop (md+) luôn show sidebar nên nút này không cần.
+   */
+  showBack?: boolean;
 }>();
 
 const emit = defineEmits<{
-  (e: 'reset'): void;
+  (e: 'back'): void;
 }>();
 
 const formattedTokens = computed(() => props.totalTokens.toLocaleString('vi-VN'));
 const isWarning = computed(() => props.totalTokens >= 45_000 && props.totalTokens < 50_000);
 const isExceeded = computed(() => props.totalTokens >= 50_000);
-
-const onReset = (): void => {
-  if (window.confirm('Xoá hết job/CV đã gắn cho phiên chat này?')) {
-    emit('reset');
-  }
-};
 </script>
 
 <template>
   <header
-    class="flex items-center justify-between gap-4 border-b border-gray-200 bg-white px-6 py-3"
+    class="flex items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-3 md:px-6"
   >
-    <div class="flex min-w-0 items-center gap-3">
+    <div class="flex min-w-0 items-center gap-2 md:gap-3">
+      <!--
+        Back button (mobile only) — đưa user về danh sách phiên khi đang ở
+        chat view trên màn hẹp. Desktop đã có sidebar cố định nên ẩn.
+      -->
+      <button
+        v-if="props.showBack"
+        type="button"
+        class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-700 transition hover:bg-gray-100 md:hidden"
+        title="Quay lại lịch sử"
+        aria-label="Quay lại lịch sử"
+        @click="emit('back')"
+      >
+        <ArrowLeft class="h-4 w-4" />
+      </button>
       <h1 class="truncate text-base font-semibold text-gray-900">
         {{ title || 'Phiên chat mới' }}
       </h1>
@@ -41,7 +55,7 @@ const onReset = (): void => {
 
     <div class="flex items-center gap-3">
       <div
-        class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+        class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium mr-6"
         :class="[
           isExceeded
             ? 'bg-red-50 text-red-700 ring-1 ring-red-200'
@@ -51,25 +65,16 @@ const onReset = (): void => {
         ]"
         :title="
           isExceeded
-            ? 'Đã hết token — vui lòng tạo phiên mới'
+            ? 'Đã đạt đến giới hạn trò chuyện — vui lòng tạo phiên mới'
             : isWarning
-              ? 'Sắp hết token — cân nhắc tạo phiên mới'
-              : 'Tổng token đã dùng'
+              ? 'Sắp đến giới hạn trò chuyện — cân nhắc tạo phiên mới'
+              : 'Chi phí đã dùng'
         "
       >
         <AlertTriangle v-if="isWarning || isExceeded" class="h-3.5 w-3.5" />
         <Coins v-else class="h-3.5 w-3.5" />
         <span>{{ formattedTokens }} / 50.000</span>
       </div>
-
-      <button
-        type="button"
-        class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-        @click="onReset"
-      >
-        <RotateCcw class="h-4 w-4" />
-        Reset
-      </button>
     </div>
   </header>
 </template>

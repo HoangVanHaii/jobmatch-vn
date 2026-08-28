@@ -55,11 +55,21 @@ const showClassifying = computed(
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <template v-for="(m, idx) in props.messages" :key="`${m.role}-${idx}`">
+  <!--
+    Messages list bọc trong <TransitionGroup> để:
+      - User message vừa gửi: fade in + slide up nhẹ (enter animation)
+      - Final assistant message (sau khi commit): fade in + slide up
+    Streaming bubble tách riêng <Transition> để:
+      - Khi AI bắt đầu stream: fade in (đang có sẵn Loader2/dots placeholder)
+      - Khi commit: fade out đồng thời với message mới fade in → smooth handoff
+    Key dùng `${role}-${idx}` đảm bảo key unique cho mỗi entry append (Vue
+    chỉ animate key MỚI, key cũ giữ nguyên → không bị re-animate cả list).
+  -->
+  <TransitionGroup tag="div" name="msg" class="flex flex-col gap-4">
+    <div v-for="(m, idx) in props.messages" :key="`${m.role}-${idx}`">
       <div v-if="m.role === 'user'" class="flex flex-col items-end gap-1.5">
         <div
-          class="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 text-sm text-white shadow-sm"
+          class="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-gray-900 px-4 py-2.5 text-sm text-white shadow-sm"
         >
           {{ m.content }}
         </div>
@@ -71,43 +81,59 @@ const showClassifying = computed(
           <span
             v-for="j in m.attachedJobs ?? []"
             :key="`msg-${idx}-job-${j.id}`"
-            class="inline-flex max-w-[180px] items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700"
+            class="inline-flex max-w-[180px] items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-800"
             :title="j.title"
           >
-            <Briefcase class="h-3 w-3 shrink-0" />
+            <Briefcase class="h-3 w-3 shrink-0 text-blue-500" />
             <span class="truncate">{{ j.title }}</span>
           </span>
           <span
             v-for="c in m.attachedCvs ?? []"
             :key="`msg-${idx}-cv-${c.id}`"
-            class="inline-flex max-w-[180px] items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[11px] font-medium text-purple-700"
+            class="inline-flex max-w-[180px] items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-800"
             :title="c.title || 'CV chính'"
           >
-            <FileText class="h-3 w-3 shrink-0" />
+            <FileText class="h-3 w-3 shrink-0 text-emerald-500" />
             <span class="truncate">{{ c.title || 'CV chính' }}</span>
           </span>
         </div>
       </div>
-      <div v-else class="flex justify-start">
+      <div v-else class="flex flex-col items-start gap-1.5">
+        <!-- Icon trên đầu bubble assistant (đồng bộ với indicator 'Sparkles' ở header). -->
+        <div class="flex items-center gap-1.5 px-1 text-[11px] font-medium text-gray-500">
+          <Sparkles class="h-3 w-3 shrink-0 text-gray-900" />
+          <span>JobMatch AI</span>
+        </div>
         <div
           class="chatbot-markdown max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm ring-1 ring-gray-200"
           v-html="userHtml(m)"
         />
       </div>
-    </template>
+    </div>
+  </TransitionGroup>
 
+  <!--
+    Streaming bubble — <Transition> thường (không phải TransitionGroup) vì
+    chỉ có 0 hoặc 1 instance tại 1 thời điểm. isStreaming=true → enter,
+    false → leave.
+  -->
+  <Transition name="stream">
     <div v-if="props.isStreaming" class="flex flex-col items-start gap-1.5">
+      <!-- Icon + label cho streaming bubble -->
+      <div class="flex items-center gap-1.5 px-1 text-[11px] font-medium text-gray-500">
+        <Sparkles class="h-3 w-3 shrink-0 text-gray-900" />
+        <span>JobMatch AI</span>
+      </div>
       <!-- Intent chips: hiện trong suốt quá trình streaming (kể cả khi đã có chunk) -->
       <div
         v-if="props.intentTypes?.length"
         class="flex max-w-[85%] flex-wrap items-center gap-1 px-1 text-[11px] text-gray-500"
       >
-        <Sparkles class="h-3 w-3 shrink-0 text-blue-500" />
         <span class="shrink-0">Đang tra cứu:</span>
         <span
           v-for="t in props.intentTypes"
           :key="t"
-          class="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700 ring-1 ring-blue-200"
+          class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-700 ring-1 ring-gray-200"
         >
           {{ INTENT_LABELS[t] ?? t }}
         </span>
@@ -134,10 +160,46 @@ const showClassifying = computed(
         />
       </div>
     </div>
-  </div>
+  </Transition>
 </template>
 
 <style scoped>
+/*
+ * === Message enter/leave animations ===
+ * Chạy NGẦM với streaming bubble (200ms) để:
+ *   - User gửi tin → bubble user fade in + slide up (~250ms)
+ *   - AI commit → streaming bubble fade out (~200ms) + final message fade in + slide up (~250ms) → smooth handoff
+ *   - Streaming bắt đầu → bubble fade in (~250ms)
+ * Dùng translateY thay vì margin/padding để không ảnh hưởng layout flex.
+ */
+.msg-enter-active {
+  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+}
+.msg-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.msg-leave-active {
+  transition: opacity 0.2s ease-in;
+}
+.msg-leave-to {
+  opacity: 0;
+}
+
+.stream-enter-active {
+  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+}
+.stream-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.stream-leave-active {
+  transition: opacity 0.2s ease-in;
+}
+.stream-leave-to {
+  opacity: 0;
+}
+
 .chatbot-markdown :deep(h1),
 .chatbot-markdown :deep(h2),
 .chatbot-markdown :deep(h3) {

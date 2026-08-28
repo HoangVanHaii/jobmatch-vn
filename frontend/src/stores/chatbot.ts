@@ -186,6 +186,19 @@ export const useChatbotStore = defineStore('chatbot', () => {
       attachedCvs: attachedCvs.value.map((c) => ({ ...c })),
     };
     messages.value = [...messages.value, userMsg];
+    // Auto-update session title NGAY khi user gửi (không đợi AI trả lời).
+    // Logic: nếu session chưa có title → derive từ first 50 chars của message
+    // hiện tại. Match với backend `appendUserMessage` (cũng set title từ slice).
+    // Update sớm → sidebar + header reflect ngay, không phải đợi streaming xong.
+    const sessionIdx = sessions.value.findIndex((s) => s.id === sessionId);
+    if (sessionIdx !== -1 && !sessions.value[sessionIdx].title) {
+      const trimmed = content.trim();
+      sessions.value[sessionIdx] = {
+        ...sessions.value[sessionIdx],
+        title: trimmed.slice(0, 50) + (trimmed.length > 50 ? '…' : ''),
+        updatedAt: new Date().toISOString(),
+      };
+    }
     isStreaming.value = true;
     streamingContent.value = '';
     // Reset intent hint từ turn trước (nếu có) để chip không leak qua turn mới.
