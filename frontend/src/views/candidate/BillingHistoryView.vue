@@ -142,22 +142,72 @@ function quotaPercent(item: { used: number; limit: number; unlimited: boolean })
     return Math.min(100, Math.round((item.used / item.limit) * 100));
 }
 
-/** Helper: chọn màu progress bar theo % sử dụng. */
-type QuotaLevel = 'low' | 'mid' | 'high' | 'full';
+/**
+ * Theme cho 3 quota card candidate.
+ *
+ * Mỗi card lấy full color stack (background / border / icon / number / progress)
+ * từ config này — không hard-code màu rải rác trong template.
+ *
+ * Color story: BLUE (apply, primary action) → TEAL (CV parsing, utility) → VIOLET (AI premium).
+ * Tone pastel nhạt để giữ cảm giác SaaS dashboard, không saturated.
+ */
+type QuotaCardKey = 'apply' | 'ai_cv_parsed' | 'ai_cv_analysis';
 
-function quotaLevel(percent: number): QuotaLevel {
-    if (percent >= 100) return 'full';
-    if (percent >= 80) return 'high';
-    if (percent >= 50) return 'mid';
-    return 'low';
+interface QuotaCardTheme {
+    /** Card background (pastel rất nhạt, gần trắng). */
+    background: string;
+    /** Card border. */
+    border: string;
+    /** Icon container background. */
+    iconBg: string;
+    /** Icon + accent text color (label màu accent, sparkles token…). */
+    iconText: string;
+    /** Số usage chính — element nổi bật nhất của card. */
+    numberText: string;
+    /** Progress bar fill — dùng màu riêng từng card, không đổi theo %. */
+    progressBar: string;
 }
 
-const progressBarClass: Record<QuotaLevel, string> = {
-    low: 'bg-blue-500',
-    mid: 'bg-blue-500',
-    high: 'bg-amber-500',
-    full: 'bg-amber-500',
+const quotaCardTheme: Record<QuotaCardKey, QuotaCardTheme> = {
+    apply: {
+        background: 'bg-blue-50',
+        border: 'border-blue-100',
+        iconBg: 'bg-blue-100',
+        iconText: 'text-blue-600',
+        numberText: 'text-blue-700',
+        progressBar: 'bg-blue-500',
+    },
+    ai_cv_parsed: {
+        background: 'bg-cyan-50',
+        border: 'border-cyan-100',
+        iconBg: 'bg-cyan-100',
+        iconText: 'text-cyan-600',
+        numberText: 'text-cyan-700',
+        progressBar: 'bg-cyan-500',
+    },
+    ai_cv_analysis: {
+        background: 'bg-violet-50',
+        border: 'border-violet-200',
+        iconBg: 'bg-violet-100',
+        iconText: 'text-violet-600',
+        numberText: 'text-violet-700',
+        progressBar: 'bg-violet-500',
+    },
 };
+
+/** Fallback cho keys không nằm trong CANDIDATE_QUOTA_KEYS (vd: job_post, job_generation). */
+const FALLBACK_CARD_THEME: QuotaCardTheme = {
+    background: 'bg-slate-50',
+    border: 'border-slate-200',
+    iconBg: 'bg-slate-100',
+    iconText: 'text-slate-600',
+    numberText: 'text-slate-700',
+    progressBar: 'bg-slate-500',
+};
+
+function getCardTheme(key: CountableQuotaKey): QuotaCardTheme {
+    return quotaCardTheme[key as QuotaCardKey] ?? FALLBACK_CARD_THEME;
+}
 
 // ============================================================
 // Section 3: Subscriptions history (paginated)
@@ -323,9 +373,9 @@ onMounted(() => {
         </div>
 
         <!-- ============ SECTION 1: Current Plan ============ -->
-        <section class="card-base">
+        <section class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
             <div class="flex items-center justify-between mb-5">
-                <h2 class="section-title">
+                <h2 class="text-base font-semibold text-slate-900 flex items-center gap-2">
                     <Package class="w-5 h-5 text-blue-600" />
                     Gói hiện tại
                 </h2>
@@ -355,7 +405,7 @@ onMounted(() => {
                 <div>
                     <div class="flex items-center gap-2 mb-1.5">
                         <span class="text-lg font-semibold text-slate-900">Miễn phí</span>
-                        <span class="badge-pill bg-slate-200 text-slate-700">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700">
                             Mặc định
                         </span>
                     </div>
@@ -365,7 +415,7 @@ onMounted(() => {
                 </div>
                 <router-link
                     to="/candidate/pricing"
-                    class="btn-primary whitespace-nowrap"
+                    class="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition whitespace-nowrap"
                 >
                     Nâng cấp ngay
                 </router-link>
@@ -378,7 +428,7 @@ onMounted(() => {
                         <span class="text-2xl font-bold text-slate-900">
                             {{ displayPlanName(usage.plan.code, usage.plan.name) }}
                         </span>
-                        <span class="badge-pill bg-blue-50 text-blue-700 ring-blue-200">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 ring-blue-200">
                             ĐANG SỬ DỤNG
                         </span>
                     </div>
@@ -415,8 +465,8 @@ onMounted(() => {
         </section>
 
         <!-- ============ SECTION 2: Quota (mini-card grid) ============ -->
-        <section class="card-base">
-            <h2 class="section-title mb-5">
+        <section class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <h2 class="text-base font-semibold text-slate-900 flex items-center gap-2 mb-5">
                 <TrendingUp class="w-5 h-5 text-blue-600" />
                 Lượt sử dụng
             </h2>
@@ -441,57 +491,65 @@ onMounted(() => {
                 <div
                     v-for="q in visibleUsage"
                     :key="q.key"
-                    class="quota-card"
-                    :class="{ 'quota-card-ai': isAiQuota(q.key) }"
+                    class="rounded-xl border p-4 transition hover:shadow-sm"
+                    :class="[getCardTheme(q.key).background, getCardTheme(q.key).border]"
                 >
-                    <!-- Header: icon + label -->
-                    <div class="flex items-center gap-2 mb-3">
-                        <component
-                            :is="quotaIcon[q.key]"
-                            class="w-4 h-4"
-                            :class="isAiQuota(q.key) ? 'text-purple-600' : 'text-blue-600'"
-                        />
-                        <span class="text-sm font-semibold text-slate-900">
+                    <!-- Header: icon container + label -->
+                    <div class="flex items-center gap-3 mb-4">
+                        <span
+                            class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                            :class="getCardTheme(q.key).iconBg"
+                        >
+                            <component
+                                :is="quotaIcon[q.key]"
+                                class="w-4 h-4"
+                                :class="getCardTheme(q.key).iconText"
+                            />
+                        </span>
+                        <span class="text-sm font-semibold text-slate-900 leading-tight">
                             {{ quotaLabel[q.key] ?? q.key }}
                         </span>
                     </div>
 
                     <!-- Main count: used / limit -->
                     <div class="mb-3">
-                        <div class="text-2xl font-bold text-slate-900">
+                        <div
+                            class="text-3xl font-bold tracking-tight"
+                            :class="getCardTheme(q.key).numberText"
+                        >
                             <template v-if="q.unlimited">
                                 {{ q.used }}
-                                <span class="text-base font-medium text-slate-500">/ Không giới hạn</span>
+                                <span class="text-base font-medium text-slate-500 ml-1">/ Không giới hạn</span>
                             </template>
                             <template v-else-if="q.limit > 0">
                                 {{ q.used }}
-                                <span class="text-base font-medium text-slate-500">/ {{ q.limit }} lượt</span>
+                                <span class="text-base font-medium text-slate-500 ml-1">/ {{ q.limit }} lượt</span>
                             </template>
                             <template v-else>
                                 {{ q.used }}
-                                <span class="text-base font-medium text-slate-500">lượt</span>
+                                <span class="text-base font-medium text-slate-500 ml-1">lượt</span>
                             </template>
                         </div>
                     </div>
 
-                    <!-- Progress bar (chỉ khi có limit) -->
+                    <!-- Progress bar (chỉ khi có limit) — track slate, fill = card theme -->
                     <div
                         v-if="!q.unlimited && q.limit > 0"
                         class="w-full bg-slate-200 rounded-full h-2 overflow-hidden mb-3"
                     >
                         <div
-                            class="h-full transition-all"
-                            :class="progressBarClass[quotaLevel(quotaPercent(q))]"
+                            class="h-full rounded-full transition-all duration-300"
+                            :class="getCardTheme(q.key).progressBar"
                             :style="{ width: `${quotaPercent(q)}%` }"
                         ></div>
                     </div>
 
-                    <!-- Token usage (chỉ AI, khi > 0) -->
+                    <!-- Token usage (AI services, khi > 0) — secondary info, divider nhẹ -->
                     <div
                         v-if="isAiQuota(q.key) && q.tokens > 0"
-                        class="flex items-center gap-1 text-xs text-slate-500 pt-2 border-t border-slate-100"
+                        class="flex items-center gap-1.5 text-xs text-slate-500 pt-3 mt-1 border-t border-slate-200/70"
                     >
-                        <Sparkles class="w-3 h-3 text-purple-500" />
+                        <Sparkles class="w-3 h-3" :class="getCardTheme(q.key).iconText" />
                         <span>{{ q.tokens.toLocaleString('vi-VN') }} tokens đã sử dụng</span>
                     </div>
                 </div>
@@ -499,9 +557,9 @@ onMounted(() => {
         </section>
 
         <!-- ============ SECTION 3: Subscriptions ============ -->
-        <section class="card-base">
+        <section class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
             <div class="flex items-center justify-between mb-5">
-                <h2 class="section-title">
+                <h2 class="text-base font-semibold text-slate-900 flex items-center gap-2">
                     <History class="w-5 h-5 text-blue-600" />
                     Lịch sử gói dịch vụ
                 </h2>
@@ -510,7 +568,7 @@ onMounted(() => {
                         <Filter class="w-4 h-4 text-slate-400" />
                         <select
                             v-model="subsStatusFilter"
-                            class="select-filter"
+                            class="text-sm border border-slate-200 rounded-md px-2.5 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             @change="onSubsStatusChange"
                         >
                             <option value="">Tất cả</option>
@@ -535,26 +593,26 @@ onMounted(() => {
                 {{ subsError }}
             </div>
 
-            <div v-else-if="subs.length === 0" class="empty-state">
-                <Receipt class="empty-icon" />
+            <div v-else-if="subs.length === 0" class="text-center py-10 text-slate-500">
+                <Receipt class="w-10 h-10 mx-auto mb-2 text-slate-300" />
                 <p class="text-sm">Chưa có subscription nào.</p>
             </div>
 
             <div v-else class="overflow-x-auto">
-                <table class="data-table">
+                <table class="min-w-full text-sm">
                     <thead>
-                        <tr>
-                            <th>Gói</th>
-                            <th>Trạng thái</th>
-                            <th>Bắt đầu</th>
-                            <th>Hết hạn</th>
-                            <th>Tổng token</th>
-                            <th>Mã đơn</th>
+                        <tr class="text-left text-slate-500 border-b border-slate-200">
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Gói</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Trạng thái</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Bắt đầu</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Hết hạn</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Tổng token</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Mã đơn</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="s in subs" :key="s.id">
-                            <td>
+                        <tr v-for="s in subs" :key="s.id" class="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition">
+                            <td class="py-3 pr-4">
                                 <div class="font-medium text-slate-900">
                                     {{ displayPlanName(s.planCode, s.planName) }}
                                 </div>
@@ -563,21 +621,21 @@ onMounted(() => {
                                     {{ s.planDurationDays }} ngày
                                 </div>
                             </td>
-                            <td>
-                                <span :class="['badge-pill ring-1', subStatusBadge[s.status]?.cls ?? 'bg-slate-100 text-slate-600 ring-slate-200']">
+                            <td class="py-3 pr-4">
+                                <span :class="['inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ring-1', subStatusBadge[s.status]?.cls ?? 'bg-slate-100 text-slate-600 ring-slate-200']">
                                     {{ subStatusBadge[s.status]?.label ?? s.status }}
                                 </span>
                             </td>
-                            <td class="text-slate-700">{{ formatDate(s.startedAt) }}</td>
-                            <td class="text-slate-700">{{ formatDate(s.expiresAt) }}</td>
-                            <td class="text-slate-700">
+                            <td class="py-3 pr-4 text-slate-700">{{ formatDate(s.startedAt) }}</td>
+                            <td class="py-3 pr-4 text-slate-700">{{ formatDate(s.expiresAt) }}</td>
+                            <td class="py-3 pr-4 text-slate-700">
                                 <span class="inline-flex items-center gap-1.5 text-sm">
                                     <Sparkles class="w-3.5 h-3.5 text-purple-500" />
                                     <strong>{{ s.totalTokens.toLocaleString('vi-VN') }}</strong>
                                     <span class="text-xs text-slate-500">tokens</span>
                                 </span>
                             </td>
-                            <td class="font-mono text-xs text-slate-500">
+                            <td class="py-3 pr-4 font-mono text-xs text-slate-500">
                                 {{ s.payosOrderId ?? '—' }}
                             </td>
                         </tr>
@@ -585,21 +643,21 @@ onMounted(() => {
                 </table>
 
                 <!-- Pagination -->
-                <div v-if="subsTotalPages > 1" class="pagination">
+                <div v-if="subsTotalPages > 1" class="flex items-center justify-between mt-4 text-sm">
                     <span class="text-slate-500">
                         Trang {{ subsPage }} / {{ subsTotalPages }}
                     </span>
                     <div class="flex gap-1">
                         <button
                             :disabled="subsPage <= 1"
-                            class="page-btn"
+                            class="px-2.5 py-1 rounded-md border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition"
                             @click="goToSubsPage(subsPage - 1)"
                         >
                             <ChevronLeft class="w-4 h-4" />
                         </button>
                         <button
                             :disabled="subsPage >= subsTotalPages"
-                            class="page-btn"
+                            class="px-2.5 py-1 rounded-md border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition"
                             @click="goToSubsPage(subsPage + 1)"
                         >
                             <ChevronRight class="w-4 h-4" />
@@ -610,9 +668,9 @@ onMounted(() => {
         </section>
 
         <!-- ============ SECTION 4: Payments ============ -->
-        <section class="card-base">
+        <section class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
             <div class="flex items-center justify-between mb-5">
-                <h2 class="section-title">
+                <h2 class="text-base font-semibold text-slate-900 flex items-center gap-2">
                     <Receipt class="w-5 h-5 text-blue-600" />
                     Lịch sử thanh toán
                 </h2>
@@ -630,35 +688,35 @@ onMounted(() => {
                 {{ paysError }}
             </div>
 
-            <div v-else-if="payments.length === 0" class="empty-state">
-                <Receipt class="empty-icon" />
+            <div v-else-if="payments.length === 0" class="text-center py-10 text-slate-500">
+                <Receipt class="w-10 h-10 mx-auto mb-2 text-slate-300" />
                 <p class="text-sm">Chưa có giao dịch nào.</p>
             </div>
 
             <div v-else class="overflow-x-auto">
-                <table class="data-table">
+                <table class="min-w-full text-sm">
                     <thead>
-                        <tr>
-                            <th>Gói</th>
-                            <th>Số tiền</th>
-                            <th>Mã đơn</th>
-                            <th>Trạng thái</th>
-                            <th>Ngày tạo</th>
-                            <th>Cập nhật</th>
+                        <tr class="text-left text-slate-500 border-b border-slate-200">
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Gói</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Số tiền</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Mã đơn</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Trạng thái</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Ngày tạo</th>
+                            <th class="py-2.5 pr-4 font-medium text-xs uppercase tracking-wide">Cập nhật</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr
                             v-for="p in payments"
                             :key="p.id"
-                            class="cursor-pointer"
+                            class="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition cursor-pointer"
                             role="button"
                             tabindex="0"
                             @click="openPaymentDetail(p.id)"
                             @keydown.enter="openPaymentDetail(p.id)"
                             @keydown.space.prevent="openPaymentDetail(p.id)"
                         >
-                            <td>
+                            <td class="py-3 pr-4">
                                 <span class="font-medium text-slate-900">
                                     {{ displayPlanName(p.planCode ?? undefined, p.planName ?? undefined) }}
                                 </span>
@@ -669,14 +727,14 @@ onMounted(() => {
                                     {{ p.planDurationDays }} ngày
                                 </span>
                             </td>
-                            <td class="font-semibold text-slate-900">
+                            <td class="py-3 pr-4 font-semibold text-slate-900">
                                 {{ formatPrice(p.amountVnd) }}
                             </td>
-                            <td class="font-mono text-xs text-slate-500">
+                            <td class="py-3 pr-4 font-mono text-xs text-slate-500">
                                 {{ p.orderCode }}
                             </td>
-                            <td>
-                                <span :class="['badge-pill ring-1 inline-flex items-center gap-1', payStatusBadge[p.status]?.cls ?? 'bg-slate-100 text-slate-600 ring-slate-200']">
+                            <td class="py-3 pr-4">
+                                <span :class="['inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ring-1 gap-1', payStatusBadge[p.status]?.cls ?? 'bg-slate-100 text-slate-600 ring-slate-200']">
                                     <CheckCircle2 v-if="p.status === 'paid'" class="w-3 h-3" />
                                     <XCircle v-else-if="p.status === 'failed'" class="w-3 h-3" />
                                     <Clock v-else-if="p.status === 'pending'" class="w-3 h-3" />
@@ -685,13 +743,11 @@ onMounted(() => {
                                     {{ payStatusBadge[p.status]?.label ?? p.status }}
                                 </span>
                             </td>
-                            <td class="text-slate-700">
+                            <td class="py-3 pr-4 text-slate-700">
                                 <div class="flex items-center gap-2">
-                                    <span>{{ formatDateTime(p.createdAt) }}</span>
-                                    <Eye class="w-3.5 h-3.5 text-slate-400" />
-                                </div>
+                                    <span>{{ formatDateTime(p.createdAt) }}</span>                                </div>
                             </td>
-                            <td class="text-slate-700">
+                            <td class="py-3 pr-4 text-slate-700">
                                 <span v-if="p.updatedAt">{{ formatDateTime(p.updatedAt) }}</span>
                                 <span v-else class="text-slate-400">—</span>
                             </td>
@@ -700,21 +756,21 @@ onMounted(() => {
                 </table>
 
                 <!-- Pagination -->
-                <div v-if="payTotalPages > 1" class="pagination">
+                <div v-if="payTotalPages > 1" class="flex items-center justify-between mt-4 text-sm">
                     <span class="text-slate-500">
                         Trang {{ payPage }} / {{ payTotalPages }}
                     </span>
                     <div class="flex gap-1">
                         <button
                             :disabled="payPage <= 1"
-                            class="page-btn"
+                            class="px-2.5 py-1 rounded-md border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition"
                             @click="goToPayPage(payPage - 1)"
                         >
                             <ChevronLeft class="w-4 h-4" />
                         </button>
                         <button
                             :disabled="payPage >= subsTotalPages"
-                            class="page-btn"
+                            class="px-2.5 py-1 rounded-md border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition"
                             @click="goToPayPage(payPage + 1)"
                         >
                             <ChevronRight class="w-4 h-4" />
@@ -733,87 +789,3 @@ onMounted(() => {
         />
     </div>
 </template>
-
-<style scoped>
-/* ============================================================================
- * Design tokens — SaaS dashboard style
- * - Primary blue: #2563EB
- * - Slate text: #0F172A / #64748B
- * - Border: #E2E8F0
- * - Success green: #16A34A
- * - Warning amber: #D97706
- * - Purple: chỉ dùng cho AI premium (tokens / AI quota)
- * ========================================================================== */
-
-/* --- Card base --- */
-.card-base {
-    @apply bg-white rounded-2xl border border-slate-200 p-6 shadow-sm;
-}
-
-/* --- Section title --- */
-.section-title {
-    @apply text-base font-semibold text-slate-900 flex items-center gap-2;
-}
-
-/* --- Buttons --- */
-.btn-primary {
-    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition;
-}
-
-.btn-secondary {
-    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-white text-slate-700 text-sm font-medium rounded-lg border border-slate-200 hover:bg-slate-50 transition;
-}
-
-/* --- Badge pill --- */
-.badge-pill {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-}
-
-/* --- Quota mini-card --- */
-.quota-card {
-    @apply bg-white rounded-xl border border-slate-200 p-4 transition;
-}
-
-.quota-card-ai {
-    background: linear-gradient(180deg, rgba(245, 243, 255, 0.5) 0%, #FFFFFF 100%);
-    border-color: #DDD6FE;
-}
-
-/* --- Empty state --- */
-.empty-state {
-    @apply text-center py-10 text-slate-500;
-}
-.empty-icon {
-    @apply w-10 h-10 mx-auto mb-2 text-slate-300;
-}
-
-/* --- Table --- */
-.data-table {
-    @apply min-w-full text-sm;
-}
-.data-table thead tr {
-    @apply text-left text-slate-500 border-b border-slate-200;
-}
-.data-table thead th {
-    @apply py-2.5 pr-4 font-medium text-xs uppercase tracking-wide;
-}
-.data-table tbody tr {
-    @apply border-b border-slate-100 last:border-0 hover:bg-slate-50 transition;
-}
-.data-table tbody td {
-    @apply py-3 pr-4;
-}
-
-/* --- Pagination --- */
-.pagination {
-    @apply flex items-center justify-between mt-4 text-sm;
-}
-.page-btn {
-    @apply px-2.5 py-1 rounded-md border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition;
-}
-
-/* --- Filter select --- */
-.select-filter {
-    @apply text-sm border border-slate-200 rounded-md px-2.5 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
-}
-</style>
