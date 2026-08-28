@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createGemini } from './client';
 import { invokeJson } from './jsonParser';
+import { InvokeJsonUsage } from './jsonParser';
 
 export const jdDraftSchema = z.object({
   title: z.string().min(10).max(200),
@@ -22,17 +23,21 @@ const generationLlm = createGemini({
   temperature: 0.7,
   maxOutputTokens: 4096,
 });
+export interface JdDraftData {
+  data: JdDraft;
+  usage: InvokeJsonUsage;
+}
 
 export const invokeJobGeneration = async (
   systemPrompt: string,
   userPrompt: string,
-): Promise<JdDraft> => {
-  const result = await invokeJson({
+): Promise<JdDraftData> => {
+  const { data, usage } = await invokeJson({
     llm: generationLlm,
     schema: jdDraftSchema,
     systemPrompt,
     userPrompt,
-    tag: 'jobGeneration',
+    tag: "jobGeneration",
   });
-  return result as JdDraft;
-}
+    return { data, usage} as JdDraftData;
+};

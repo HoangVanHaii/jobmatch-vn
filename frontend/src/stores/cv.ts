@@ -15,6 +15,7 @@ import { ref, computed } from 'vue';
 import { cvApi } from '@services/cv.api';
 import type {
   CvDetail,
+  CvFailureReason,
   CvSource,
   CvStatus,
   ListCv,
@@ -132,11 +133,23 @@ export const useCvStore = defineStore('cv', () => {
    * `cv:status-changed` từ BE (worker xong analyze / PATCH trigger / failed).
    * Không gọi API — chỉ đồng bộ UI với state BE vừa báo.
    * Nếu CV không có trong list hiện tại (do pagination) → bỏ qua.
+   *
+   * Cập nhật kèm failureReason:
+   *   - status='failed' → reason được set (BE luôn gửi kèm).
+   *   - status khác     → reason = null (CV đã recover, không còn lý do fail).
    */
-  const updateStatus = (cvId: string, status: CvStatus): void => {
+  const updateStatus = (
+    cvId: string,
+    status: CvStatus,
+    failureReason: CvFailureReason | null = null,
+  ): void => {
     const idx = items.value.findIndex((c) => c.id === cvId);
     if (idx === -1) return;
-    items.value[idx] = { ...items.value[idx], status };
+    items.value[idx] = {
+      ...items.value[idx],
+      status,
+      failureReason: status === 'failed' ? failureReason : null,
+    };
   };
 
   /**
@@ -152,10 +165,29 @@ export const useCvStore = defineStore('cv', () => {
       items.value[idx] = {
         ...items.value[idx],
         status: updated.status,
-        aiAnalysisTotal: updated.aiAnalysis?.total ?? null,
+        aiAnalysisTotal: updated.ai_analysis?.total ?? null,
       };
     } catch {
       // ignore — UI vẫn giữ state cũ
+    }
+  };
+
+  /**
+   * Trigger lại CV analysis — gọi API POST /cvs/:cvId/analyze.
+   *
+   * BE đã set status='parsing' trong DB. FE không cần update local — để
+   * socket `cv:status-changed` emit về sẽ tự patch khi worker chạy xong.
+   *
+   * @returns cvId nếu success, null nếu fail.
+   */
+  const triggerAnalysis = async (cvId: string): Promise<string | null> => {
+    error.value = null;
+    try {
+      await cvApi.triggerAnalysis(cvId);
+      return cvId;
+    } catch (e) {
+      setError(e);
+      return null;
     }
   };
 
@@ -165,7 +197,7 @@ export const useCvStore = defineStore('cv', () => {
     // computed
     primary, totalPages,
     // actions
-    fetchList, fetchDetail, setPrimary, remove,
+    fetchList, fetchDetail, setPrimary, remove, triggerAnalysis,
     updateStatus, refreshDetail,
   };
 });

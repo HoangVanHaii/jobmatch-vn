@@ -16,6 +16,8 @@ import {
   LogOut,
   MessageCircle,
   Bot,
+  CreditCard,
+  History,
   X,
 } from 'lucide-vue-next';
 
@@ -213,6 +215,24 @@ const groups: MenuGroup[] = [
         to: '/candidate/chatbot',
         activeOn: ['/chatbot'],
       },
+    ],
+  },
+
+  {
+    title: 'Gói dịch vụ',
+    items: [
+      {
+        label: 'Nâng cấp',
+        icon: CreditCard,
+        to: '/candidate/pricing',
+        activeOn: ['/candidate/pricing'],
+    },
+      {
+        label: 'Gói của tôi',
+        icon: History,
+        to: '/candidate/billing/history',
+        activeOn: ['/candidate/billing/history', '/candidate/billing/success', '/candidate/billing/cancel'],
+      }
     ],
   },
 ];
