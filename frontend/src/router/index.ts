@@ -28,6 +28,7 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: 'resumes' },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
       { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
+      { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true }}, 
       // resume-detail (placeholder) đã gỡ — preview CV xem qua modal
       // trong MyResumesView thay vì riêng 1 trang.
     //   { path: 'resumes/:id', name: 'resume-detail', component: () => import('@views/candidate/ResumeDetailView.vue') },
@@ -60,6 +61,9 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@views/chat/ChatView.vue'),
     meta: { auth: true },
   },
+
+  // Chatbot AI JobMatch — trang full-page, candidate + employer đều dùng
+  
 
   // Admin
   // {

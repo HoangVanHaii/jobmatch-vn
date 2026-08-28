@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { db } from '../config/database';
 import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
-import { eq, desc, and, sql } from 'drizzle-orm';
+import { eq, desc, and, sql, inArray } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { Job, JobListItem } from '@/interface/job';
 import {
@@ -306,5 +306,24 @@ export const jobService = {
       jobType: filters.jobType,
     });
     return { data };
+  },
+
+  /**
+   * Lấy nhiều job theo id — KHÔNG filter status (vì còn job 'closed' → warning).
+   * Phase 1: chỉ trả 'live' hoặc 'closed' (ẩn 'draft'/'pending'/'ai_scanning'/'ai_flagged'/'expired').
+   * Jobs là public nên KHÔNG cần ownership filter.
+   */
+  getByIdsPublic: async (ids: string[]): Promise<Job[]> => {
+    if (!ids.length) return [];
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          inArray(jobs.id, ids),
+          sql`${jobs.status} IN ('live', 'closed')`,
+        ),
+    );
+    return rows;
   },
 } as const;

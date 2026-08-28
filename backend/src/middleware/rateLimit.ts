@@ -74,3 +74,13 @@ export const cvWriteRateLimiter = rateLimit({
   keyGenerator: (req) => `cv_write:${req.user?.userId || req.ip}`,
   message: { success: false, error: { code: 'CV_WRITE_RATE_LIMITED', message: 'Too many cv write requests' } },
 });
+
+// Chatbot (JobMatch AI) — 10 lượt/phút/user; chỉ áp cho POST /chatbot/sessions/:id/turn.
+export const chatbotRateLimiter = rateLimit({
+  ...baseConfig,
+  store: createRedisStore('chatbot'),
+  windowMs: 60_000,
+  max: 10,
+  keyGenerator: (req: any) => `chatbot:${req.user?.userId || req.ip}`,
+  message: { success: false, error: { code: 'CHATBOT_RATE_LIMITED', message: 'Bạn đã gửi quá nhiều câu hỏi, thử lại sau ít phút.' } },
+});
