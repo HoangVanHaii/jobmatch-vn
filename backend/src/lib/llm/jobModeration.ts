@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createGemini } from './client';
 import { invokeJson } from './jsonParser';
+import type { InvokeJsonUsage } from './jsonParser';
 
 export const moderationFlagSchema = z.object({
   severity: z.enum(['block', 'warn']),
@@ -16,18 +17,27 @@ export const moderationOutputSchema = z.object({
   verdict: z.enum(['approved', 'flagged']),
   score: z.number().min(0).max(1),
   flags: z.array(moderationFlagSchema).optional().default([]),
+
 });
 
 export type ModerationFlag = z.infer<typeof moderationFlagSchema>;
 export type ModerationOutput = z.infer<typeof moderationOutputSchema>;
+
+export interface JobModerationResult {
+  data: ModerationOutput;
+  usage: InvokeJsonUsage;
+}
 
 const moderationLlm = createGemini({
   temperature: 0.1,
   maxOutputTokens: 4096,
 });
 
-export const invokeJobModeration = async (systemPrompt: string, userPrompt: string): Promise<ModerationOutput> => {
-  const result = await invokeJson({
+export const invokeJobModeration = async (
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<JobModerationResult> => {
+  const { data, usage } = await invokeJson({
     llm: moderationLlm,
     schema: moderationOutputSchema,
     systemPrompt,
@@ -35,5 +45,5 @@ export const invokeJobModeration = async (systemPrompt: string, userPrompt: stri
     tag: 'jobModeration',
   });
   // flags optional trong schema → đảm bảo luôn là array khi trả về
-  return { ...result, flags: result.flags ?? [] };
+  return { data: { ...data, flags: data.flags ?? [] }, usage };
 }
