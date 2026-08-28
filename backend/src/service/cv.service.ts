@@ -1,7 +1,7 @@
 import { db } from "../config/database";
 import { cvs } from "../db/schema";
 import { desc, eq, and, ne, sql } from "drizzle-orm";
-import type { CreateCvInput, CreateDirectCvInput, Cv, VerificationWarning, CvDetail, CvStatus, CvSource, ListCvResponse, AiAnalysis, UpdateDirectCvInput } from "../interface/cv";
+import type { CreateCvInput, CreateDirectCvInput, Cv, VerificationWarning, CvDetail, CvStatus, CvSource, ListCvResponse, AiAnalysis, UpdateDirectCvInput, CvFailureReason } from "../interface/cv";
 import { notificationGateway } from "../socket/notificationGateway";
 import { githubLookupService } from "./githubLookup.service";
 import { logger } from "../config/logger";
@@ -105,7 +105,8 @@ export const cvService = {
         fileUrl: input.fileUrl,
         fileType: input.fileType,
         isPrimary: input.isPrimary ?? false,
-        source: "upload",
+          source: "upload",
+        status: "parsing"
       })
       .returning();
     await cvParsingQueue.add("cv-parse", { cvId: cv.id });
@@ -150,6 +151,7 @@ export const cvService = {
         templateId: cvs.templateId,
         status: cvs.status,
         source: cvs.source,
+        failureReason: cvs.failureReason,
         aiAnalysisTotal: sql<
           number | null
         >`(${cvs.ai_analysis}->>'total')::int`,
@@ -252,7 +254,7 @@ export const cvService = {
       templateId: input.templateId,
       parsedData,
       source: "direct" as const,
-      status: "pending" as const,
+      status: "parsing" as const,
     };
 
     if (input.isPrimary === true) {
@@ -268,7 +270,6 @@ export const cvService = {
           .values({ ...baseValues, isPrimary: true })
           .returning();
 
-        await cvAnalysisQueue.add("cv-analysis", { cvId: cv.id });
         return cv;
       });
     }
@@ -280,6 +281,64 @@ export const cvService = {
 
     await cvAnalysisQueue.add("cv-analysis", { cvId: cv.id });
     return cv;
+  },
+
+  /**
+   * Trigger lại CV analysis — enqueue job vào cvAnalysisQueue.
+   *
+   * Dùng khi user bấm "Phân tích" trên CV đã parsed (status='ready') hoặc
+   * muốn retry sau khi status='failed'. Worker sẽ pick up và chạy LLM analysis.
+   *
+   * Validate:
+   *   - CV phải thuộc candidate + chưa soft-delete.
+   *   - CV phải đã có parsedData (chưa parse → throw).
+   *   - Status KHÔNG được là 'parsing' (đang chạy rồi, tránh duplicate job).
+   *
+   * Sau khi enqueue, đổi status='pending' để worker (check pending || parsing)
+   * pick up được.
+   *
+   * Lưu ý: KHÔNG tính quota ở đây — quota reserve trong worker (cvAnalysis.worker.ts)
+   * sau khi nhận job. Lý do: nếu quota hết, worker tự mark failed + emit socket,
+   * user không cần API trả 402 rồi mới biết.
+   */
+  triggerAnalysis: async (
+    candidateId: string,
+    cvId: string,
+  ): Promise<Cv> => {
+    const cv = await db.query.cvs.findFirst({
+      where: and(
+        eq(cvs.id, cvId),
+        eq(cvs.candidateId, candidateId),
+        ne(cvs.status, "deleted"),
+      ),
+    });
+
+    if (!cv) {
+      throw new AppError(404, "CV_NOT_FOUND", "CV not found or already deleted");
+    }
+
+    if (!cv.parsedData) {
+      throw new AppError(
+        400,
+        "CV_NOT_PARSED",
+        "CV chưa được parse. Vui lòng đợi parse xong hoặc upload lại.",
+      );
+    }
+
+    if (cv.status === "parsing") {
+      throw new AppError(
+        409,
+        "ALREADY_PROCESSING",
+        "CV đang được phân tích. Vui lòng đợi.",
+      );
+    }
+
+    await cvService.changeStatus(candidateId, cvId, "parsing");
+    
+    // Enqueue job.
+    await cvAnalysisQueue.add("cv-analysis", { cvId });
+
+    return { ...cv, status: "parsing" };
   },
 
   update: async (
@@ -352,8 +411,6 @@ export const cvService = {
 
       if (!updated) return null;
 
-      await cvAnalysisQueue.add("cv-analysis", { cvId: updated.id });
-
       return updated;
     });
   },
@@ -401,24 +458,42 @@ export const cvService = {
       return deleted ?? null;
     });
   },
-  changeStatus: async (
+  /**
+ * Đổi status của CV, đồng thời (optional) set/reset `failure_reason`.
+ *
+ * Quy tắc:
+ *   - newStatus === 'failed' + reason được truyền → lưu reason vào DB + emit socket kèm reason.
+ *   - newStatus !== 'failed' (pending/parsing/ready/deleted) → reset failure_reason = NULL.
+ *     Lý do: CV thành công hoặc restart lại từ đầu → không còn lý do fail cũ.
+ *
+ * @param reason - Bắt buộc khi newStatus='failed'. Optional ở các status khác.
+ */
+changeStatus: async (
     candidateId: string,
     cvId: string,
     newStatus: CvStatus,
-  ): Promise<boolean> => {
+    reason: CvFailureReason | null = null,
+): Promise<boolean> => {
+    const failureReason = newStatus === "failed" ? reason : null;
+
     const [updated] = await db
-      .update(cvs)
-      .set({ status: newStatus, updatedAt: new Date() })
-      .where(and(eq(cvs.id, cvId), ne(cvs.status, "deleted")))
-      .returning({ id: cvs.id });
+        .update(cvs)
+        .set({
+            status: newStatus,
+            failureReason,
+            updatedAt: new Date(),
+        })
+        .where(and(eq(cvs.id, cvId), ne(cvs.status, "deleted")))
+        .returning({ id: cvs.id });
     if (!updated) return false;
 
     notificationGateway.emitToUser(candidateId, "cv:status-changed", {
-      cvId,
-      status: newStatus,
+        cvId,
+        status: newStatus,
+        failureReason,
     });
     return true;
-  },
+},
 
   changeAnalysisAsNotCv: async (
     candidateId: string,
@@ -436,6 +511,7 @@ export const cvService = {
           verificationWarnings: [],
         },
         status: "failed",
+        failureReason: "not_a_cv",
         updatedAt: new Date(),
       })
       .where(and(eq(cvs.id, cvId), ne(cvs.status, "deleted")))
@@ -445,6 +521,7 @@ export const cvService = {
     notificationGateway.emitToUser(candidateId, "cv:status-changed", {
       cvId,
       status: "failed",
+      failureReason: "not_a_cv",
     });
     return true;
   },
@@ -458,6 +535,7 @@ export const cvService = {
       .set({
         ai_analysis: analysis,
         status: "ready",
+        failureReason: null, // reset — CV thành công, không còn lý do fail
         scoreUpdatedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -468,6 +546,7 @@ export const cvService = {
     notificationGateway.emitToUser(candidateId, "cv:status-changed", {
       cvId,
       status: "ready",
+      failureReason: null,
     });
     return true;
   },

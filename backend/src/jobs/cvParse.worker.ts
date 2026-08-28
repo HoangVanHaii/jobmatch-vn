@@ -8,9 +8,9 @@ import pdfParse from 'pdf-parse';
 import mamonth from 'mammoth';
 import { invokeCvParse } from "../lib/llm";
 import {CV_PARSE_SYSTEM_PROMPT, buildCvParseUserPrompt} from '../prompts/cvParse'
-import { cvAnalysisQueue } from "../config/queue";
 import { isRateLimited, waitForRateLimit } from "../lib/llm/errors";
 import { cvService } from "../service/cv.service";
+import { usageLogService } from "../service/usageLog.service";
 
 
 const QUEUE_NAME = 'cvParsing';
@@ -40,19 +40,19 @@ const QUEUE_NAME = 'cvParsing';
  *   // docxText = "Tran Thi B\nMarketing Manager..."
  */
 const extractText = async (
-  buffer: Buffer,
-  mimetype: string
+    buffer: Buffer,
+    mimetype: string
 ): Promise<string> => {
-  if (mimetype === 'application/pdf') {
-    const data = await pdfParse(buffer);
-    return data.text;
-  }
-  if (mimetype.includes('wordprocessingml') ||
-    mimetype === 'application/msword') {
-    const result = await mamonth.extractRawText({ buffer });
-    return result.value;
-  }
-  throw new Error(`Unsupported mimetype: ${mimetype}`);
+    if (mimetype === 'application/pdf') {
+        const data = await pdfParse(buffer);
+        return data.text;
+    }
+    if (mimetype.includes('wordprocessingml') ||
+        mimetype === 'application/msword') {
+        const result = await mamonth.extractRawText({ buffer });
+        return result.value;
+    }
+    throw new Error(`Unsupported mimetype: ${mimetype}`);
 }
 
 /**
@@ -79,105 +79,143 @@ const extractText = async (
  *   // buffer = <Buffer 25 50 44 46 2d 31 2e 34 ...> (binary)
  */
 const fetchFileFromUrl = async (url: string): Promise<Buffer> => {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
 }
 
 
 export const cvParseWorker = new Worker(
-	QUEUE_NAME,
-	async (job) => {
-		if (job.name !== 'cv-parse') return;
-		const { cvId } = job.data as { cvId: string };
-		
-		logger.info({
-			cvId, jobId: job.id, attempt: job.attemptsMade + 1},
-			"Worker: CV parse job started",
-		);
+    QUEUE_NAME,
+    async (job) => {
+        if (job.name !== 'cv-parse') return;
+        const { cvId } = job.data as { cvId: string };
 
-		const dbCv = await db.query.cvs.findFirst({ where: eq(cvs.id, cvId) });
 
-		if (!dbCv) {
-			logger.warn({ cvId, jobId: job.id }, "Worker: CV not found, skipping job");
-			return;
-		}
-		if (dbCv.status !== 'pending' && dbCv.status !== 'parsing') {
-			logger.warn({ cvId, status: dbCv.status }, 'Worker: CV is not pending or parsing, skipping job');
-			return;
-		}
-		if (!dbCv.fileUrl || !dbCv.fileType) {
-			logger.error({ cvId }, "Worker: CV file information is missing");
-			await cvService.changeStatus(dbCv.candidateId, dbCv.id, "failed");
-			return;
-		}
-		await cvService.changeStatus(dbCv.candidateId, dbCv.id, "parsing")
-		
-		try {
-      const buffer = await fetchFileFromUrl(dbCv.fileUrl);
-      const text = await extractText(buffer, dbCv.fileType);
+        const dbCv = await db.query.cvs.findFirst({ where: eq(cvs.id, cvId) });
 
-      logger.info({ cvId, textLen: text.length }, "Worker: CV text extracted");
+        if (!dbCv) {
+            return;
+        }
+        if (dbCv.status !== 'pending' && dbCv.status !== 'parsing') {
+            return;
+        }
+        if (!dbCv.fileUrl || !dbCv.fileType) {
+            await cvService.changeStatus(
+                dbCv.candidateId,
+                dbCv.id,
+                "failed",
+                "invalid_file",
+            );
+            return;
+        }
+        await cvService.changeStatus(dbCv.candidateId, dbCv.id, "parsing")
 
-      const parsed = await invokeCvParse(
-        CV_PARSE_SYSTEM_PROMPT,
-        buildCvParseUserPrompt(text),
-      );
-			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-				logger.error({
-            cvId,
-            sample: JSON.stringify(parsed)?.slice(0, 200), // ← xem thử
-          },
-          "Worker: LLM returned invalid parse data",
-        );
-        throw new Error(`LLM returned invalid parsed data: ${typeof parsed}`);
+        try {
+            const buffer = await fetchFileFromUrl(dbCv.fileUrl);
+            const text = await extractText(buffer, dbCv.fileType);
 
-      }
+            // Chỉ attempt đầu reserve quota — các retry sau giữ nguyên count
+            // (LLM đã consume token cho attempt trước, không charge lại).
+            const reservedThisAttempt = job.attemptsMade === 0;
+            if (reservedThisAttempt) {
+                const reserved = await usageLogService.createOrIncrementUsage(
+                    dbCv.candidateId,
+                    "ai_cv_parsed",
+                );
+                if (!reserved) {
+                    await cvService.changeStatus(
+                        dbCv.candidateId,
+                        dbCv.id,
+                        "failed",
+                        "quota_exceeded",
+                    );
+                    return;
+                }
+            }
 
-      await db
-        .update(cvs)
-        .set({
-          parsedData: parsed,
-          updatedAt: new Date(),
-        })
-        .where(eq(cvs.id, cvId));
+            const result = await invokeCvParse(
+                CV_PARSE_SYSTEM_PROMPT,
+                buildCvParseUserPrompt(text),
+            );
+            if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+                logger.error(
+                    {
+                        cvId,
+                        sample: JSON.stringify(result.data)?.slice(0, 200),
+                    },
+                    "Worker: LLM returned invalid parse data",
+                );
+                throw new Error(`LLM returned invalid parsed data: ${typeof result.data}`);
+            }
 
-      await cvAnalysisQueue.add("cv-analysis", { cvId: dbCv.id });
+            // Ghi nhận token thực tế sau LLM success — invokeCvParse đã trả về usage.
+            const tokenUsed = result.usage.totalTokens ?? 0;
+            if (tokenUsed > 0) {
+                await usageLogService.insertOrIncrementToken(
+                    dbCv.candidateId,
+                    "ai_cv_parsed",
+                    tokenUsed,
+                );
+            }
 
-      logger.info({ cvId }, "Worker: CV parsed successfully");
+            await db
+                .update(cvs)
+                .set({
+                    parsedData: result.data,
+                    updatedAt: new Date(),
+                })
+                .where(eq(cvs.id, cvId));
 
-      return parsed;
-    } catch (err) {
-      // --- 429: chờ + để BullMQ retry ---
-      if (isRateLimited(err)) {
-        logger.warn({ cvId, attempt: job.attemptsMade + 1 },"Worker: 429 rate limit, waiting");
-        await waitForRateLimit();
-				logger.warn({ cvId }, "Worker: rate limit wait done — rethrowing for retry");
-        throw err;
-      }
-      // --- Lỗi khác (network, parse, invalid shape): ---
-      const attempt = job.attemptsMade + 1;
-      const maxAttempts = job.opts.attempts ?? 3;
-      const isLastAttempt = attempt >= maxAttempts;
+            await cvService.changeStatus(
+                dbCv.candidateId,
+                dbCv.id,
+                "ready",
+            );
 
-			logger.error({ cvId, attempt, maxAttempts, isLastAttempt, err }, "Worker: CV parse attempt failed");
+            return result.data;
+        } catch (err) {
+            // --- 429: chờ + để BullMQ retry ---
+            if (isRateLimited(err)) {
+                logger.warn({ cvId, attempt: job.attemptsMade + 1 }, "Worker: 429 rate limit, waiting");
+                await waitForRateLimit();
+                logger.warn({ cvId }, "Worker: rate limit wait done — rethrowing for retry");
+                throw err;
+            }
+            // --- Lỗi khác (network, parse, invalid shape): ---
+            const attempt = job.attemptsMade + 1;
+            const maxAttempts = job.opts.attempts ?? 3;
+            const isLastAttempt = attempt >= maxAttempts;
 
-      // Chỉ mark 'failed' khi đã hết retry — các attempt trước vẫn để status='parsing'
-      // để attempt sau được worker check `status !== 'pending' && !== 'parsing'` pass.
-      if (isLastAttempt) {
-        await cvService.changeStatus(dbCv.candidateId, dbCv.id, "failed");
-      }
-      throw err;
-    }
+            logger.error(
+                { cvId, attempt, maxAttempts, isLastAttempt, err },
+                "Worker: CV parse attempt failed",
+            );
 
-	},
-	{ connection: redis, concurrency: 2 },
+            // Chỉ mark 'failed' khi đã hết retry — các attempt trước vẫn để status='parsing'
+            // để attempt sau được worker check `status !== 'pending' && !== 'parsing'` pass.
+            if (isLastAttempt) {
+                await usageLogService.decrementCount(
+                    dbCv.candidateId,
+                    "ai_cv_parsed",
+                );
+                await cvService.changeStatus(
+                    dbCv.candidateId,
+                    dbCv.id,
+                    "failed",
+                    "parse_error",
+                );
+            }
+            throw err;
+        }
+
+    },
+    { connection: redis, concurrency: 2 },
 )
+
 cvParseWorker.on('failed', (job, err) => {
     logger.error({ jobId: job?.id, err }, "Worker: CV parse job failed");
 })
-
-

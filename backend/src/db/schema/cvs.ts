@@ -3,7 +3,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { users } from './users';
 import { cvStatusEnum, cvSourceEnum } from './enums';
-import type { AiAnalysis } from '../../interface/cv';
+import type { AiAnalysis, CvFailureReason } from '../../interface/cv';
 
 /**
  * CV của candidate — 2 loại:
@@ -41,6 +41,11 @@ export const cvs = pgTable('cvs', {
     certifications?: Array<Record<string, unknown>>;
   }>(),
   ai_analysis: jsonb('ai_analysis').$type<AiAnalysis>(),
+  /**
+   * Lý do fail — set khi status='failed', reset NULL khi status khác.
+   * Worker + changeStatus đảm bảo consistency.
+   */
+  failureReason: text('failure_reason').$type<CvFailureReason>(),
   scoreUpdatedAt: timestamp('score_updated_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
