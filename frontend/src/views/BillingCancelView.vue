@@ -183,7 +183,10 @@ onUnmounted(() => {
             <div class="text-6xl mb-4">✅</div>
             <h1 class="text-2xl font-bold mb-2">Phát hiện thanh toán</h1>
             <p class="text-gray-600 mb-6">{{ errorMsg }}</p>
-            <button @click="router.push('/candidate/pricing')" class="btn-primary">
+            <button
+                @click="router.push('/candidate/pricing')"
+                class="bg-primary-600 text-white py-2 px-6 rounded-lg hover:bg-primary-700 transition"
+            >
                 Quay lại trang gói
             </button>
         </div>
@@ -193,15 +196,13 @@ onUnmounted(() => {
             <div class="text-6xl mb-4">⚠️</div>
             <h1 class="text-2xl font-bold mb-2">Đã hủy thanh toán</h1>
             <p class="text-gray-600 mb-6">{{ errorMsg }}</p>
-            <button @click="router.push('/candidate/pricing')" class="btn-primary">
+            <button
+                @click="router.push('/candidate/pricing')"
+                class="bg-primary-600 text-white py-2 px-6 rounded-lg hover:bg-primary-700 transition"
+            >
                 Quay lại chọn gói
             </button>
         </div>
     </div>
 </template>
 
-<style scoped>
-.btn-primary {
-    @apply bg-primary-600 text-white py-2 px-6 rounded-lg hover:bg-primary-700 transition;
-}
-</style>

@@ -228,7 +228,10 @@ onUnmounted(() => {
                     <span class="font-mono text-xs ml-1">{{ payment.subscriptionId }}</span>
                 </p>
             </div>
-            <button @click="router.push('/candidate/pricing')" class="btn-primary">
+            <button
+                @click="router.push('/candidate/pricing')"
+                class="bg-primary-600 text-white py-2 px-6 rounded-lg hover:bg-primary-700 transition"
+            >
                 Quay lại trang gói
             </button>
         </div>
@@ -239,8 +242,16 @@ onUnmounted(() => {
             <h1 class="text-2xl font-bold mb-2">Đang chờ xử lý</h1>
             <p class="text-gray-600 mb-6">{{ errorMsg }}</p>
             <div class="flex gap-2 justify-center">
-                <button @click="manualRefresh" class="btn-primary">🔄 Thử lại</button>
-                <button @click="router.push('/candidate')" class="btn-secondary">
+                <button
+                    @click="manualRefresh"
+                    class="bg-primary-600 text-white py-2 px-6 rounded-lg hover:bg-primary-700 transition"
+                >
+                    🔄 Thử lại
+                </button>
+                <button
+                    @click="router.push('/candidate')"
+                    class="bg-gray-200 text-gray-700 py-2 px-6 rounded-lg hover:bg-gray-300 transition"
+                >
                     Về trang chính
                 </button>
             </div>
@@ -251,18 +262,13 @@ onUnmounted(() => {
             <div class="text-6xl mb-4">❌</div>
             <h1 class="text-2xl font-bold mb-2">Thanh toán thất bại</h1>
             <p class="text-red-600 mb-6">{{ errorMsg }}</p>
-            <button @click="router.push('/candidate/pricing')" class="btn-primary">
+            <button
+                @click="router.push('/candidate/pricing')"
+                class="bg-primary-600 text-white py-2 px-6 rounded-lg hover:bg-primary-700 transition"
+            >
                 Thử lại
             </button>
         </div>
     </div>
 </template>
 
-<style scoped>
-.btn-primary {
-    @apply bg-primary-600 text-white py-2 px-6 rounded-lg hover:bg-primary-700 transition;
-}
-.btn-secondary {
-    @apply bg-gray-200 text-gray-700 py-2 px-6 rounded-lg hover:bg-gray-300 transition;
-}
-</style>
