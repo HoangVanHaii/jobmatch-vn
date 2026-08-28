@@ -128,25 +128,20 @@ const isoTime = (ts: number | null): string =>
 </script>
 
 <template>
-  <div v-if="auth.isAuthenticated" class="notif-bell-root fixed top-4 right-4 z-50 select-none">
+  <div v-if="auth.isAuthenticated" class="notif-bell-root fixed top-3 right-2 z-50 select-none">
     <!-- Bell button -->
     <button
       type="button"
-      class="relative w-12 h-12 flex items-center justify-center rounded-full bg-white shadow-lg hover:shadow-xl transition border border-gray-200"
-      :class="{ 'ring-2 ring-primary-300': socketConnected }"
+      class="relative w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-lg hover:shadow-xl transition ring-2 ring-gray-500"
       aria-label="Notifications"
       @click.stop="onToggle"
     >
-      <Bell class="w-5 h-5 text-gray-700" />
+      <Bell class="w-4 h-4 text-gray-900" />
       <span
         v-if="unread > 0"
         class="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center"
       >{{ unread > 99 ? '99+' : unread }}</span>
-      <span
-        v-if="socketConnected"
-        class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-white"
-        title="Socket kết nối"
-      />
+      
     </button>
 
     <!-- Dropdown -->
