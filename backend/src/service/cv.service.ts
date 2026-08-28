@@ -1,6 +1,6 @@
 import { db } from "../config/database";
 import { cvs } from "../db/schema";
-import { desc, eq, and, ne, sql } from "drizzle-orm";
+import { desc, eq, and, ne, sql, inArray } from "drizzle-orm";
 import type { CreateCvInput, CreateDirectCvInput, Cv, VerificationWarning, CvDetail, CvStatus, CvSource, ListCvResponse, AiAnalysis, UpdateDirectCvInput } from "../interface/cv";
 import { notificationGateway } from "../socket/notificationGateway";
 import { githubLookupService } from "./githubLookup.service";
@@ -167,6 +167,27 @@ export const cvService = {
       .where(whereExpr);
 
     return { items: rows, total: count };
+  },
+
+  /**
+   * Lấy nhiều CV theo id, scoped theo candidateId.
+   * Dùng cho chatbot picker context — chỉ trả CV thuộc user, status='ready', bỏ 'deleted'.
+   * Nếu cvIds rỗng hoặc tất cả không khớp owner → trả [].
+   */
+  getManyByIds: async (cvIds: string[], candidateId: string): Promise<Cv[]> => {
+    if (!cvIds.length) return [];
+    const rows = await db
+      .select()
+      .from(cvs)
+      .where(
+        and(
+          inArray(cvs.id, cvIds),
+          eq(cvs.candidateId, candidateId),
+          ne(cvs.status, "deleted"),
+          eq(cvs.status, "ready"),
+        ),
+      );
+    return rows;
   },
 
   /**

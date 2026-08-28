@@ -6,7 +6,12 @@ export const aiChatSessions = pgTable('ai_chat_sessions', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   title: text('title'),
   messages: jsonb('messages').default([]).$type<Array<{ role: string; content: string; toolCalls?: unknown[]; ts: string }>>().notNull(),
-  context: jsonb('context').$type<Record<string, unknown>>(),
+  context: jsonb('context').$type<{
+    jobIds: string[];
+    cvIds: string[];
+    totalTokens?: number;
+    metadata?: Record<string, unknown>;
+  }>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
