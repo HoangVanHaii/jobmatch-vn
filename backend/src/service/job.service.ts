@@ -3,14 +3,14 @@ import { db } from '../config/database';
 import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
 import { eq, desc, and, sql, inArray } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
-import { Job, JobListItem } from '@/interface/job';
+import { Job, JobListItem, ExportApplicationsJobData } from '@/interface/job';
 import {
   JobListQuery,
   JobCreateBody,
   JobUpdateBody,
   JobSemanticSearchQuery,
 } from '../middleware/job';
-import { jobModerationQueue, jobEmbeddingQueue } from '../config/queue';
+import { jobModerationQueue, jobEmbeddingQueue, exportQueue } from '../config/queue';
 import { invokeJobGeneration } from '../lib/llm/jobGeneration';
 import { JOB_GENERATION_SYSTEM_PROMPT, buildJobGenerationUserPrompt } from '../prompts/jobGeneration';
 import { searchSimilarJobs, SemanticSearchResult } from '../lib/llm/jobEmbedding';
@@ -361,6 +361,23 @@ generateDraft: async (
   },
 
   /**
+   * POST /jobs/:id/export — check quyền rồi đẩy task vào exportQueue (BullMQ).
+   * KHÔNG tự sinh CSV ở đây — export.worker.ts (chạy nền) mới làm việc đó,
+   * xong sẽ báo qua notificationGateway (socket.io), không trả file ngay.
+   * Pattern check ownership giống hệt getMatches() ở trên.
+   */
+  requestExportApplications: async (targetJobId: string, requestedBy: string): Promise<void> => {
+    const job = await db.query.jobs.findFirst({ where: eq(jobs.id, targetJobId) });
+    if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
+    if (job.postedBy !== requestedBy) {
+      throw new AppError(403, 'FORBIDDEN', 'Bạn không sở hữu job này');
+    }
+
+    const jobData: ExportApplicationsJobData = { targetJobId, requestedBy };
+    await exportQueue.add('export-applications', jobData);
+  },
+    
+   /**
    * Lấy nhiều job theo id — KHÔNG filter status (vì còn job 'closed' → warning).
    * Phase 1: chỉ trả 'live' hoặc 'closed' (ẩn 'draft'/'pending'/'ai_scanning'/'ai_flagged'/'expired').
    * Jobs là public nên KHÔNG cần ownership filter.
@@ -379,3 +396,4 @@ generateDraft: async (
     return rows;
   },
 } as const;
+
