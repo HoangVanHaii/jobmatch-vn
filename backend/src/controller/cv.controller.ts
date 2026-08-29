@@ -117,6 +117,28 @@ export const cvController = {
       next(err);
     }
   },
+  /**
+   * POST /cvs/:cvId/analyze — trigger lại CV analysis.
+   *
+   * Body: rỗng. userId lấy từ req.user.
+   *
+   * Response: 202 Accepted + CV row (status='pending').
+   *
+   * FE nhận socket `cv:status-changed` để cập nhật UI realtime khi worker xử lý xong.
+   */
+  triggerAnalysis: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const candidateId = requireSelfCandidateId(req);
+      const { cvId } = req.params as { cvId: string };
+      const cv = await cvService.triggerAnalysis(candidateId, cvId);
+
+      res.status(202).json({ success: true, data: cv });
+    } catch (err) {
+      console.error('[cv.triggerAnalysis] error:', err);
+      next(err);
+    }
+  },
+
   remove: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const candidateId = requireSelfCandidateId(req);

@@ -93,7 +93,7 @@ export const jobController = {
 
   generate: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const draft = await jobService.generateDraft(req.body);
+      const draft = await jobService.generateDraft(req.user!.userId, req.body);
       res.json({ success: true, data: draft });
     } catch (err) { next(err); }
   },
