@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createGemini } from './client';
 import { invokeJson } from './jsonParser';
+import { InvokeJsonUsage } from './jsonParser';
 
 
 const educationItemSchema = z.object({
@@ -72,20 +73,24 @@ const parsingLlm = createGemini({
     temperature: 0.1,
     maxOutputTokens: 4096
 });
-
-export const invokeCvParse = async(
-    systemPrompt: string,
-    userPrompt: string
-): Promise<CvParsedData> => {
-    const result = await invokeJson({
-        llm: parsingLlm,
-        schema: cvParsedDataSchema,
-        systemPrompt,
-        userPrompt,
-        tag: 'cvParse'
-    })
-    return result as CvParsedData;
+export interface CvParseResult {
+  data: CvParsedData;
+  usage: InvokeJsonUsage;
 }
+
+export const invokeCvParse = async (
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<CvParseResult> => {
+  const { data, usage } = await invokeJson({
+    llm: parsingLlm,
+    schema: cvParsedDataSchema,
+    systemPrompt,
+    userPrompt,
+    tag: "cvParse",
+  });
+    return { data, usage };
+};
 
 
 

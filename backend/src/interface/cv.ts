@@ -19,6 +19,22 @@ export type Cv = typeof cvs.$inferSelect;
 export type CvStatus = (typeof cvStatusEnum.enumValues)[number];
 export type CvSource = (typeof cvSourceEnum.enumValues)[number];
 
+/**
+ * Lý do CV bị mark 'failed'.
+ *
+ * Phân biệt rõ để FE hiển thị message phù hợp + suggest CTA đúng:
+ *   - 'quota_exceeded' → "Đã hết lượt AI, nâng cấp gói"
+ *   - 'invalid_file'   → "File PDF/DOCX lỗi, upload lại"
+ *   - 'parse_error'    → "Lỗi xử lý, thử lại sau"
+ *   - 'not_a_cv'       → "File không phải CV"
+ */
+export type CvFailureReason =
+    | 'quota_exceeded'
+    | 'invalid_file'
+    | 'parse_error'
+    | 'not_a_cv'
+    | 'analysis_error'
+
 export interface CreateCvInput {
   title?: string;
   fileUrl?: string;

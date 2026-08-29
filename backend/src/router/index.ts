@@ -15,7 +15,9 @@ import { resumeRouter } from './resume';
 import { messageRouter } from './message';
 import { savedJobRouter } from './savedJob';
 import { searchRouter } from './search';
+import { planRouter } from './plan';
 import { paymentRouter } from './payment';
+import { subscriptionRouter } from './subscription';
 import { webhooksRouter } from './webhooks';
 import { adminRouter } from './admin';
 // Phase 2 & 3
@@ -28,6 +30,7 @@ import { skillsRouter } from "./skills";
 import { cvRouter } from './cv';
 import { candidateSkillRouter } from './candidateSkill';
 import { uploadRouter } from './upload';
+import { chatbotRouter } from './chatbot';
 
 export const apiRouter = Router();
 
@@ -44,7 +47,9 @@ apiRouter.use('/resumes', resumeRouter);
 apiRouter.use('/messages', messageRouter);
 apiRouter.use('/saved-jobs', savedJobRouter);
 apiRouter.use('/search', searchRouter);
-apiRouter.use('/', paymentRouter);
+apiRouter.use('/plans', planRouter);
+apiRouter.use('/payments', paymentRouter);
+apiRouter.use('/subscriptions', subscriptionRouter);
 apiRouter.use('/webhooks', webhooksRouter);
 apiRouter.use('/admin', adminRouter);
 apiRouter.use("/notifications", notificationRouter);
@@ -58,3 +63,6 @@ apiRouter.use('/references', referenceRouter);
 // Phase 3
 apiRouter.use('/schedule', scheduleRouter);
 apiRouter.use('/dialogflow', dialogflowRouter);
+
+// Chatbot AI (candidate + employer)
+apiRouter.use('/chatbot', chatbotRouter);

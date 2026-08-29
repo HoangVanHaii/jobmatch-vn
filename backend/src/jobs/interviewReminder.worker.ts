@@ -12,10 +12,10 @@ export const interviewReminderWorker = new Worker(
   async (job) => {
     if (job.name === 'interview-reminder') {
       logger.info('Worker: Interview reminder check started');
-      await interviewService.sendReminders();
+      // await interviewService.sendReminders();
     }
   },
   { connection: redis, concurrency: 1 },
 );
 
-interviewReminderWorker.on('failed', (job, err) => logger.error({ jobId: job.id, err }, 'Interview reminder failed'));
+interviewReminderWorker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, 'Interview reminder failed'));

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createGemini } from "./client";
 import { invokeJson } from "./jsonParser";
+import { InvokeJsonUsage } from "./jsonParser";
 
 const verificationWarningSchema = z.object({
   type: z.enum(["github", "linkedin"]),
@@ -22,17 +23,21 @@ const analysisLlm = createGemini({
   temperature: 0.3,
   maxOutputTokens: 2048,
 });
+export interface AiAnalysisData {
+  data: AiAnalysis;
+  usage: InvokeJsonUsage;
+}
 
 export const invokeCvAnalysis = async (
   systemPrompt: string,
   userPrompt: string,
-): Promise<AiAnalysis> => {
-  const result = await invokeJson({
+): Promise<AiAnalysisData> => {
+  const {data, usage} = await invokeJson({
     llm: analysisLlm,
     schema: cvAnalysisSchema,
     systemPrompt,
     userPrompt,
     tag: "cvAnalysis",
   });
-  return result as AiAnalysis;
+    return { data, usage } as AiAnalysisData;
 };
