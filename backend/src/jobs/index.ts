@@ -12,6 +12,7 @@ import { logger } from '../config/logger';
 import { Queue } from 'bullmq';
 import { redis } from '../config/redis';
 import { cvAnalysisWorker } from './cvAnalysis.worker';
+import { exportWorker } from './export.worker';   
 
 export const startWorkers = (): void => {
   void cvAnalysisWorker;
@@ -22,6 +23,7 @@ export const startWorkers = (): void => {
   void jobModerationWorker;
   void jobEmbeddingWorker;
   void jobExpiryWorker;
+  void exportWorker;
 
 
   // Schedule periodic jobs
