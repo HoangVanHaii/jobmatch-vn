@@ -149,4 +149,15 @@ export const jobController = {
       res.json({ success: true, data });
     } catch (err) { next(err); }
   },
+
+  requestExportApplications: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      await jobService.requestExportApplications(req.params.id as string, userId);
+      res.status(202).json({
+        success: true,
+        message: 'Export is processing. You will be notified upon completion.',
+      });
+    } catch (err) { next(err); }
+  },
 } as const;

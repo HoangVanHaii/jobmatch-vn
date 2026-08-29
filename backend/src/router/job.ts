@@ -100,3 +100,11 @@ jobRouter.get(
   validate(jobIdParamsSchema, 'params'),
   jobController.getScanResult,
 );
+
+jobRouter.post(
+  '/:id/export',
+  auth,
+  employerOnly,
+  validate(jobIdParamsSchema, 'params'),
+  jobController.requestExportApplications,
+);
