@@ -687,14 +687,14 @@ resolveContextData: async (userId: string, ctx: { jobIds: string[]; cvIds: strin
 
   /** List CVs của user cho picker (ownership-filtered). */
   listCvsPicker: async (userId: string) => {
-    const result = await cvService.list(userId, undefined, 50, 0);
+    const result = await cvService.getListDetail(userId, undefined, 50, 0);
     return result.items.map((cv) => ({
       id: cv.id,
       title: cv.title,
       isPrimary: cv.isPrimary,
       status: cv.status,
       source: cv.source,
-      aiAnalysisTotal: cv.aiAnalysisTotal ?? null,
+      aiAnalysisTotal: cv.ai_analysis?.total ?? null,
     }));
   },
 };
