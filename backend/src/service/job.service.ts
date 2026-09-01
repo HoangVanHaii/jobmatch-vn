@@ -3,17 +3,19 @@ import { db } from '../config/database';
 import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
 import { eq, desc, and, sql, inArray } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
-import { Job, JobListItem } from '@/interface/job';
+import { Job, JobListItem, ExportApplicationsJobData } from '@/interface/job';
 import {
   JobListQuery,
   JobCreateBody,
   JobUpdateBody,
   JobSemanticSearchQuery,
 } from '../middleware/job';
-import { jobModerationQueue, jobEmbeddingQueue } from '../config/queue';
+import { jobModerationQueue, jobEmbeddingQueue, exportQueue } from '../config/queue';
 import { invokeJobGeneration } from '../lib/llm/jobGeneration';
 import { JOB_GENERATION_SYSTEM_PROMPT, buildJobGenerationUserPrompt } from '../prompts/jobGeneration';
 import { searchSimilarJobs, SemanticSearchResult } from '../lib/llm/jobEmbedding';
+import { usageLogService } from './usageLog.service';
+import { tryCatch } from 'bullmq';
 
 const slugify = (s: string): string => {
   const base = s
@@ -203,13 +205,63 @@ export const jobService = {
     await jobModerationQueue.add('job-scan', { jobId });
   },
 
-  generateDraft: async (input: { keyword: string; companyName?: string }) => {
-    const draft = await invokeJobGeneration(
-      JOB_GENERATION_SYSTEM_PROMPT,
-      buildJobGenerationUserPrompt(input),
+    /**
+ * Generate draft job description bằng LLM, có quota tracking.
+ *
+ * Flow:
+ *   1. createOrIncrementUsage (reserve quota) → quota_exceeded → 402.
+ *   2. invokeJobGeneration (LLM call).
+ *      - Success: insertOrIncrementToken (ghi tokens) → return data.
+ *      - Fail: decrementCount (rollback) → re-throw.
+ *
+ * Lưu ý:
+ *   - Đây là API call (không phải worker) → không cần retry logic.
+ *   - createOrIncrementUsage đã race-safe (advisory lock) → concurrent requests OK.
+ */
+generateDraft: async (
+    userId: string,
+    input: { keyword: string; companyName?: string },
+) => {
+    const FEATURE_KEY = "job_generation";
+
+    // 1. Reserve quota + check limit.
+    const reserved = await usageLogService.createOrIncrementUsage(
+        userId,
+        FEATURE_KEY,
     );
-    return draft;
-  },
+    if (!reserved) {
+        throw new AppError(
+            402,
+            "QUOTA_EXCEEDED",
+            "Đã hết lượt generate draft trong gói hiện tại. Vui lòng nâng cấp gói.",
+        );
+    }
+
+    // 2. Gọi LLM — wrap try/catch để rollback quota nếu fail.
+    let result: Awaited<ReturnType<typeof invokeJobGeneration>>;
+    try {
+        result = await invokeJobGeneration(
+            JOB_GENERATION_SYSTEM_PROMPT,
+            buildJobGenerationUserPrompt(input),
+        );
+    } catch (err) {
+        // LLM fail → trả lại slot quota (không tính lượt user đã chưa dùng được).
+        await usageLogService.decrementCount(userId, FEATURE_KEY);
+        throw err;
+    }
+
+    // 3. Ghi nhận token sau khi LLM success.
+    const tokenUsed = result.usage?.totalTokens ?? 0;
+    if (tokenUsed > 0) {
+        await usageLogService.insertOrIncrementToken(
+            userId,
+            FEATURE_KEY,
+            tokenUsed,
+        );
+    }
+
+    return result.data;
+},
 
   create: async (userId: string, data: JobCreateBody) => {
       const company = await db.query.companies.findFirst({
@@ -309,6 +361,23 @@ export const jobService = {
   },
 
   /**
+   * POST /jobs/:id/export — check quyền rồi đẩy task vào exportQueue (BullMQ).
+   * KHÔNG tự sinh CSV ở đây — export.worker.ts (chạy nền) mới làm việc đó,
+   * xong sẽ báo qua notificationGateway (socket.io), không trả file ngay.
+   * Pattern check ownership giống hệt getMatches() ở trên.
+   */
+  requestExportApplications: async (targetJobId: string, requestedBy: string): Promise<void> => {
+    const job = await db.query.jobs.findFirst({ where: eq(jobs.id, targetJobId) });
+    if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
+    if (job.postedBy !== requestedBy) {
+      throw new AppError(403, 'FORBIDDEN', 'Bạn không sở hữu job này');
+    }
+
+    const jobData: ExportApplicationsJobData = { targetJobId, requestedBy };
+    await exportQueue.add('export-applications', jobData);
+  },
+    
+   /**
    * Lấy nhiều job theo id — KHÔNG filter status (vì còn job 'closed' → warning).
    * Phase 1: chỉ trả 'live' hoặc 'closed' (ẩn 'draft'/'pending'/'ai_scanning'/'ai_flagged'/'expired').
    * Jobs là public nên KHÔNG cần ownership filter.
@@ -327,3 +396,4 @@ export const jobService = {
     return rows;
   },
 } as const;
+

@@ -93,7 +93,7 @@ export const jobController = {
 
   generate: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const draft = await jobService.generateDraft(req.body);
+      const draft = await jobService.generateDraft(req.user!.userId, req.body);
       res.json({ success: true, data: draft });
     } catch (err) { next(err); }
   },
@@ -147,6 +147,17 @@ export const jobController = {
       const userId = req.user!.userId;
       const data = await jobService.getMatches(userId, req.params.id as string);
       res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
+  requestExportApplications: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      await jobService.requestExportApplications(req.params.id as string, userId);
+      res.status(202).json({
+        success: true,
+        message: 'Export is processing. You will be notified upon completion.',
+      });
     } catch (err) { next(err); }
   },
 } as const;

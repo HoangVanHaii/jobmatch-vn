@@ -22,7 +22,8 @@ import {
 import { useCvStore } from '@stores/cv';
 import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue';
 import CVTemplateMockup from '@components/cv/CVTemplateMockup.vue';
-import type { CvRenderData, CvSource, CvStatus, ListCv, CvDetail } from '@/types/cv';
+import type { CvRenderData, CvSource, CvStatus, ListCv, CvDetail, CvFailureReason } from '@/types/cv';
+import CvFailureInfo from '@components/cv/CvFailureInfo.vue';
 import { useSocket } from '@composables/useSocket';
 
 const router = useRouter();
@@ -69,18 +70,23 @@ watch(() => router.currentRoute.value.fullPath, () => loadList());
  * tránh user phải F5 thủ công.
  *
  * Payload BE (xem cv.service.ts changeStatus / changeAnalysisAsReady):
- *   { cvId: string; status: CvStatus }
+ *   { cvId: string; status: CvStatus; failureReason: CvFailureReason | null }
  *
  * - status='parsing' / 'failed' / ...  → patch ngay status trong list.
+ * - status='failed'                    → patch kèm failureReason để FE show banner.
  * - status='ready'                     → patch + refresh detail để lấy
  *                                         aiAnalysisTotal mới (score vừa chấm).
  * ==========================================================================*/
-useSocket('cv:status-changed', async (payload: { cvId: string; status: CvStatus }) => {
-  const { cvId, status } = payload;
+useSocket('cv:status-changed', async (payload: {
+  cvId: string;
+  status: CvStatus;
+  failureReason?: CvFailureReason | null;
+}) => {
+  const { cvId, status, failureReason } = payload;
   if (!cvId || !status) return;
 
-  // 1. Patch status ngay (UI phản hồi tức thì)
-  cvStore.updateStatus(cvId, status);
+  // 1. Patch status ngay (UI phản hồi tức thì) + failureReason nếu failed
+  cvStore.updateStatus(cvId, status, failureReason ?? null);
 
   // 2. Khi ready → fetch lại detail để lấy aiAnalysisTotal
   if (status === 'ready') {
@@ -171,6 +177,31 @@ const handleSetPrimary = async (cvId: string) => {
   settingPrimaryId.value = cvId;
   await cvStore.setPrimary(cvId);
   settingPrimaryId.value = null;
+};
+
+/* ============================================================================
+ * Trigger analysis — gọi API POST /cvs/:cvId/analyze → enqueue worker.
+ *
+ * Hiện nút khi CV đã parsed (có parsedData) nhưng chưa hoặc failed analysis.
+ * Click → loading state → store.triggerAnalysis → update status='pending'
+ * → worker pick up + emit socket → UI update realtime.
+ * ==========================================================================*/
+const analyzingId = ref<string | null>(null);
+/** Có thể trigger analysis không? — status='ready' (parsed, no analysis) hoặc 'failed' (retry). */
+const canAnalyze = (cv: ListCv): boolean =>
+  cv.source === 'upload' && (cv.status === 'ready' || cv.status === 'failed');
+
+const handleAnalyze = async (cvId: string): Promise<void> => {
+  analyzingId.value = cvId;
+  try {
+    const ok = await cvStore.triggerAnalysis(cvId);
+    if (!ok) {
+      // error đã được set trong store — toast nhẹ (UI error banner đã hiển thị)
+      return;
+    }
+  } finally {
+    analyzingId.value = null;
+  }
 };
 
 /* ============================================================================
@@ -517,6 +548,12 @@ const handleUploadClick = (): void => {
                   :class="statusDotColor[cv.status]"
                 ></span>
                 <span class="text-gray-500 truncate">{{ statusLabel[cv.status] }}</span>
+                <!-- Lý do fail (compact) — chỉ hiện khi status='failed' + có reason -->
+                <CvFailureInfo
+                  v-if="cv.status === 'failed' && cv.failureReason"
+                  :reason="cv.failureReason"
+                  variant="card"
+                />
               </div>
 
               <div class="flex items-center gap-1 shrink-0">
@@ -541,9 +578,23 @@ const handleUploadClick = (): void => {
             <div class="flex items-center justify-between text-[11px] text-gray-400 pt-1.5 border-t border-gray-100">
               <span v-if="formatDate(cv)">{{ formatDate(cv) }}</span>
               <span v-else>—</span>
-              <span class="inline-flex items-center gap-1 opacity-0 group-hover:opacity-100 transition text-gray-700">
-                <Eye class="w-3 h-3" /> Xem
-              </span>
+              <div class="flex items-center gap-2">
+                <!-- Trigger analysis (chỉ upload CV, status ready/failed) -->
+                <button
+                  v-if="canAnalyze(cv)"
+                  type="button"
+                  class="inline-flex items-center gap-1 text-[11px] font-medium text-gray-700 hover:text-gray-900 transition disabled:opacity-50"
+                  :disabled="analyzingId === cv.id"
+                  @click.stop="handleAnalyze(cv.id)"
+                >
+                  <Loader2 v-if="analyzingId === cv.id" class="w-3 h-3 animate-spin" />
+                  <Sparkles v-else class="w-3 h-3" />
+                  Phân tích
+                </button>
+                <span class="inline-flex items-center gap-1 opacity-0 group-hover:opacity-100 transition text-gray-700">
+                  <Eye class="w-3 h-3" /> Xem
+                </span>
+              </div>
             </div>
           </div>
         </article>
@@ -619,6 +670,14 @@ const handleUploadClick = (): void => {
               <Loader2 class="w-5 h-5 text-gray-400 animate-spin" />
             </div>
             <div v-else-if="previewData">
+              <!-- Banner lý do fail — hiện đầu tiên nếu status='failed' -->
+              <CvFailureInfo
+                v-if="previewData.status === 'failed' && previewData.failureReason"
+                :reason="previewData.failureReason"
+                variant="banner"
+                class="m-4 mb-0"
+              />
+
               <template v-if="previewData.source === 'upload' && previewData.fileUrl">
                 <div class="bg-white">
                   <iframe

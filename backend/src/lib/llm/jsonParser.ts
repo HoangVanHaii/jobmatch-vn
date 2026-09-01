@@ -19,29 +19,34 @@ export interface InvokeJsonOptions<T> {
   /** Tag để log (VD: 'jobModeration', 'jobGeneration') */
   tag?: string;
 }
+export interface InvokeJsonResult<T> {
+  data: T;
+  usage: InvokeJsonUsage;
+}
 // invoke json: gọi llm trả về json, log token usage để theo dõi cost
-export async function invokeJson<T>(opts: InvokeJsonOptions<T>): Promise<T> {
+export async function invokeJson<T>(
+  opts: InvokeJsonOptions<T>,
+): Promise<InvokeJsonResult<T>> {
   const parser = JsonMarkdownStructuredOutputParser.fromZodSchema(opts.schema);
-
   const messages = [
     new SystemMessage(opts.systemPrompt),
     new HumanMessage(`${opts.userPrompt}\n\n${parser.getFormatInstructions()}`),
   ];
-
-  // LangSmith tự log raw invoke; parse riêng để surface lỗi validation
   const raw = await opts.llm.invoke(messages);
+  const usageMeta = extractUsage(raw) ?? {
+    promptTokens: 0,
+    completionTokens: 0,
+    thoughtsTokens: 0,
+    totalTokens: 0,
+  };
   if (opts.tag) {
-    logger.info({
-      tag: opts.tag,
-      response_metadata: (raw as any).response_metadata,
-      usage_metadata: (raw as any).usage_metadata,
-    }, `[LLM DEBUG] ${opts.tag} raw usage objects`);
+    logger.info(
+      { tag: opts.tag, ...usageMeta },
+      `[LLM] ${opts.tag} tokens used`,
+    );
   }
-  const usageMeta = extractUsage(raw)
-  if (usageMeta && opts.tag) {
-    logger.info({ tag: opts.tag, ...usageMeta }, `[LLM] ${opts.tag} tokens used`);
-  }
-  return parser.parse(raw.content as string) as T;
+  const data = (await parser.parse(raw.content as string)) as T;
+  return { data, usage: usageMeta };
 }
 const extractUsage = (raw: any): InvokeJsonUsage | null => {
   const g = raw.response_metadata?.tokenUsage;
