@@ -170,7 +170,7 @@ const progressStyle = (toast: Toast): Record<string, string> => {
                 v-if="t.action"
                 type="button"
                 class="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-gray-900 hover:text-gray-700 underline underline-offset-2 decoration-gray-300 hover:decoration-gray-500"
-                @click="t.action.onClick(); toastStore.dismiss(t.id)"
+                @click="t.action.onClick?.(); toastStore.dismiss(t.id)"
               >
                 {{ t.action.label }} →
               </button>
