@@ -30,6 +30,12 @@ import { useChatStore } from '@stores/chat';
 import { useToastStore } from '@stores/toast';
 import { useSocket } from '@composables/useSocket';
 import NotificationBell from '@components/notify/NotificationBell.vue';
+import ToastContainer from '@components/notify/ToastContainer.vue';
+
+// Chatbot AI giờ là trang full-page tại `/chatbot` (ChatbotView.vue).
+// Floating ChatbotWidget cũ đã thay thế — import giữ để tương thích nếu file còn được tham chiếu,
+// nhưng không mount để tránh trùng UI.
+// import ChatbotWidget from '@components/ai/ChatbotWidget.vue';
 import ToastHost from '@components/common/ToastHost.vue';
 import type { ChatNewPayload } from '@/types/chat';
 
@@ -79,5 +85,8 @@ useSocket('chat:new', (payload: ChatNewPayload) => {
 <template>
   <RouterView />
   <NotificationBell />
+  <!-- Toast container — render hàng đợi toast toàn cục. Teleport tới body. -->
+  <ToastContainer />
+</template>
   <ToastHost />
 </template>

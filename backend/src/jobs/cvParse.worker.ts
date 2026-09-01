@@ -11,6 +11,7 @@ import {CV_PARSE_SYSTEM_PROMPT, buildCvParseUserPrompt} from '../prompts/cvParse
 import { isRateLimited, waitForRateLimit } from "../lib/llm/errors";
 import { cvService } from "../service/cv.service";
 import { usageLogService } from "../service/usageLog.service";
+import { notificationGateway } from "../socket/notificationGateway";
 
 
 const QUEUE_NAME = 'cvParsing';
@@ -127,11 +128,28 @@ export const cvParseWorker = new Worker(
                     "ai_cv_parsed",
                 );
                 if (!reserved) {
+                    // Hết lượt parse AI.
+                    //   - Khác analyze worker: parse KHÔNG có parsedData để giữ,
+                    //     nên status='failed' là chính xác (CV không thể dùng được).
+                    //   - Vẫn emit cv:quota-warning với context='parse' để FE
+                    //     hiển thị modal giải thích lý do quota (không phải lỗi
+                    //     file). User không phải đoán tại sao CV fail.
                     await cvService.changeStatus(
                         dbCv.candidateId,
                         dbCv.id,
                         "failed",
                         "quota_exceeded",
+                    );
+                    notificationGateway.emitToUser(
+                        dbCv.candidateId,
+                        "cv:quota-warning",
+                        {
+                            cvId: dbCv.id,
+                            context: "parse",
+                            reason: "quota_exceeded",
+                            message:
+                                "Đã hết lượt parse AI. CV không thể xử lý cho tới khi gói được nạp thêm lượt.",
+                        },
                     );
                     return;
                 }
