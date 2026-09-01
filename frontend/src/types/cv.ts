@@ -6,6 +6,23 @@
 export type CvSource = 'upload' | 'direct';
 export type CvStatus = 'pending' | 'parsing' | 'ready' | 'failed' | 'deleted';
 
+/**
+ * Lý do CV bị mark 'failed'.
+ *
+ * Phân biệt rõ để FE hiển thị message + CTA phù hợp:
+ *   - 'quota_exceeded' → "Đã hết lượt AI, nâng cấp gói"
+ *   - 'invalid_file'   → "File PDF/DOCX lỗi, upload lại"
+ *   - 'parse_error'    → "Lỗi xử lý, thử lại sau"
+ *   - 'not_a_cv'       → "File không phải CV"
+ *
+ * Phải đồng bộ với backend: backend/src/interface/cv.ts CvFailureReason.
+ */
+export type CvFailureReason =
+  | 'quota_exceeded'
+  | 'invalid_file'
+  | 'parse_error'
+  | 'not_a_cv';
+
 export interface AiAnalysis {
   isCv: boolean;
   total: number;
@@ -114,6 +131,8 @@ export interface Cv {
   templateId: number | null;
   parsedData: Record<string, unknown> | null;
   ai_analysis: AiAnalysis | null;
+  /** Lý do fail — chỉ set khi status='failed'. Reset NULL khi status khác. */
+  failureReason: CvFailureReason | null;
   scoreUpdatedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -137,6 +156,7 @@ export interface ListCv {
   source: CvSource;
   templateId: number | null;
   aiAnalysisTotal: number | null;
+  failureReason: CvFailureReason | null;
 }
 
 /** Query param GET /cvs — pagination + filter. */

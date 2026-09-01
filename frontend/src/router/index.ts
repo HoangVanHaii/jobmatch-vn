@@ -14,12 +14,11 @@ const routes: RouteRecordRaw[] = [
   { path: '/forgot-password', name: 'forgot-password', component: () => import('@views/auth/ForgotPasswordView.vue') },
   { path: '/auth/callback/:provider', name: 'oauth-callback', component: () => import('@views/auth/OAuthCallbackView.vue') },
   { path: '/onboarding', name: 'onboarding', component: () => import('@views/auth/OnboardingView.vue'), meta: { auth: true } },
-  { path: '/pricing', name: 'pricing', component: () => import('@views/PricingView.vue') },
   { path: '/jobs', name: 'jobs', component: () => import('@views/JobListView.vue') },
   { path: '/jobs/:id', name: 'job-detail', component: () => import('@views/JobDetailView.vue') },
   { path: '/search', name: 'search', component: () => import('@views/SearchView.vue') },
 
-  // Candidate
+  // Candidate — bao gồm cả /pricing để có sidebar
   {
     path: '/candidate',
     component: () => import('@views/candidate/CandidateLayout.vue'),
@@ -29,9 +28,15 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: 'resumes' },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
       { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
-      { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true } }, 
+   // { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true } }, 
 
       { path: 'chat/:id?', name: 'chat', component: ChatView, meta: { auth: true },},
+      // Pricing & billing (có sidebar qua layout)
+      { path: 'pricing', name: 'pricing', component: () => import('@views/PricingView.vue') },
+      { path: 'billing/history', name: 'billing-history', component: () => import('@views/candidate/BillingHistoryView.vue') },
+      { path: 'billing/success', name: 'billing-success', component: () => import('@views/BillingSuccessView.vue') },
+      { path: 'billing/cancel', name: 'billing-cancel', component: () => import('@views/BillingCancelView.vue') },
+      { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true }}, 
       // resume-detail (placeholder) đã gỡ — preview CV xem qua modal
       // trong MyResumesView thay vì riêng 1 trang.
     //   { path: 'resumes/:id', name: 'resume-detail', component: () => import('@views/candidate/ResumeDetailView.vue') },

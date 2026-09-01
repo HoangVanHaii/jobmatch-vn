@@ -21,7 +21,7 @@ CREATE TYPE job_level AS ENUM ('intern', 'fresher', 'junior', 'mid', 'senior', '
 CREATE TYPE job_type AS ENUM ('full-time', 'part-time', 'contract', 'internship', 'freelance');
 CREATE TYPE application_status AS ENUM ('pending', 'viewed', 'screening', 'interview', 'offered', 'hired', 'rejected', 'withdrawn');
 CREATE TYPE subscription_status AS ENUM ('active', 'expired', 'cancelled', 'pending');
-CREATE TYPE payment_status AS ENUM ('pending', 'paid', 'failed', 'refunded');
+CREATE TYPE payment_status AS ENUM ('pending', 'paid', 'failed', 'refunded', 'cancelled', 'expired');
 CREATE TYPE company_status AS ENUM ('active', 'banned', 'removed'); -- company lifecycle
 CREATE TYPE company_member_role AS ENUM ('owner', 'member');
 CREATE TYPE company_member_status AS ENUM ('active', 'invited', 'inactive');
@@ -345,26 +345,35 @@ CREATE INDEX idx_subs_user_active ON subscriptions(user_id, expires_at DESC);
 CREATE TABLE payments (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES users(id),
+  plan_id         UUID REFERENCES plans(id),
   subscription_id UUID REFERENCES subscriptions(id),
   amount_vnd      NUMERIC(15,0) NOT NULL,
+  order_code      TEXT,
   payos_txn_id    TEXT,
   status          payment_status,
   raw_response    JSONB,
-  created_at      TIMESTAMPTZ DEFAULT now()
+  created_at      TIMESTAMPTZ DEFAULT now(),
+  updated_at         TIMESTAMPTZ
 );
+CREATE INDEX idx_payments_plan ON payments(plan_id);
+CREATE UNIQUE INDEX uniq_payments_order_code
+  ON payments(order_code)
+  WHERE order_code IS NOT NULL;
 
 -- ============================================================================
 -- Usage + Audit
 -- ============================================================================
 CREATE TABLE usage_logs (
-  id          BIGSERIAL PRIMARY KEY,
-  user_id     UUID NOT NULL REFERENCES users(id),
-  feature     TEXT NOT NULL,
-  count       INT DEFAULT 1,
-  metadata    JSONB,
-  created_at  TIMESTAMPTZ DEFAULT now()
+  id              BIGSERIAL PRIMARY KEY,
+  user_id         UUID NOT NULL REFERENCES users(id),
+  subscription_id UUID REFERENCES subscriptions(id),
+  feature         TEXT NOT NULL,
+  count           INT NOT NULL DEFAULT 0,
+  token           INT NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX idx_usage_user_feature_period ON usage_logs(user_id, feature, created_at DESC);
+CREATE INDEX idx_usage_subscription         ON usage_logs(subscription_id);
 
 CREATE TABLE audit_logs (
   id          BIGSERIAL PRIMARY KEY,
@@ -381,11 +390,11 @@ CREATE TABLE audit_logs (
 -- ============================================================================
 -- Seed plans
 -- ============================================================================
-INSERT INTO plans (code, name, price_vnd, duration_days, features) VALUES
-  ('free',  'Free',  0,      30, '{"max_cvs":1,"max_apply":10,"ai_chat_per_day":5,"ai_cv_score_per_month":1,"cover_letter_per_month":0,"jd_gen_per_month":0,"featured_per_month":0,"view_cv_per_month":10,"job_post_per_month":1,"job_duration_days":30}'),
-  ('light', 'Light', 199000, 30, '{"max_cvs":3,"max_apply":50,"ai_chat_per_day":50,"ai_cv_score_per_month":10,"cover_letter_per_month":3,"jd_gen_per_month":1,"featured_per_month":0,"view_cv_per_month":100,"job_post_per_month":10,"job_duration_days":60,"anonymous_mode":true}'),
-  ('pro',   'Pro',   599000, 30, '{"max_cvs":-1,"max_apply":-1,"ai_chat_per_day":-1,"ai_cv_score_per_month":-1,"cover_letter_per_month":-1,"jd_gen_per_month":-1,"featured_per_month":10,"view_cv_per_month":-1,"job_post_per_month":-1,"job_duration_days":90,"anonymous_mode":true,"boost_per_month":3,"branded_page":true,"ats_api":true}')
-ON CONFLICT (code) DO NOTHING;
+-- INSERT INTO plans (code, name, price_vnd, duration_days, features) VALUES
+--   ('free',  'Free',  0,      30, '{"max_cvs":1,"max_apply":10,"ai_chat_per_day":5,"ai_cv_score_per_month":1,"cover_letter_per_month":0,"jd_gen_per_month":0,"featured_per_month":0,"view_cv_per_month":10,"job_post_per_month":1,"job_duration_days":30}'),
+--   ('light', 'Light', 199000, 30, '{"max_cvs":3,"max_apply":50,"ai_chat_per_day":50,"ai_cv_score_per_month":10,"cover_letter_per_month":3,"jd_gen_per_month":1,"featured_per_month":0,"view_cv_per_month":100,"job_post_per_month":10,"job_duration_days":60,"anonymous_mode":true}'),
+--   ('pro',   'Pro',   599000, 30, '{"max_cvs":-1,"max_apply":-1,"ai_chat_per_day":-1,"ai_cv_score_per_month":-1,"cover_letter_per_month":-1,"jd_gen_per_month":-1,"featured_per_month":10,"view_cv_per_month":-1,"job_post_per_month":-1,"job_duration_days":90,"anonymous_mode":true,"boost_per_month":3,"branded_page":true,"ats_api":true}')
+-- ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================
 -- PHASE 2 — Reference verifications, GitHub lookups
