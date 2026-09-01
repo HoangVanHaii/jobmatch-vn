@@ -22,6 +22,14 @@ import type {
 } from '@/types/chat';
 
 const TYPING_DEBOUNCE_MS = 300;
+/**
+ * Thời gian giữ typing indicator sau khi nhận `isTyping=false`.
+ * Backend phát false 300ms sau keystroke cuối; thêm delay này để:
+ *   - Tránh flicker khi peer gõ chậm (gap giữa các keystroke > 300ms).
+ *   - UX giống Messenger/Telegram: dots "đứng lại" thêm chút sau khi peer
+ *     dừng gõ, tạo cảm giác mượt.
+ */
+const TYPING_HIDE_DELAY_MS = 1000;
 
 export const useChat = (conversationId: () => string) => {
   const store = useChatStore();
@@ -52,23 +60,72 @@ export const useChat = (conversationId: () => string) => {
     store.appendMessage(msg);
   };
 
+  /**
+   * Delay ẩn typing indicator để tránh nhấp nháy khi peer gõ chậm.
+   *
+   * Vấn đề: backend gửi `isTyping=false` 300ms sau keystroke cuối. Nếu peer
+   * gõ chậm (gap giữa các keystroke > 300ms), false phát ra giữa các lần
+   * gõ → dots tắt → true lại → dots bật → flicker.
+   *
+   * Cách xử lý: nhận `false` thì chờ thêm TYPING_HIDE_DELAY_MS rồi mới tắt.
+   * Nếu `true` đến trong khoảng đó → cancel timer, dots vẫn sáng → mượt.
+   *
+   * Cleanup: timer được clear khi component unmount / đổi conversationId
+   * để tránh stale callback set peerTyping cho conv cũ.
+   */
+  let hideTypingTimer: ReturnType<typeof setTimeout> | null = null;
+
   const onTyping = (data: ChatTypingBroadcast): void => {
     if (data.conversationId !== conversationId()) return;
     if (data.userId === auth.user?.id) return; // bỏ qua typing của mình
-    peerTyping.value = data.isTyping;
+
+    if (data.isTyping) {
+      // Có typing mới → hiện ngay + cancel pending hide.
+      if (hideTypingTimer) {
+        clearTimeout(hideTypingTimer);
+        hideTypingTimer = null;
+      }
+      peerTyping.value = true;
+    } else {
+      // typing=false → delay ẩn. Nếu true đến trước khi timer fire,
+      // timer sẽ bị cancel ở nhánh trên.
+      if (hideTypingTimer) clearTimeout(hideTypingTimer);
+      hideTypingTimer = setTimeout(() => {
+        hideTypingTimer = null;
+        // Double-check conv vẫn match (tránh trường hợp user đổi conv
+        // trong lúc timer pending — đã clear trong watch dưới, nhưng
+        // giữ check phòng defensive).
+        if (data.conversationId !== conversationId()) return;
+        peerTyping.value = false;
+      }, TYPING_HIDE_DELAY_MS);
+    }
   };
 
   const onRead = (data: ChatReadBroadcast): void => {
     if (data.conversationId !== conversationId()) return;
     if (data.userId === auth.user?.id) return;
-    // Đánh dấu các message của mình (senderId === me) là đã đọc bởi peer
+    // Đánh dấu các message của mình (senderId === me) là đã đọc bởi peer.
+    // So theo VỊ TRÍ trong mảng (messages đã sort theo createdAt ASC) thay vì
+    // so sánh string UUID lexicographic (UUID v4 không sort được theo thời gian,
+    // nên cách cũ `m.id <= data.lastReadMessageId` cho kết quả sai).
     const me = auth.user?.id;
     if (!me) return;
-    store.messages = store.messages.map((m) =>
-      m.senderId === me && (data.lastReadMessageId == null || m.id <= data.lastReadMessageId)
-        ? { ...m, readAt: data.readAt }
-        : m,
-    );
+    const lastReadIdx = data.lastReadMessageId
+      ? store.messages.findIndex((x) => x.id === data.lastReadMessageId)
+      : store.messages.length - 1;
+    if (data.lastReadMessageId && lastReadIdx < 0) {
+      // Không tìm thấy lastReadMessageId trong cache (có thể do paginate chưa load)
+      // → fallback: mark tất cả own messages đang hiện là đã đọc.
+      store.messages = store.messages.map((m) =>
+        m.senderId === me && !m.readAt ? { ...m, readAt: data.readAt } : m,
+      );
+      return;
+    }
+    store.messages = store.messages.map((m, idx) => {
+      if (m.senderId !== me) return m;
+      if (m.readAt) return m;
+      return idx <= lastReadIdx ? { ...m, readAt: data.readAt } : m;
+    });
   };
 
   // ----- Lifecycle -----
@@ -101,6 +158,12 @@ export const useChat = (conversationId: () => string) => {
 
   onUnmounted(() => {
     mounted = false;
+    // Clear pending typing-hide timer — tránh callback fire sau unmount
+    // set peerTyping.value trên component đã destroy.
+    if (hideTypingTimer) {
+      clearTimeout(hideTypingTimer);
+      hideTypingTimer = null;
+    }
     detach(conversationId());
   });
 
@@ -111,6 +174,14 @@ export const useChat = (conversationId: () => string) => {
       if (oldId) detach(oldId);
       if (mounted && newId) attach(newId);
       syncMessages();
+      // Reset typing state cho conv mới — tránh hiển thị stale dots từ conv cũ
+      // và clear pending hide timer (nếu user đổi conv giữa lúc typing=false
+      // đang chờ hide, dots của conv cũ không nên áp dụng cho conv mới).
+      if (hideTypingTimer) {
+        clearTimeout(hideTypingTimer);
+        hideTypingTimer = null;
+      }
+      peerTyping.value = false;
     },
   );
 
@@ -176,6 +247,40 @@ export const useChat = (conversationId: () => string) => {
     };
     getSocket().emit('chat:read', payload);
   };
+
+  /**
+   * Auto-emit chat:read khi có peer message MỚI NHẤT (covers 2 case):
+   *   1) Initial load: lastPeerMessageId được set sau khi fetchMessages xong
+   *      (timeout 800ms cũ không đảm bảo — fetch có thể chậm hơn).
+   *   2) Realtime: peer gửi tin mới khi user đang mở conv → store.messages
+   *      thay đổi → syncMessages → lastPeerMessageId update → emit read cho
+   *      tin mới.
+   *
+   * Track `lastEmittedPeerId` để tránh spam: chỉ emit khi lastPeerMessageId
+   * thực sự thay đổi (append own message không làm đổi lastPeerMessageId).
+   */
+  let lastEmittedPeerId: string | null = null;
+
+  const emitReadIfNewer = (): void => {
+    const id = conversationId();
+    const peerId = lastPeerMessageId.value;
+    if (!id || !peerId || peerId === lastEmittedPeerId) return;
+    lastEmittedPeerId = peerId;
+    markRead();
+  };
+
+  watch(
+    () => lastPeerMessageId.value,
+    () => emitReadIfNewer(),
+  );
+
+  // Reset state khi đổi conversation — tránh emit read cho conv cũ.
+  watch(
+    () => conversationId(),
+    () => {
+      lastEmittedPeerId = null;
+    },
+  );
 
   return {
     messages,

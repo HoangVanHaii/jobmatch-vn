@@ -101,3 +101,8 @@ export interface JobDetailResponse {
   success: boolean;
   data: Job;
 }
+
+export interface ExportApplicationsJobData {
+  targetJobId: string;
+  requestedBy: string;
+}

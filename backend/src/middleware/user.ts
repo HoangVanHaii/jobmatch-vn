@@ -34,3 +34,12 @@ export const resetPasswordSchema = z.object({
 export const changeAvatarSchema = z.object({
   avatarUrl: z.string().url(),
 });
+
+/**
+ * GET /users/search — search user by fullName để start chat.
+ * Trim + lower trước khi query; max 50 results.
+ */
+export const searchUsersQuerySchema = z.object({
+  q: z.string().trim().min(1).max(100),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});

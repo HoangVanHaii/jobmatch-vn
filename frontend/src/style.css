@@ -26,7 +26,16 @@
   }
 }
 
-/* Scrollbar mỏng cho vùng scroll ngang (vd. template picker). */
+/* Scrollbar utility classes.
+ *
+ * - `.scrollbar-thin` — cho vùng scroll ngang (template picker, ...) hoặc nơi
+ *   không muốn scrollbar chiếm nhiều diện tích. Width 6px, thumb xám nhạt.
+ *
+ * - `.scrollbar-visible` — cho vùng scroll chính của user (chat messages,
+ *   conversation list). Width 8px, thumb xám đậm hơn, track xám rất nhạt để
+ *   vẫn nhìn rõ "đây là thanh cuộn" nhưng không lấn át nội dung.
+ *   Track khác transparent để user phân biệt được vùng scroll với nội dung.
+ */
 .scrollbar-thin {
   scrollbar-width: thin;
   scrollbar-color: #d1d5db transparent;
@@ -72,4 +81,23 @@ body::-webkit-scrollbar-thumb {
 html::-webkit-scrollbar-thumb:hover,
 body::-webkit-scrollbar-thumb:hover {
   background-color: rgba(148, 163, 184, 0.9);
+.scrollbar-visible {
+  scrollbar-width: thin;
+  scrollbar-color: #9ca3af #f3f4f6;
+}
+.scrollbar-visible::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-visible::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 9999px;
+}
+.scrollbar-visible::-webkit-scrollbar-thumb {
+  background-color: #9ca3af;
+  border-radius: 9999px;
+  border: 2px solid #f3f4f6;
+}
+.scrollbar-visible::-webkit-scrollbar-thumb:hover {
+  background-color: #6b7280;
 }
