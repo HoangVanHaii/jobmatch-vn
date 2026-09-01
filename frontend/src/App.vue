@@ -85,8 +85,12 @@ useSocket('chat:new', (payload: ChatNewPayload) => {
 <template>
   <RouterView />
   <NotificationBell />
-  <!-- Toast container — render hàng đợi toast toàn cục. Teleport tới body. -->
+  <!-- Toast container — render hàng đợi toast toàn cục. Teleport tới body.
+   *  - <ToastContainer /> : simple toasts (success/info/warning/error) với icon + title.
+   *  - <ToastHost />     : chat realtime variant (avatar + click → /chat).
+   *  Cả 2 đọc cùng queue trong stores/toast.ts — ToastHost đọc `items` (alias
+   *  của `toasts`), ToastContainer đọc `toasts`. Dedupe theo `id` để socket
+   *  emit duplicate không push 2 lần. -->
   <ToastContainer />
-</template>
   <ToastHost />
 </template>
