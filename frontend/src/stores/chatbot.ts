@@ -84,6 +84,31 @@ export const useChatbotStore = defineStore('chatbot', () => {
   };
 
   /**
+   * Reset toàn bộ state về rỗng — KHÔNG gọi API, chỉ clear local.
+   *
+   * Dùng khi user vào `/chatbot` KHÔNG kèm `?session=<id>`:
+   *   - Bootstrap intent = "fresh entry" → user tự chọn session trong sidebar
+   *     hoặc bấm "Cuộc trò chuyện mới".
+   *   - Không auto-open session gần nhất — mỗi lần vào /chatbot mà không có
+   *     param đều là intent khác nhau (vd chuyển tab khác rồi quay lại).
+   *
+   * Lưu ý: KHÔNG abort stream — nếu stream đang chạy từ session cũ, caller
+   * cần xử lý explicit (hiện tại không có scenario này vì ChatbotView là
+   * single-instance, đổi session thì loop ngoài break rồi).
+   */
+  const clearActive = (): void => {
+    activeSessionId.value = null;
+    messages.value = [];
+    streamingContent.value = '';
+    jobIds.value = [];
+    cvIds.value = [];
+    attachedJobs.value = [];
+    attachedCvs.value = [];
+    totalTokens.value = 0;
+    lastEvent.value = null;
+  };
+
+  /**
    * Thay thế toàn bộ jobIds (local state only).
    *
    * Phase 2: KHÔNG gọi API. Khi user gửi message, payload kèm jobIds.value lên
@@ -125,6 +150,46 @@ export const useChatbotStore = defineStore('chatbot', () => {
     if (isStreaming.value) return;
     cvIds.value = cvIds.value.filter((x) => x !== id);
     attachedCvs.value = attachedCvs.value.filter((c) => c.id !== id);
+  };
+
+  /**
+   * Xóa 1 session — gọi API + lọc khỏi list local. Nếu đúng session đang
+   * active thì clear active (UI về trang trống).
+   *
+   * Trả về `wasActive` để caller (ChatbotView) biết có cần update URL không
+   * (xoá ?session=<deleted-id> khỏi route để F5 sau không 404).
+   */
+  const deleteSession = async (sessionId: string): Promise<{ wasActive: boolean }> => {
+    await chatbotApi.deleteSession(sessionId);
+    const wasActive = activeSessionId.value === sessionId;
+    sessions.value = sessions.value.filter((s) => s.id !== sessionId);
+    if (wasActive) {
+      clearActive();
+    }
+    return { wasActive };
+  };
+
+  /**
+   * Đổi title phiên chat — gọi API + patch session trong list local (immutable
+   * replace để reactivity fire đúng). Caller (ChatbotView) chịu trách nhiệm
+   * validate input trước khi gọi (trim, non-empty, max 200).
+   *
+   * Trả về session đã update để caller có thể show toast / rollback nếu cần.
+   */
+  const updateSessionTitle = async (
+    sessionId: string,
+    title: string,
+  ): Promise<ChatSession> => {
+    const updated = await chatbotApi.updateSession(sessionId, title);
+    const idx = sessions.value.findIndex((s) => s.id === sessionId);
+    if (idx !== -1) {
+      sessions.value = [
+        ...sessions.value.slice(0, idx),
+        updated,
+        ...sessions.value.slice(idx + 1),
+      ];
+    }
+    return updated;
   };
 
   /**
@@ -310,11 +375,14 @@ export const useChatbotStore = defineStore('chatbot', () => {
     loadSessions,
     createSession,
     selectSession,
+    clearActive,
     removeJob,
     removeCv,
     attachJobs,
     attachCvs,
     resetContext,
+    deleteSession,
+    updateSessionTitle,
     loadPicker,
     abortStream,
     sendMessage,

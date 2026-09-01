@@ -17,8 +17,29 @@
  * hint cho section THỰC SỰ xuất hiện — tránh context thừa.
  */
 import { CHATBOT_SYSTEM_PROMPT } from './system';
+import { GENERAL_CHATBOT_SYSTEM_PROMPT } from './generalSystem';
 import { buildTypeHintsBlock } from './perTypeHints';
 import type { ChatMessage, ChatType, HandlerSection } from '../../lib/llm/chatbot/types';
+
+/**
+ * Chọn system prompt:
+ *   - Nếu intent CHỈ là 'general' (types.length === 1 && types[0] === 'general')
+ *     VÀ sections không có cite-data → dùng GENERAL_CHATBOT_SYSTEM_PROMPT
+ *     (tông tự nhiên, bỏ guardrails cite-data vì không có data để bám sát).
+ *   - Ngược lại → dùng CHATBOT_SYSTEM_PROMPT (giữ guardrails cite-data).
+ *
+ * Lưu ý về safety-net ở chatbot.service.ts: nếu user có attach job/CV nhưng
+ * intent classifier trả về ['general'], safety-net sẽ tự động push jd/cv
+ * section vào sections → hasCiteData === true → vẫn dùng prompt chính.
+ * → chỉ khi user thực sự small-talk (không attach + intent general) mới
+ *   trigger prompt tự nhiên.
+ */
+const pickSystemPrompt = (types: ChatType[], sections: HandlerSection[]): string => {
+  const isPureGeneral = types.length === 1 && types[0] === 'general';
+  const hasCiteData = sections.some((s) => s.citeData && s.content.trim().length > 0);
+  if (isPureGeneral && !hasCiteData) return GENERAL_CHATBOT_SYSTEM_PROMPT;
+  return CHATBOT_SYSTEM_PROMPT;
+};
 
 export const buildMergedPrompt = (
   sections: HandlerSection[],
@@ -59,10 +80,11 @@ export const buildFinalMessages = (
   question: string,
   types: ChatType[],
 ): Array<{ role: 'system' | 'user'; content: string }> => {
+  const basePrompt = pickSystemPrompt(types, sections);
   const hintsBlock = buildTypeHintsBlock(types);
   const systemContent = hintsBlock
-    ? `${CHATBOT_SYSTEM_PROMPT}\n\n${hintsBlock}`
-    : CHATBOT_SYSTEM_PROMPT;
+    ? `${basePrompt}\n\n${hintsBlock}`
+    : basePrompt;
 
   return [
     { role: 'system', content: systemContent },

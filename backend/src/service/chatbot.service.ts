@@ -685,6 +685,40 @@ resolveContextData: async (userId: string, ctx: { jobIds: string[]; cvIds: strin
     }));
   },
 
+  /**
+   * Xóa 1 session của user. Ownership check qua WHERE id + userId — nếu row
+   * không tồn tại HOẶC thuộc user khác → returning() rỗng → return false.
+   *
+   * Cascade: ai_chat_sessions.userId ON DELETE CASCADE → xóa row user thì
+   * session tự xoá. Ngược lại xóa session thì KHÔNG ảnh hưởng gì khác
+   * (không có FK từ bảng khác tới session).
+   */
+  deleteSession: async (sessionId: string, userId: string): Promise<boolean> => {
+    const result = await db
+      .delete(aiChatSessions)
+      .where(and(eq(aiChatSessions.id, sessionId), eq(aiChatSessions.userId, userId)))
+      .returning({ id: aiChatSessions.id });
+    return result.length > 0;
+  },
+
+  /**
+   * Đổi title 1 session. Ownership check tương tự deleteSession. Trả về
+   * session đã update, hoặc null nếu không tồn tại / không thuộc user.
+   */
+  updateSessionTitle: async (
+    sessionId: string,
+    userId: string,
+    title: string,
+  ): Promise<ChatSession | null> => {
+    const [row] = await db
+      .update(aiChatSessions)
+      .set({ title, updatedAt: new Date() })
+      .where(and(eq(aiChatSessions.id, sessionId), eq(aiChatSessions.userId, userId)))
+      .returning();
+    if (!row) return null;
+    return serializeSession(row);
+  },
+
   /** List CVs của user cho picker (ownership-filtered). */
   listCvsPicker: async (userId: string) => {
     const result = await cvService.list(userId, undefined, 50, 0);

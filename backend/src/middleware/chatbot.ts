@@ -75,6 +75,18 @@ export const contextPatchSchema = z.object({
   cvIds: z.array(uuid).max(3, 'Tối đa 3 CV').default([]),
 });
 
+/**
+ * Body cho PATCH /sessions/:id — đổi title phiên chat (chỉnh từ sidebar).
+ * Min 1 ký tự (sau trim), max 200 ký tự để tránh title quá dài phá layout.
+ */
+export const updateSessionSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1, 'Tiêu đề không được rỗng')
+    .max(200, 'Tiêu đề tối đa 200 ký tự'),
+});
+
 export const jobsPickerQuerySchema = z.object({
   source: z.enum(['all', 'saved', 'applied']).default('all'),
   q: z.string().trim().max(120).optional(),
