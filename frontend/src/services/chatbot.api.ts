@@ -52,6 +52,25 @@ export const chatbotApi = {
     return res.data.data as ChatSession;
   },
 
+  /**
+   * Xóa hẳn 1 session — gọi từ nút xoá ở sidebar.
+   * Backend đã ownership-check, nhưng FE vẫn nên lọc lại trong store
+   * (xóa khỏi list local, clear active nếu đúng session đang mở).
+   */
+  deleteSession: async (sessionId: string): Promise<{ id: string }> => {
+    const res = await http.delete(`/chatbot/sessions/${sessionId}`);
+    return res.data.data as { id: string };
+  },
+
+  /**
+   * Đổi title phiên chat — gọi từ nút cây bút ở sidebar.
+   * Backend validate title (1..200 ký tự sau trim).
+   */
+  updateSession: async (sessionId: string, title: string): Promise<ChatSession> => {
+    const res = await http.patch(`/chatbot/sessions/${sessionId}`, { title });
+    return res.data.data as ChatSession;
+  },
+
   // === Picker ===
   listJobsPicker: async (
     source: PickerJobSource,

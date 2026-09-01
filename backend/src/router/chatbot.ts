@@ -22,6 +22,7 @@ import {
   sessionIdParamsSchema,
   turnBodySchema,
   contextPatchSchema,
+  updateSessionSchema,
   jobsPickerQuerySchema,
 } from '../middleware/chatbot';
 import { chatbotController } from '../controller/chatbot.controller';
@@ -55,6 +56,21 @@ chatbotRouter.delete(
   auth,
   validate(sessionIdParamsSchema, 'params'),
   chatbotController.resetContext,
+);
+// Xóa hẳn 1 session (toàn bộ messages + context). User action từ sidebar.
+chatbotRouter.delete(
+  '/sessions/:id',
+  auth,
+  validate(sessionIdParamsSchema, 'params'),
+  chatbotController.deleteSession,
+);
+// Đổi title phiên chat (chỉnh từ sidebar). Body: { title }.
+chatbotRouter.patch(
+  '/sessions/:id',
+  auth,
+  validate(sessionIdParamsSchema, 'params'),
+  validate(updateSessionSchema, 'body'),
+  chatbotController.updateSession,
 );
 
 // SSE: turn (rate limit chỉ áp dụng cho turn, không cho attach chip)

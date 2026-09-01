@@ -206,14 +206,14 @@ const groups: MenuGroup[] = [
       {
         label: 'Trò chuyện',
         icon: MessageCircle,
-        to: '/chat',
-        activeOn: ['/chat'],
+        to: '/candidate/chat',
+        activeOn: ['/candidate/chat'],
       },
       {
         label: 'Chatbot AI',
         icon: Bot,
         to: '/candidate/chatbot',
-        activeOn: ['/chatbot'],
+        activeOn: ['/candidate/chatbot'],
       },
     ],
   },

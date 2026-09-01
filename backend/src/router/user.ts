@@ -4,6 +4,9 @@ import { db } from '../config/database';
 import { users } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
+import { authService } from '../service/auth.service';
+import { searchUsersQuerySchema } from '../middleware/user';
+import { validate } from '../middleware/validate';
 
 export const userRouter = Router();
 
@@ -31,3 +34,23 @@ userRouter.get('/me/usage', async (req, res, next) => {
     res.json({ success: true, data: { usage: {}, quota: {} } });
   } catch (err) { next(err); }
 });
+
+/**
+ * GET /users/search?q=&limit= — tìm user theo fullName để start chat.
+ *
+ * Response shape (id + fullName + avatarUrl + role only — không leak email/status/metadata).
+ * Filter backend: exclude self, active status, chưa soft-delete. Sort theo fullName ASC.
+ *
+ * Auth: bắt buộc (router.use(auth) phía trên).
+ */
+userRouter.get(
+  '/search',
+  validate(searchUsersQuerySchema, 'query'),
+  async (req, res, next) => {
+    try {
+      const { q, limit } = req.query as unknown as { q: string; limit: number };
+      const results = await authService.searchUsers(req.user!.userId, q, limit);
+      res.json({ success: true, data: results });
+    } catch (err) { next(err); }
+  },
+);

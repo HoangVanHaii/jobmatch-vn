@@ -69,6 +69,42 @@ export const chatbotController = {
     }
   },
 
+  /**
+   * DELETE /chatbot/sessions/:id — xóa 1 session của user.
+   * Trả { id } để client xác nhận, hoặc 404 nếu không tồn tại / không thuộc user.
+   */
+  deleteSession: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user!.userId;
+      const deleted = await chatbotService.deleteSession(req.params.id as string, userId);
+      if (!deleted) throw new AppError(404, 'NOT_FOUND', 'Session không tồn tại hoặc không thuộc bạn.');
+      return ok(res, { id: req.params.id });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
+   * PATCH /chatbot/sessions/:id — đổi title phiên chat.
+   * Body: { title: string (1..200) }.
+   * Trả về session đã update, hoặc 404 nếu không thuộc user.
+   */
+  updateSession: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user!.userId;
+      const body = req.body as { title: string };
+      const session = await chatbotService.updateSessionTitle(
+        req.params.id as string,
+        userId,
+        body.title,
+      );
+      if (!session) throw new AppError(404, 'NOT_FOUND', 'Session không tồn tại hoặc không thuộc bạn.');
+      return ok(res, session);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   listJobsPicker: async (req: Request, res: Response, next: NextFunction) => {
     try {
       const userId = req.user!.userId;

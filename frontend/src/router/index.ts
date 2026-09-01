@@ -1,6 +1,7 @@
 /**
  * Vue Router — route guards (auth, role, plan)
  */
+import ChatView from '@views/chat/ChatView.vue';
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { useAuthStore } from '@stores/auth';
 
@@ -27,6 +28,9 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: 'resumes' },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
       { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
+   // { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true } }, 
+
+      { path: 'chat/:id?', name: 'chat', component: ChatView, meta: { auth: true },},
       // Pricing & billing (có sidebar qua layout)
       { path: 'pricing', name: 'pricing', component: () => import('@views/PricingView.vue') },
       { path: 'billing/history', name: 'billing-history', component: () => import('@views/candidate/BillingHistoryView.vue') },
@@ -42,29 +46,27 @@ const routes: RouteRecordRaw[] = [
     //   { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
     ],
   },
+  
 
   // Employer
-  // {
-  //   path: '/employer',
-  //   meta: { auth: true, role: 'employer' },
-  //   children: [
-  //     { path: '', name: 'employer-dashboard', component: () => import('@views/employer/EmployerDashboard.vue') },
-  //     { path: 'jobs/new', name: 'create-job', component: () => import('@views/employer/CreateJobView.vue') },
-  //     { path: 'jobs', name: 'posted-jobs', component: () => import('@views/employer/PostedJobsView.vue') },
-  //     { path: 'applications', name: 'employer-applications', component: () => import('@views/employer/ApplicationsView.vue') },
-  //     { path: 'chat', name: 'employer-chat', component: () => import('@views/employer/EmployerChatView.vue') },
-  //     { path: 'analytics', name: 'employer-analytics', component: () => import('@views/employer/AnalyticsView.vue') },
-  //     { path: 'settings', name: 'employer-settings', component: () => import('@views/employer/CompanyVerificationView.vue') },
-  //   ],
-  // },
+  {
+    path: '/employer',
+    meta: { auth: true, role: 'employer' },
+    children: [
+      { path: 'chat/:id?', name: 'e-chat', component: ChatView },
+
+      // { path: '', name: 'employer-dashboard', component: () => import('@views/employer/EmployerDashboard.vue') },
+      // { path: 'jobs/new', name: 'create-job', component: () => import('@views/employer/CreateJobView.vue') },
+      // { path: 'jobs', name: 'posted-jobs', component: () => import('@views/employer/PostedJobsView.vue') },
+      // { path: 'applications', name: 'employer-applications', component: () => import('@views/employer/ApplicationsView.vue') },
+      // { path: 'chat', name: 'employer-chat', component: () => import('@views/employer/EmployerChatView.vue') },
+      // { path: 'analytics', name: 'employer-analytics', component: () => import('@views/employer/AnalyticsView.vue') },
+      // { path: 'settings', name: 'employer-settings', component: () => import('@views/employer/CompanyVerificationView.vue') },
+    ],
+  },
 
   // Chat — `/chat` empty, `/chat/:id` mở 1 conversation, `/chat?peer=<userId>` deep-link
-  {
-    path: '/chat/:id?',
-    name: 'chat',
-    component: () => import('@views/chat/ChatView.vue'),
-    meta: { auth: true },
-  },
+  
 
   // Chatbot AI JobMatch — trang full-page, candidate + employer đều dùng
   

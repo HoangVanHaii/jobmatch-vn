@@ -24,6 +24,7 @@ import ChatbotHeader from '@components/chatbot/ChatbotHeader.vue';
 import ChatbotSidebar from '@components/chatbot/ChatbotSidebar.vue';
 import ChatbotMessage from '@components/chatbot/ChatbotMessage.vue';
 import ChatbotInputBox from '@components/chatbot/ChatbotInputBox.vue';
+import ConfirmModal from '@components/common/ConfirmModal.vue';
 
 const store = useChatbotStore();
 const auth = useAuthStore();
@@ -79,12 +80,18 @@ const bootstrap = async (): Promise<void> => {
   // Pre-load picker data để dropdown có sẵn list khi user click Paperclip.
   await store.loadPicker();
   const qSession = (route.query.session as string | undefined) ?? null;
-  const last = store.sessions[0]?.id ?? null;
-  const target = qSession ?? last;
-  if (target) {
-    await store.selectSession(target);
+  if (qSession) {
+    // URL chỉ định session → load session đó (F5 /chatbot?session=X, deep link).
+    await store.selectSession(qSession);
+  } else {
+    // URL KHÔNG có ?session= → fresh entry. Reset state để user thấy trang trống,
+    // KHÔNG auto-open session gần nhất. Lý do: mỗi lần vào /chatbot không có
+    // param là intent "xem danh sách" — user tự click session hoặc bấm "Tạo mới".
+    // Đặc biệt khi user chuyển tab khác rồi quay lại /chatbot, không nên mở
+    // lại session cũ.
+    store.clearActive();
   }
-  // Set mobile view SAU khi selectSession xong (đã có activeSessionId).
+  // Set mobile view SAU khi state settled (đã có/không activeSessionId).
   setInitialMobileView();
 };
 
@@ -93,8 +100,18 @@ onMounted(bootstrap);
 watch(
   () => route.query.session,
   async (sid) => {
-    if (typeof sid === 'string' && sid && sid !== store.activeSessionId) {
-      await store.selectSession(sid);
+    if (typeof sid === 'string' && sid) {
+      // URL có session param → chọn session đó (nếu chưa phải active).
+      if (sid !== store.activeSessionId) {
+        await store.selectSession(sid);
+      }
+    } else {
+      // URL KHÔNG có session param (browser back, manual edit, ...) → reset
+      // store để không hiển thị state của session cũ. Tránh tình trạng đã
+      // clearActive ở bootstrap nhưng watch fire lại với undefined (no-op).
+      if (store.activeSessionId) {
+        store.clearActive();
+      }
     }
   },
 );
@@ -111,6 +128,86 @@ const onSelect = async (sessionId: string): Promise<void> => {
   await store.selectSession(sessionId);
   // Mobile: chọn phiên nào → chuyển sang chat view của phiên đó.
   isMobileSidebar.value = false;
+};
+
+/**
+ * Xóa 1 session từ sidebar — mở ConfirmModal thay vì `window.confirm` để có
+ * UI đồng nhất với phần còn lại của app + style theo brand + không bị lock
+ * bởi browser locale (xem comment đầu file ConfirmModal.vue).
+ *
+ * Flow:
+ *   1. User bấm trash → onDelete(sessionId) → mở modal, lưu sessionId/title
+ *   2. User bấm "Xóa" trong modal → onConfirmDelete() → gọi API + đóng modal
+ *   3. Nếu API fail → modal vẫn đóng (error banner hiện), user có thể thử lại
+ *
+ * Sau khi xóa: nếu xóa đúng session đang active → xoá luôn `?session=` khỏi
+ * URL để F5 / share link sau không 404.
+ */
+const confirmOpen = ref(false);
+const pendingDeleteId = ref<string | null>(null);
+const pendingDeleteTitle = ref<string>('');
+const deleting = ref(false);
+
+const onDelete = (sessionId: string): void => {
+  const session = store.sessions.find((s) => s.id === sessionId);
+  pendingDeleteTitle.value = session?.title?.trim() || 'cuộc hội thoại này';
+  pendingDeleteId.value = sessionId;
+  confirmOpen.value = true;
+};
+
+const onConfirmDelete = async (): Promise<void> => {
+  const id = pendingDeleteId.value;
+  if (!id) return;
+  deleting.value = true;
+  try {
+    const { wasActive } = await store.deleteSession(id);
+    if (wasActive) {
+      // Xoá session param khỏi URL — watch ở trên sẽ fire nhưng clearActive đã
+      // chạy rồi → `if (store.activeSessionId)` skip, không redundant.
+      const { session: _ignored, ...rest } = route.query;
+      void _ignored;
+      await router.replace({ query: rest });
+    }
+    confirmOpen.value = false;
+    pendingDeleteId.value = null;
+    pendingDeleteTitle.value = '';
+  } catch (e) {
+    errorMessage.value =
+      e instanceof Error ? e.message : 'Không thể xóa phiên, vui lòng thử lại.';
+    // Modal vẫn đóng để user không kẹt; banner error sẽ guide retry.
+    confirmOpen.value = false;
+    pendingDeleteId.value = null;
+    pendingDeleteTitle.value = '';
+  } finally {
+    deleting.value = false;
+  }
+};
+
+/**
+ * Đổi title 1 session từ sidebar (icon cây bút ở row).
+ *
+ * Validate mirror backend zod schema (title.trim().min(1).max(200)) để
+ * user thấy lỗi ngay thay vì đợi backend reject (tránh round-trip lãng phí).
+ *
+ * Sidebar KHÔNG tự rollback nếu API fail — store đã patch local ngay trước,
+ * nên nếu lỗi sẽ hiện banner + user F5 sẽ về title cũ (DB chưa đổi).
+ */
+const onRename = async (sessionId: string, newTitle: string): Promise<void> => {
+  const trimmed = newTitle.trim();
+  if (!trimmed) {
+    errorMessage.value = 'Tiêu đề không được rỗng.';
+    return;
+  }
+  if (trimmed.length > 200) {
+    errorMessage.value = 'Tiêu đề tối đa 200 ký tự.';
+    return;
+  }
+  try {
+    await store.updateSessionTitle(sessionId, trimmed);
+  } catch (e) {
+    errorMessage.value =
+      e instanceof Error ? e.message : 'Không thể đổi tiêu đề, vui lòng thử lại.';
+  }
 };
 
 /** Back từ chat view → danh sách phiên (mobile only, desktop không gọi). */
@@ -240,11 +337,11 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
         khi show để tận dụng màn hẹp.
       -->
       <div
-        class="border-r border-gray-200 bg-white transition-[width] duration-200"
+        class="flex h-full min-h-0 flex-col border-r border-gray-200 bg-white transition-[width] duration-200"
         :class="[
           sidebarCollapsed ? 'md:w-12' : 'md:w-72',
-          isMobileSidebar ? 'flex w-full flex-col' : 'hidden',
-          'md:flex md:flex-col',
+          isMobileSidebar ? 'flex w-full' : 'hidden',
+          'md:flex',
         ]"
       >
         <ChatbotSidebar
@@ -254,6 +351,8 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
           @select="onSelect"
           @new="onCreate"
           @toggle="toggleSidebar"
+          @delete="onDelete"
+          @rename="onRename"
         />
       </div>
 
@@ -275,7 +374,7 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
         <div
           v-show="!isEmpty"
           ref="messagesEl"
-          class="flex-1 overflow-y-auto scrollbar-thin px-3 pb-32 pt-4 md:px-6"
+          class="flex-1 overflow-y-auto scrollbar-visible px-3 pb-32 pt-4 md:px-6"
         >
           <ChatbotMessage
             :messages="store.messages"
@@ -412,6 +511,22 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
         </div>
       </main>
     </div>
+
+    <!--
+      Confirm modal xóa session — đặt ngoài main/sidebar, teleport to body
+      qua component (xem ConfirmModal.vue). Mở khi user bấm trash ở
+      ChatbotSidebar; đóng sau khi API call xong (success hoặc error).
+    -->
+    <ConfirmModal
+      v-model:open="confirmOpen"
+      title="Xóa cuộc hội thoại?"
+      :message="`Xóa &quot;${pendingDeleteTitle}&quot;? Toàn bộ hội thoại sẽ bị xóa vĩnh viễn và không thể khôi phục.`"
+      confirm-text="Xóa"
+      cancel-text="Hủy"
+      variant="danger"
+      :loading="deleting"
+      @confirm="onConfirmDelete"
+    />
   </div>
 </template>
 

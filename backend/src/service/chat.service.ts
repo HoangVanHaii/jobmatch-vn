@@ -334,13 +334,37 @@ export const chatService = {
   markAtRead: async (data: ReadPayload, senderId: string): Promise<Date> => {
     const readAt = new Date();
     await db.transaction(async (tx) => {
+      /**
+       * So sánh theo createdAt thay vì `lte(chatMessages.id, ...)`. Lý do:
+       *   - chatMessages.id là UUID v4 — lexicographic sort KHÔNG tương ứng
+       *     thứ tự thời gian (UUID v4 random), nên `id <= X` cho kết quả sai.
+       *   - lastReadMessageId là id của 1 message cụ thể — ta look up
+       *     createdAt của nó, rồi update tất cả message của PEER có
+       *     createdAt <= mốc đó + readAt IS NULL.
+       * Fallback khi lastReadMessageId không tồn tại trong DB (rare) → mark tất
+       * cả peer messages unread là read (giả định user đã đọc hết).
+       */
+      let createdAtCmp: SQL | undefined;
+      if (data.lastReadMessageId) {
+        const target = await tx
+          .select({ createdAt: chatMessages.createdAt })
+          .from(chatMessages)
+          .where(eq(chatMessages.id, data.lastReadMessageId))
+          .limit(1);
+        if (target.length > 0) {
+          createdAtCmp = lte(chatMessages.createdAt, target[0].createdAt);
+        } else {
+          createdAtCmp = sql`true`;
+        }
+      } else {
+        createdAtCmp = sql`true`;
+      }
+
       const where = and(
         eq(chatMessages.conversationId, data.conversationId),
         ne(chatMessages.senderId, senderId),
         isNull(chatMessages.readAt),
-        data.lastReadMessageId
-          ? lte(chatMessages.id, data.lastReadMessageId)
-          : sql`true`,
+        createdAtCmp,
       );
       await tx.update(chatMessages)
         .set({ readAt })

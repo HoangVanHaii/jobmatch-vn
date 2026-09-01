@@ -1,9 +1,20 @@
 import bcrypt from 'bcrypt';
 import { db } from '../config/database';
 import { users, userProfiles } from '../db/schema';
-import { eq, isNull, desc } from 'drizzle-orm';
+import { and, eq, isNull, desc, ne, ilike } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { Profile, User } from '@/interface/user';
+
+/**
+ * Kết quả search user — chỉ chứa field cần cho chat UI: id, fullName, avatarUrl, role.
+ * Không leak email/status/metadata.
+ */
+export interface UserSearchResult {
+  id: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+  role: 'candidate' | 'employer' | 'admin';
+}
 
 export const authService = {
     requestOtp: async (email: string, password: string, role: 'candidate' | 'employer'): Promise<void> => {
@@ -139,5 +150,39 @@ export const authService = {
     },
     changeUserStatus: async (userId: string, status: 'active' | 'suspended' | 'pending' | 'banned'): Promise<void> => {
         await db.update(users).set({ status }).where(eq(users.id, userId));
-    }
+    },
+    /**
+     * Search user theo fullName — dùng cho chat sidebar để user tìm người để nhắn.
+     *
+     * Filter:
+     *   - fullName ILIKE '%q%' (case-insensitive substring)
+     *   - exclude self (không tự search ra chính mình)
+     *   - chỉ status='active' (loại pending/suspended/banned)
+     *   - deletedAt IS NULL (loại soft-deleted)
+     *
+     * Return: id, fullName, avatarUrl, role — KHÔNG leak email/status/metadata.
+     */
+    searchUsers: async (currentUserId: string, q: string, limit: number): Promise<UserSearchResult[]> => {
+        const rows = await db
+            .select({
+                id: users.id,
+                fullName: userProfiles.fullName,
+                avatarUrl: userProfiles.avatarUrl,
+                role: users.role,
+            })
+            .from(users)
+            .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+            .where(
+                and(
+                    ne(users.id, currentUserId),
+                    isNull(users.deletedAt),
+                    eq(users.status, 'active'),
+                    ilike(userProfiles.fullName, `%${q}%`),
+                ),
+            )
+            .orderBy(userProfiles.fullName)
+            .limit(limit);
+
+        return rows as UserSearchResult[];
+    },
 };
