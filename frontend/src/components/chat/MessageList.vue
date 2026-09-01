@@ -6,12 +6,17 @@
  * tới đỉnh (cần chat: còn trang tiếp theo).
  */
 import { computed, nextTick, ref, watch } from 'vue';
-import { Loader2 } from 'lucide-vue-next';
+import { Check, CheckCheck, Loader2 } from 'lucide-vue-next';
 import type { ChatMessage } from '@/types/chat';
 
 const props = defineProps<{
   messages: ChatMessage[];
   currentUserId: string;
+  /**
+   * Avatar của peer — hiển thị nhỏ ở tin cuối cùng của mình đã được đọc (style
+   * Messenger). Null nếu peer chưa set avatar → không render img slot.
+   */
+  peerAvatar: string | null;
   hasMore: boolean;
   loading: boolean;
   peerTyping: boolean;
@@ -42,6 +47,19 @@ watch(
   },
 );
 
+/**
+ * Watch peerTyping — khi peer bắt đầu/dừng gõ, scroll container thay đổi
+ * scrollHeight (typing dots xuất hiện/biến mất ở cuối). Nếu user đang ở cuối
+ * (stickToBottom=true), phải scroll lại để dots visible — không thì dots
+ * render ở dưới viewport và bị MessageInput che.
+ */
+watch(
+  () => props.peerTyping,
+  () => {
+    if (stickToBottom.value) scrollToBottom(true);
+  },
+);
+
 /** Detect user có ở gần đáy không — nếu có thì stick to bottom. */
 const onScroll = (): void => {
   const el = scrollEl.value;
@@ -60,6 +78,33 @@ const fmtTime = (iso: string): string => {
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
+
+/**
+ * Tooltip cho icon "đã xem" — hiển thị giờ peer đọc tới message này (giờ local).
+ * Pattern: Messenger/Telegram đều show "Seen HH:mm" khi hover vào ✓✓.
+ */
+const readTooltip = (readAt: string | null): string => {
+  if (!readAt) return '';
+  const t = fmtTime(readAt);
+  return `Đã xem lúc ${t}`;
+};
+
+/**
+ * ID của message cuối cùng (mới nhất theo thời gian) của mình đã được peer đọc.
+ * Avatar peer chỉ hiện ở message này — Messenger/Telegram đều dùng pattern
+ * này: avatar peer đứng ngay dưới/gần message cuối mình gửi mà peer đã seen,
+ * tạo cảm giác "seen here" thay vì hiện avatar ở mọi own message đã đọc
+ * (gây nhiễu khi user scroll lên đọc lịch sử).
+ */
+const lastOwnReadId = computed<string | null>(() => {
+  const me = props.currentUserId;
+  if (!me) return null;
+  for (let i = props.messages.length - 1; i >= 0; i--) {
+    const m = props.messages[i];
+    if (m.senderId === me && m.readAt) return m.id;
+  }
+  return null;
+});
 
 /** Render nội dung an toàn (escape HTML cơ bản). */
 const safe = (s: string): string => s
@@ -88,7 +133,7 @@ const grouped = computed(() => {
 <template>
   <div
     ref="scrollEl"
-    class="flex-1 overflow-y-auto px-4 py-3 space-y-3 bg-gray-50"
+    class="flex-1 overflow-y-auto scrollbar-visible px-4 py-3 space-y-3 bg-gray-50"
     @scroll="onScroll"
   >
     <div v-if="loading && messages.length === 0" class="flex justify-center py-12">
@@ -128,12 +173,44 @@ const grouped = computed(() => {
         >
           <div class="break-words" v-html="safe(m.content)" />
           <div
-            class="text-[10px] mt-0.5 font-mono"
+            class="mt-0.5 flex items-center justify-end gap-1 text-[10px] font-mono"
             :class="m.senderId === currentUserId ? 'text-primary-100' : 'text-gray-400'"
           >
-            {{ fmtTime(m.createdAt) }}
-            <span v-if="m.senderId === currentUserId && m.readAt" class="ml-1">✓✓</span>
-            <span v-else-if="m.senderId === currentUserId" class="ml-1">✓</span>
+            <span>{{ fmtTime(m.createdAt) }}</span>
+            <!--
+              Read receipt chỉ hiện trên message của mình (senderId === currentUserId).
+              ✓         = đã gửi (chưa đọc)
+              ✓✓ xanh    = đã xem (readAt được set bởi peer qua chat:read)
+              Tooltip trên ✓✓: "Đã xem lúc HH:mm" — bám theo pattern Messenger/Telegram.
+            -->
+            <Check
+              v-if="m.senderId === currentUserId && !m.readAt"
+              class="h-3.5 w-3.5 -mr-0.5 inline-block"
+              aria-label="Đã gửi"
+            />
+            <span
+              v-else-if="m.senderId === currentUserId && m.readAt"
+              :title="readTooltip(m.readAt)"
+              class="inline-flex items-center -mr-0.5 cursor-default"
+              :aria-label="readTooltip(m.readAt)"
+            >
+              <CheckCheck
+                class="h-4 w-4 text-primary-700"
+                aria-hidden="true"
+              />
+              <!--
+                Avatar peer — chỉ render ở TIN CUỐI CÙNG của mình đã được đọc.
+                Style Messenger: avatar 14px, tròn, nằm sau ✓✓ trên cùng hàng
+                với time + tick. Nếu peer chưa set avatar → không render
+                để tránh ô trống.
+              -->
+              <img
+                v-if="peerAvatar && m.id === lastOwnReadId"
+                :src="peerAvatar"
+                :alt="readTooltip(m.readAt)"
+                class="ml-1 h-3.5 w-3.5 rounded-full object-cover ring-1 ring-white"
+              />
+            </span>
           </div>
         </div>
       </div>

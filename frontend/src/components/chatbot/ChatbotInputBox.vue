@@ -107,7 +107,7 @@ const onInput = (e: Event): void => {
         :placeholder="
           hasContext
             ? 'Nhập câu hỏi về job/CV đã đính kèm...'
-            : 'Nhập câu hỏi của bạn (bấm kẹp giấy để đính kèm job/CV)...'
+            : 'Nhập câu hỏi của bạn (Đính kèm JD/CV để tôi hiểu bạn hơn)...'
         "
         class="min-h-[36px] max-h-32 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm focus:outline-none focus:ring-0"
         @input="onInput"
