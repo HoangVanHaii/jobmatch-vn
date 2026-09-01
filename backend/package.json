@@ -17,8 +17,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed:cvs": "tsx scripts/seed-cvs.ts",
     "db:reset": "tsx scripts/dev-reset.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "playwright:install": "playwright install chromium"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -60,6 +62,7 @@
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
     "pino-pretty": "^13.0.0",
+    "playwright-core": "^1.62.1",
     "rate-limit-redis": "^4.2.0",
     "sanitize-html": "^2.13.1",
     "socket.io": "^4.8.3",
