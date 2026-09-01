@@ -17,6 +17,12 @@ const routes: RouteRecordRaw[] = [
   { path: '/jobs/:id', name: 'job-detail', component: () => import('@views/JobDetailView.vue') },
   { path: '/search', name: 'search', component: () => import('@views/SearchView.vue') },
 
+  // Print page — render-only view cho Playwright capture PDF.
+  // KHÔNG có `meta.auth` (intentionally public) vì authorize qua HMAC signed
+  // token trong query string (BE cấp, TTL 120s, scope 1 cvId).
+  // KHÔNG có parent layout → page trống, chỉ render CV content, không header/nav.
+  { path: '/print/cv/:cvId', name: 'cv-print', component: () => import('@views/print/CvPrintView.vue') },
+
   // Candidate — bao gồm cả /pricing để có sidebar
   {
     path: '/candidate',

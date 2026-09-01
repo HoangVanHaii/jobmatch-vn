@@ -74,6 +74,34 @@ export const usePlanStore = defineStore('plan', () => {
     }
   };
 
+  /**
+   * Fetch plan + quota usage đầy đủ → populate `usage` ref để `hasQuota()` /
+   * `remaining()` trả về số liệu thật. Cần thiết cho các action cần check
+   * quota trước khi gọi (vd MyResumesView disable Upload/Analyze khi hết).
+   *
+   * - Nếu user chưa có sub active → usage rỗng, `hasQuota()` trả `true` (coi
+   *   như Free tier không giới hạn AI quota) → caller vẫn cho phép action.
+   * - Lỗi network → usage giữ nguyên (không clear), để action không bị
+   *   disable oan do mất mạng. Caller có thể tự retry nếu muốn.
+   *
+   * Gọi song song với `fetchMyPlan` nếu cần, hoặc thay thế (response này
+   * đã bao gồm plan + expiresAt).
+   */
+  const fetchMyUsage = async (): Promise<void> => {
+    try {
+      const data = await planApi.getMyUsage();
+      currentPlan.value = data.plan ?? null;
+      currentPlanExpiresAt.value = data.expiresAt ?? null;
+      usage.value = (data.usage ?? []).map((u) => ({
+        feature: u.key,
+        used: u.used,
+        limit: u.limit,
+      }));
+    } catch {
+      // Giữ usage cũ — không xoá để tránh lock action khi mạng chập chờn.
+    }
+  };
+
   // ============ Actions: Public ============
   /**
    * Load danh sách plans cho user thường (chỉ active).
@@ -172,6 +200,7 @@ export const usePlanStore = defineStore('plan', () => {
     // Actions
     fetchPublicPlans,
     fetchMyPlan,
+    fetchMyUsage,
     fetchAdminPlans,
     createPlan,
     updatePlan,

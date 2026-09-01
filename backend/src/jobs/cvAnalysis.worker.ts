@@ -10,6 +10,8 @@ import {
 } from "../prompts/cvAnalysis";
 import { invokeCvAnalysis } from "../lib/llm/cvAnalysis";
 import { cvService } from "../service/cv.service";
+import { notificationGateway } from "../socket/notificationGateway";
+import type { CvStatus } from "../interface/cv";
 
 const QUEUE_NAME = "cvAnalysis";
 import { isRateLimited, waitForRateLimit } from "../lib/llm/errors";
@@ -69,12 +71,36 @@ export const cvAnalysisWorker = new Worker(
                     "ai_cv_analysis",
                 );
                 if (!reserved) {
+                    // Hết lượt AI.
+                    //   - CV đã có parsedData (parse xong, content OK) → KHÔNG
+                    //     downgrade về 'failed'. CV vẫn dùng được, status cuối
+                    //     cùng vẫn 'ready' (ai_analysis cũ được giữ nếu có).
+                    //     Lý do 'quota_exceeded' sẽ bị changeStatus bỏ qua vì
+                    //     status không phải 'failed'. Emit socket 'cv:quota-warning'
+                    //     RIÊNG để FE biết hiển thị toast (vì status='ready' trông
+                    //     như thành công — user không biết quota fail).
+                    //   - CV chưa có parsedData → mark 'failed'/'quota_exceeded'.
+                    let status: CvStatus = "failed";
+                    if (dbCv.parsedData) status = "ready";
                     await cvService.changeStatus(
                         dbCv.candidateId,
                         dbCv.id,
-                        "failed",
+                        status,
                         "quota_exceeded",
                     );
+                    if (status === "ready") {
+                        notificationGateway.emitToUser(
+                            dbCv.candidateId,
+                            "cv:quota-warning",
+                            {
+                                cvId: dbCv.id,
+                                context: "analyze",
+                                reason: "quota_exceeded",
+                                message:
+                                    "Đã hết lượt AI. Điểm phân tích trước đó được giữ nguyên.",
+                            },
+                        );
+                    }
                     return;
                 }
             }

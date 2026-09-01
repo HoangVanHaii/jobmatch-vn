@@ -93,6 +93,10 @@ export const validateUpdateDirectCv = validate(updateDirectCvSchema, "body");
 
 export const listCvQuerySchema = z.object({
   source: z.enum(["upload", "direct"]).optional(),
+  // Tìm theo tiêu đề CV (case-insensitive). FE debounce 400ms trước khi gọi
+  // API → không spam DB. Trim + min(1) để empty string bị loại bỏ ở middleware,
+  // không phải xử lý lại ở controller/service.
+  q: z.string().trim().min(1).max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(10),
   offset: z.coerce.number().int().min(0).default(0),
 });
