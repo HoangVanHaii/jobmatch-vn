@@ -17,12 +17,6 @@ const emit = defineEmits<{
   (e: 'click', id: string): void;
 }>();
 
-/** Lấy chữ cái đầu của tên (fallback khi không có avatar). */
-const initial = computed(() => {
-  const name = props.conversation.peer.fullName;
-  return (name?.[0] ?? '?').toUpperCase();
-});
-
 /** Format thời gian: HH:mm nếu hôm nay, dd/mm nếu cũ hơn. */
 const timeLabel = computed(() => {
   if (!props.conversation.lastMessageAt) return '';
@@ -53,7 +47,12 @@ const onClick = (): void => emit('click', props.conversation.id);
         :alt="conversation.peer.fullName ?? ''"
         class="w-full h-full object-cover"
       />
-      <span v-else class="text-base font-semibold text-gray-600">{{ initial }}</span>
+      <img
+        v-else
+        src="/avatars/peer-default.svg"
+        alt=""
+        class="w-full h-full object-cover"
+      />
     </div>
 
     <!-- Content -->

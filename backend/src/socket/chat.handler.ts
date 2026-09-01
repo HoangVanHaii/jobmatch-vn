@@ -86,6 +86,7 @@ export const chatHandler = (io: IOServer, socket: Socket): void => {
   socket.on('chat:typing', (data: { conversationId: string; isTyping: boolean }) => {
     socket.to(`conversation:${data.conversationId}`).emit('chat:typing', {
       userId: (socket as any).user?.userId,
+      conversationId: data.conversationId,
       isTyping: data.isTyping,
     });
   });
@@ -97,19 +98,36 @@ export const chatHandler = (io: IOServer, socket: Socket): void => {
 
     try {
       const conv = await chatService.getById(data.conversationId);
+      if (!conv) return socket.emit('chat:error', { code: 'NOT_FOUND' });
       const isMember = conv.userA === userId || conv.userB === userId;
       if (!isMember) return socket.emit('chat:error', { code: 'NOT_MEMBER' });
 
       // 2. Update DB — set read_at cho tin của peer
       const readAt = await chatService.markAtRead(data, userId)
 
-      // 3. Broadcast cho peer (vẫn cần realtime để UI B update tick)
-      socket.to(`conversation:${data.conversationId}`).emit('chat:read', {
+      // 3. Broadcast cho peer kia (sender gốc của messages) để UI update tick ✓✓.
+      //    Lưu ý: `io.to(user:X).emit` GỬI TỚI MỌI socket của peer kia (kể cả đang
+      //    ở device khác). Socket nhận tự filter userId === auth.user ở useChat.onRead
+      //    nên việc broadcast tới cả 2 chiều không gây loop.
+      const peerId = conv.userA === userId ? conv.userB : conv.userA;
+
+      const readPayload = {
         userId,
         conversationId: data.conversationId,
         readAt: readAt.toISOString(),
         lastReadMessageId: data.lastReadMessageId,
-      });
+      };
+
+      // 3a. Conv room — cho client đang mở conv này (markRead tick update ngay).
+      //     `socket.to(...)` loại trừ sender (người đọc) — đúng vì họ đã đọc rồi.
+      socket.to(`conversation:${data.conversationId}`).emit('chat:read', readPayload);
+
+      // 3b. User-personal room — quan trọng: nếu peer kia KHÔNG đang mở conv
+      //     này (đang ở /chat sidebar hoặc conv khác), broadcast conv-room sẽ
+      //     miss. user-personal room đảm bảo socket của họ LUÔN nhận được event
+      //     này. Khi mở lại conv sau, fetchMessages sẽ lấy readAt từ DB (đã được
+      //     cập nhật ở step 2) → ✓✓ hiển thị.
+      io.to(`user:${peerId}`).emit('chat:read', readPayload);
     } catch (err) {
       logger.error({ err }, 'chat:read failed');
     }
