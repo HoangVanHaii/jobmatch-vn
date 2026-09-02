@@ -1,6 +1,6 @@
 import { db } from "../config/database";
 import { cvs } from "../db/schema";
-import { desc, eq, and, ne, sql, inArray } from "drizzle-orm";
+import { desc, eq, and, ne, sql, inArray, or, ilike } from "drizzle-orm";
 import type { CreateCvInput, CreateDirectCvInput, Cv, VerificationWarning, CvDetail, CvStatus, CvSource, ListCvResponse, AiAnalysis, UpdateDirectCvInput, CvFailureReason } from "../interface/cv";
 import { notificationGateway } from "../socket/notificationGateway";
 import { githubLookupService } from "./githubLookup.service";
@@ -116,17 +116,25 @@ export const cvService = {
 
   /**
    * List CVs của candidate (ẩn status='deleted'), sort primary trước.
-   * Có phân trang: trả về `items` (trang hiện tại) + `total` (tổng khớp filter).
+   * Có phân trang: trả về `items` (full Cv row) + `total` (tổng khớp filter).
+   *
+   * Tên hàm `getListDetail` thay cho `list` cũ: response là FULL row (parsedData +
+   * ai_analysis) chứ không phải slim ListCv — FE render CV thật trên thumbnail
+   * card mà không phải gọi thêm GET /cvs/:cvId.
    *
    * @param source — optional filter: 'upload' | 'direct'. Bỏ trống → trả cả 2 loại.
+   * @param q — optional từ khoá tìm tiêu đề (case-insensitive ILIKE).
+   *   Title NULL sẽ được loại khỏi kết quả search (đúng kỳ vọng UX — không
+   *   trả CV "chưa đặt tên" khi user gõ vào ô tìm kiếm).
    * @param limit — số row tối đa trên 1 trang (default 10, 1..100).
    * @param offset — bỏ qua N row đầu (default 0, >=0).
    */
-  list: async (
+  getListDetail: async (
     candidateId: string,
     source?: CvSource,
     limit: number = 10,
     offset: number = 0,
+    q?: string,
   ): Promise<ListCvResponse> => {
     const whereClauses = [
       eq(cvs.candidateId, candidateId),
@@ -135,27 +143,18 @@ export const cvService = {
     if (source) {
       whereClauses.push(eq(cvs.source, source));
     }
+    if (q) {
+      // ILIKE title — case-insensitive, %...% để match substring. Cột `title`
+      // nullable, nên thêm IS NOT NULL để title=NULL không bị match do
+      // NULL ILIKE '%q%' = NULL (treated as false in AND).
+      whereClauses.push(ilike(cvs.title, `%${q}%`));
+      whereClauses.push(sql`${cvs.title} IS NOT NULL`);
+    }
     const whereExpr = and(...whereClauses);
 
-    // Items của trang hiện tại.
-    // `aiAnalysisTotal` chỉ lấy con số `total` từ jsonb (response gọn) —
-    // full object xem � GET /cvs/:cvId.
-    const rows = await db
-      .select({
-        id: cvs.id,
-        candidateId: cvs.candidateId,
-        title: cvs.title,
-        fileUrl: cvs.fileUrl,
-        fileType: cvs.fileType,
-        isPrimary: cvs.isPrimary,
-        templateId: cvs.templateId,
-        status: cvs.status,
-        source: cvs.source,
-        failureReason: cvs.failureReason,
-        aiAnalysisTotal: sql<
-          number | null
-        >`(${cvs.ai_analysis}->>'total')::int`,
-      })
+    // Items của trang hiện tại — FULL Cv row (parsedData + ai_analysis luôn có).
+    const items = await db
+      .select()
       .from(cvs)
       .where(whereExpr)
       .orderBy(desc(cvs.isPrimary), desc(cvs.createdAt))
@@ -168,7 +167,7 @@ export const cvService = {
       .from(cvs)
       .where(whereExpr);
 
-    return { items: rows, total: count };
+    return { items, total: count };
   },
 
   /**
@@ -224,6 +223,47 @@ export const cvService = {
   },
 
   /**
+   * GET /cvs/:cvId/render-data — public endpoint (Bearer không bắt buộc),
+   * authorize qua HMAC signed token trong query string.
+   *
+   * Mục đích: Playwright server-side (Chromium headless) navigate tới FE
+   * `/print/cv/:cvId?token=...`, print page gọi endpoint này để lấy data
+   * tối thiểu cần render CV, không expose Bearer token ra URL.
+   *
+   * KHÔNG filter theo candidateId — token đã scope chỉ authorize 1 cvId,
+   * và ownership đã verify ở downloadPdf (caller phải có Bearer + ownership
+   * mới nhận được token). Nếu filter candidateId ở đây → phải truyền
+   * candidateId qua token payload, tăng attack surface.
+   *
+   * Chỉ trả field cần thiết để render CV (id, title, source, templateId,
+   * parsedData). KHÔNG trả fileUrl/ai_analysis/cv.fileType/candidateId.
+   *
+   * Trả null nếu không tồn tại / đã soft-delete (controller sẽ throw 404).
+   */
+  getRenderData: async (
+    cvId: string,
+  ): Promise<{
+    id: string;
+    title: string | null;
+    source: CvSource;
+    templateId: number | null;
+    parsedData: NonNullable<typeof cvs.$inferSelect.parsedData> | null;
+  } | null> => {
+    const [row] = await db
+      .select({
+        id: cvs.id,
+        title: cvs.title,
+        source: cvs.source,
+        templateId: cvs.templateId,
+        parsedData: cvs.parsedData,
+      })
+      .from(cvs)
+      .where(and(eq(cvs.id, cvId), ne(cvs.status, "deleted")))
+      .limit(1);
+    return row ?? null;
+  },
+
+  /**
    * Set primary: trong transaction:
    * 1. Verify CV thuộc về candidate + chưa deleted.
    * 2. Reset tất cả CV của candidate về isPrimary=false.
@@ -275,7 +315,7 @@ export const cvService = {
       templateId: input.templateId,
       parsedData,
       source: "direct" as const,
-      status: "parsing" as const,
+      status: "ready" as const,
     };
 
     if (input.isPrimary === true) {
@@ -300,7 +340,6 @@ export const cvService = {
       .values({ ...baseValues, isPrimary: false })
       .returning();
 
-    await cvAnalysisQueue.add("cv-analysis", { cvId: cv.id });
     return cv;
   },
 
@@ -495,7 +534,24 @@ changeStatus: async (
     newStatus: CvStatus,
     reason: CvFailureReason | null = null,
 ): Promise<boolean> => {
-    const failureReason = newStatus === "failed" ? reason : null;
+    // Quy tắc set `failureReason`:
+    //   - newStatus='failed'  → giữ `reason` (lý do fail thật).
+    //   - newStatus != 'failed' VÀ reason='quota_exceeded' → VẪN set reason.
+    //     Lý do: khi worker revert status='ready' vì quota hết, CV vẫn ở
+    //     trạng thái dùng được (điểm cũ được giữ) nhưng FE cần biết "lần
+    //     analyze cuối bị quota" để hiện banner — kể cả khi user reload
+    //     trang (state mất, DB persist). Banner sẽ tự xoá khi user trigger
+    //     analyze lại thành công (changeAnalysisAsReady set null).
+    //   - newStatus != 'failed' VÀ reason khác → null (clear).
+    //
+    // Semantic: `failureReason` thực ra là "last operation reason" — hầu hết
+    // các reason chỉ hợp lệ khi status='failed', nhưng 'quota_exceeded' là
+    // exception vì có thể coexist với status='ready' (CV vẫn dùng được với
+    // điểm cũ). Xem CvFailureReason JSDoc trong interface/cv.ts.
+    const failureReason =
+        newStatus === "failed" || reason === "quota_exceeded"
+            ? reason
+            : null;
 
     const [updated] = await db
         .update(cvs)

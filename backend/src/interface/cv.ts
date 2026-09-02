@@ -42,24 +42,16 @@ export interface CreateCvInput {
   isPrimary?: boolean;
 }
 
-export interface ListCv {
-  id: string;
-  candidateId: string;
-  title: string | null;
-  fileUrl: string | null;
-  fileType: string | null;
-  isPrimary: boolean;
-  templateId: number | null;
-  status: CvStatus;
-  source: CvSource;
-  aiAnalysisTotal: number | null;
-}
-
 export type CreateCvResponse = Cv;
 
 
+/**
+ * Response của GET /cvs — items là FULL Cv row (parsedData + ai_analysis)
+ * chứ không phải slim ListCv. FE render trực tiếp CV thật trên thumbnail
+ * card mà không phải gọi thêm GET /cvs/:cvId.
+ */
 export interface ListCvResponse {
-  items: ListCv[];
+  items: Cv[];
   total: number;
 }
 

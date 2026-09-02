@@ -5,19 +5,70 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { authApi } from '@services/auth.api';
 
+/** OAuth provider enum — đồng bộ với backend `oauthProviderEnum`. */
+export type OAuthProviderType = 'google' | 'facebook' | 'github';
+
+/** 1 OAuth account user đã link — dùng cho Settings UI hiển thị "Đã kết nối Google". */
+export interface LinkedProvider {
+  provider: OAuthProviderType;
+  /** Email user dùng với provider này (vd "ten@gmail.com") — optional vì có thể null. */
+  providerEmail?: string | null;
+}
+
 export interface User {
   id: string;
   email: string;
   role: 'candidate' | 'employer' | 'admin';
   status: string;
+  /** Từ user_profiles (qua GET /users/me JOIN). Có thể null nếu user chưa cập nhật profile. */
+  fullName?: string | null;
+  /** Avatar từ user_profiles (Google/Facebook/GitHub OAuth, hoặc user upload). */
+  avatarUrl?: string | null;
   metadata?: Record<string, unknown>;
+  /**
+   * User có local password (signup bằng form email+password).
+   * `false` nếu user đăng ký qua OAuth-only (Google/Facebook/GitHub) và chưa set
+   * password local. Settings UI dùng để ẩn form đổi mật khẩu cho OAuth-only user.
+   */
+  hasPassword?: boolean;
+  /**
+   * OAuth providers user đã link. Mỗi user có thể link nhiều provider (vd vừa
+   * password vừa Google). Settings UI liệt kê row cho từng provider đã link.
+   */
+  linkedProviders?: LinkedProvider[];
 }
+
+/* ============================================================================
+ * Pending OTP verification — lưu email in-memory cho flow OTP
+ *
+ * Vấn đề cũ: VerifyOtpView đọc email từ `route.query.email` (URL) → leak vào
+ *   address bar, browser history, Referer header, server access log.
+ *
+ * Quyết định hiện tại: chỉ lưu trong memory (Pinia ref) — KHÔNG vào sessionStorage
+ *   /localStorage. Nghĩa là F5 sẽ mất email → user quay lại /register, đăng ký
+ *   lại (backend sẽ gửi OTP mới).
+ *
+ *   Đánh đổi: thêm 1 bước cho user khi F5. Được:
+ *     - Không lưu PII xuống disk/browser store ở bất kỳ dạng nào.
+ *     - Không có risk bị stale state (vd sessionStorage bị chunk quota, private
+ *       mode block, multi-tab conflict).
+ *     - Không phải cleanup khi đăng xuất hay xóa lịch sử.
+ *
+ * Nếu sau muốn F5-resilient, đẩy phần "storing" xuống BE (HttpOnly cookie /
+ *   Redis session theo tab id) — đó là giải pháp đúng kiểu cho OTP flow, không
+ *   phải FE storage.
+ * ==========================================================================*/
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null);
   const accessToken = ref<string | null>(localStorage.getItem('access_token'));
   const refreshToken = ref<string | null>(localStorage.getItem('refresh_token'));
   const isLoading = ref(false);
+  /**
+   * Email đang chờ verify OTP. Null = chưa register / F5 / verify xong → redirect
+   * về /register. Chỉ sống trong SPA memory — không persist.
+   */
+  const pendingVerifyEmail = ref<string | null>(null);
   let initPromise: Promise<void> | null = null;
 
   const isAuthenticated = computed(() => !!user.value && !!accessToken.value);
@@ -49,6 +100,7 @@ export const useAuthStore = defineStore('auth', () => {
   const register = async (payload: {
     email: string;
     password: string;
+    fullName: string;
     role: 'candidate' | 'employer';
   }): Promise<void> => {
     isLoading.value = true;
@@ -85,9 +137,28 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('refresh_token', refresh);
   };
 
+  /* ============================================================================
+   * Pending OTP verification helpers
+   * ==========================================================================*/
+
+  /**
+   * Setter gọi SAU khi register thành công (BE đã gửi OTP), TRƯỚC khi navigate
+   * sang /verify-otp. Chỉ lưu in-memory; F5/refresh sẽ reset.
+   */
+  const setPendingVerifyEmail = (email: string): void => {
+    pendingVerifyEmail.value = email;
+  };
+
+  /** Clear sau khi verify xong, hoặc khi user quay lại /register. */
+  const clearPendingVerifyEmail = (): void => {
+    pendingVerifyEmail.value = null;
+  };
+
   return {
     user, accessToken, refreshToken, isLoading,
     isAuthenticated,
+    pendingVerifyEmail,
     fetchMe, ensureInit, login, register, verifyOtp, logout, setTokens,
+    setPendingVerifyEmail, clearPendingVerifyEmail,
   };
 });

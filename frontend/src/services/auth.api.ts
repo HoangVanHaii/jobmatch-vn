@@ -6,6 +6,7 @@ import { http } from './http';
 export interface RegisterRequestPayload {
   email: string;
   password: string;
+  fullName: string;
   role: 'candidate' | 'employer';
 }
 
