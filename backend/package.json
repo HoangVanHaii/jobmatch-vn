@@ -17,6 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed:plans": "tsx scripts/seed-plans.ts",
     "db:reset": "tsx scripts/dev-reset.ts",
     "db:studio": "drizzle-kit studio"
   },

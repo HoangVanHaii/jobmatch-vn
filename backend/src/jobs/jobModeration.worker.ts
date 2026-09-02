@@ -22,7 +22,7 @@ export const jobModerationWorker = new Worker('jobModeration', async (job) => {
       return;
     }
     if (dbJob.status !== 'ai_scanning') {
-      logger.warn({ jobId, status: dbJob.status }, 'Worker: job không ở ai_scanning, skip');
+      logger.warn({ jobId, status: dbJob.status }, 'Worker: jobstatus khác ai_scanning, skip');
       return;
     }
 

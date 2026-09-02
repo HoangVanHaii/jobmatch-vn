@@ -28,6 +28,9 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: 'resumes' },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
       { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
+      { path: 'viec-lam', name: 'candidate-jobs', component: () => import('@views/candidate/JobsView.vue') },
+      { path: 'viec-lam/:id', name: 'candidate-job-detail', component: () => import('@views/candidate/JobDetailView.vue') },
+      { path: 'saved-jobs', name: 'candidate-saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
    // { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true } }, 
 
       { path: 'chat/:id?', name: 'chat', component: ChatView, meta: { auth: true },},
@@ -51,17 +54,31 @@ const routes: RouteRecordRaw[] = [
   // Employer
   {
     path: '/employer',
+    component: () => import('@views/employer/EmployerLayout.vue'),
     meta: { auth: true, role: 'employer' },
     children: [
-      { path: 'chat/:id?', name: 'e-chat', component: ChatView },
+      // Default → Job đã đăng (entry point quan trọng nhất của employer)
+      { path: '', redirect: 'jobs' },
 
-      // { path: '', name: 'employer-dashboard', component: () => import('@views/employer/EmployerDashboard.vue') },
-      // { path: 'jobs/new', name: 'create-job', component: () => import('@views/employer/CreateJobView.vue') },
-      // { path: 'jobs', name: 'posted-jobs', component: () => import('@views/employer/PostedJobsView.vue') },
-      // { path: 'applications', name: 'employer-applications', component: () => import('@views/employer/ApplicationsView.vue') },
-      // { path: 'chat', name: 'employer-chat', component: () => import('@views/employer/EmployerChatView.vue') },
-      // { path: 'analytics', name: 'employer-analytics', component: () => import('@views/employer/AnalyticsView.vue') },
-      // { path: 'settings', name: 'employer-settings', component: () => import('@views/employer/CompanyVerificationView.vue') },
+      // Tuyển dụng
+      { path: 'jobs', name: 'employer-jobs', component: () => import('@views/employer/PostedJobsView.vue') },
+      { path: 'jobs/:id', name: 'employer-job-detail', component: () => import('@views/employer/JobDetailView.vue') },
+      { path: 'applications', name: 'employer-applications', component: () => import('@views/employer/ApplicationsView.vue') },
+      { path: 'interviews', name: 'employer-interviews', component: () => import('@views/employer/InterviewsView.vue') },
+
+      // Công ty
+      { path: 'company', name: 'employer-company', component: () => import('@views/employer/CompanyView.vue') },
+      { path: 'company/members', name: 'employer-company-members', component: () => import('@views/employer/CompanyMembersView.vue') },
+
+      // Hỗ trợ
+      { path: 'chat/:id?', name: 'e-chat', component: ChatView },
+      { path: 'settings', name: 'employer-settings', component: () => import('@views/employer/SettingsView.vue') },
+
+      // Gói dịch vụ / billing
+      { path: 'pricing', name: 'employer-pricing', component: () => import('@views/employer/PricingView.vue') },
+      { path: 'billing/history', name: 'employer-billing-history', component: () => import('@views/employer/BillingHistoryView.vue') },
+      { path: 'billing/success', name: 'employer-billing-success', component: () => import('@views/BillingSuccessView.vue') },
+      { path: 'billing/cancel', name: 'employer-billing-cancel', component: () => import('@views/BillingCancelView.vue') },
     ],
   },
 

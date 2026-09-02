@@ -83,3 +83,14 @@ export interface CompanyListResult {
   page: number;
   limit: number;
 }
+
+/**
+ * Response của GET /companies/me — company của user hiện tại (qua membership).
+ * Trả `null` khi user chưa thuộc company nào (không phải 404).
+ * Slim shape — chỉ field cần cho UI header/picker.
+ */
+export interface MyCompany {
+  id: string;
+  name: string;
+  logoUrl: string | null;
+}
