@@ -16,6 +16,7 @@ authRouter.post('/logout', auth, validate(userMiddleware.logoutSchema), authCont
 authRouter.post('/forgot-password', otpRateLimiter, validate(userMiddleware.forgotPasswordSchema), authController.forgotPassword);
 authRouter.post('/reset-password', otpRateLimiter, validate(userMiddleware.resetPasswordSchema), authController.resetPassword);
 authRouter.post('/change-avatar', auth, validate(userMiddleware.changeAvatarSchema), authController.changeAvatar);
+authRouter.post('/change-password', auth, validate(userMiddleware.changePasswordSchema), authController.changePassword);
 authRouter.post('/upsert-profile', auth, authController.upsertProfile);
 authRouter.get('/profile', auth, authController.getProfile);
 authRouter.put('/soft-delete', auth, authController.softDeleteAccount);
