@@ -17,9 +17,38 @@ export interface UserSearchResult {
 }
 
 export const authService = {
-    requestOtp: async (email: string, password: string, role: 'candidate' | 'employer'): Promise<void> => {
+    /**
+     * Tạo user mới + user_profile trong CÙNG transaction.
+     *
+     * Vì sao phải transaction:
+     *   - Ghi vào 2 bảng (users + user_profiles). Nếu insert user xong rồi insert
+     *     userProfile fail (vd: DB mất kết nối, FK violation) → user tồn tại
+     *     nhưng profile rỗng → user phải nhập lại fullName ở onboarding.
+     *   - Transaction đảm bảo cả 2 row cùng commit hoặc cùng rollback.
+     *
+     * Lưu ý:
+     *   - Email-uniqueness đã được controller check trước khi gọi (throw 409 nếu
+     *     trùng). Vẫn có race condition giữa 2 request đồng thời cùng email —
+     *     nhưng unique constraint ở DB sẽ văng lỗi 23505 và transaction rollback
+     *     sạch, không để lại row mồ côi.
+     */
+    requestOtp: async (
+        email: string,
+        password: string,
+        fullName: string,
+        role: 'candidate' | 'employer',
+    ): Promise<void> => {
         const passwordHash = await bcrypt.hash(password, 12);
-        await db.insert(users).values({ email, passwordHash, role, metadata: {} }).returning();
+        await db.transaction(async (tx) => {
+            const [created] = await tx
+                .insert(users)
+                .values({ email, passwordHash, role, metadata: {} })
+                .returning({ id: users.id });
+            if (!created) {
+                throw new AppError(500, 'USER_INSERT_FAILED', 'Failed to create user');
+            }
+            await tx.insert(userProfiles).values({ userId: created.id, fullName });
+        });
     },
     verifyEmail: async (email: string): Promise<void> => {
         await db.update(users).set({ emailVerifiedAt: new Date(), status: 'active' }).where(eq(users.email, email));
@@ -41,6 +70,47 @@ export const authService = {
     resetPassword: async (email: string, newPassword: string): Promise<void> => {
         const passwordHash = await bcrypt.hash(newPassword, 12);
         await db.update(users).set({ passwordHash }).where(eq(users.email, email));
+    },
+    /**
+     * Đổi mật khẩu cho user đang đăng nhập (route POST /auth/change-password).
+     *
+     * Flow:
+     *   1. Lookup user theo userId — lấy passwordHash hiện tại.
+     *   2. Verify `currentPassword` khớp passwordHash qua bcrypt — chống token
+     *      bị đánh cắp tự ý đổi mật khẩu mà không biết mật khẩu cũ.
+     *   3. Reject nếu newPassword trùng currentPassword — tránh "đổi" nhưng
+     *      không thay đổi (UX nhầm lẫn).
+     *   4. Hash newPassword (bcrypt cost 12 — đồng bộ với các flow khác) + update.
+     *
+     * Errors:
+     *   - 404 USER_NOT_FOUND: userId không tồn tại (token lỗi thời / user bị xoá).
+     *   - 401 INVALID_PASSWORD: currentPassword không khớp.
+     *   - 400 SAME_PASSWORD: newPassword === currentPassword.
+     */
+    changePassword: async (
+        userId: string,
+        currentPassword: string,
+        newPassword: string,
+    ): Promise<void> => {
+        const user = await db.query.users.findFirst({
+            where: eq(users.id, userId),
+            columns: { passwordHash: true },
+        });
+        if (!user || !user.passwordHash) {
+            throw new AppError(404, 'USER_NOT_FOUND', 'Không tìm thấy tài khoản');
+        }
+
+        const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!isMatch) {
+            throw new AppError(401, 'INVALID_PASSWORD', 'Mật khẩu hiện tại không đúng');
+        }
+
+        if (currentPassword === newPassword) {
+            throw new AppError(400, 'SAME_PASSWORD', 'Mật khẩu mới phải khác mật khẩu hiện tại');
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
     },
     changeAvatar: async (userId: string, avatarUrl: string): Promise<void> => {
         const userProfile = await db.query.userProfiles.findFirst({ where: eq(userProfiles.userId, userId) });
