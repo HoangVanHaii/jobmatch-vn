@@ -67,7 +67,11 @@ const onSubmit = async () => {
     // fullName đã được BE lưu vào userProfiles trong cùng transaction với users
     // (xem auth.service.requestOtp). Onboarding sau này có thể đọc qua auth.me()
     // hoặc profile endpoint — không cần lưu tạm ở FE nữa.
-    router.push({ name: 'verify-otp', query: { email: email.value } });
+    //
+    // Email KHÔNG truyền qua URL nữa (trước đây bị leak vào history, Referer,
+    // access log). Lưu vào sessionStorage qua store — VerifyOtpView đọc từ đó.
+    auth.setPendingVerifyEmail(email.value);
+    await router.push({ name: 'verify-otp' });
   } catch (e: any) {
     error.value = e?.response?.data?.error?.message ?? 'Đăng ký thất bại';
   } finally {
