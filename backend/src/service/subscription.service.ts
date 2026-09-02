@@ -186,7 +186,8 @@ export const subscriptionService = {
     },
 
     /**
-     * Refresh free subscription cho user (dùng khi user không có paid sub active).
+     * Đảm bảo user có 1 free subscription active (idempotent), dùng khi user
+     * không có paid sub active.
      *
      * Business rule: "đang dùng paid thì KHÔNG đụng free". Free chỉ active khi paid
      * không còn active nữa (user hủy paid / paid hết hạn / admin force-cancel).
@@ -197,9 +198,15 @@ export const subscriptionService = {
      *   1. Pick free plan từ bảng `plans` (by code='free') → lấy plan_id + duration_days.
      *      Nếu chưa có free plan → return null (không tạo plan runtime — phải seed trước).
      *   2. Tìm free sub gần nhất của user (ORDER BY started_at DESC).
-     *      Nếu chưa có → return null (caller quyết định flow tiếp — vd: signup hook
-     *      tạo free sub đầu tiên).
-     *   3. UPDATE dựa trên thời hạn:
+     *      Có 2 nhánh:
+     *      a) Tìm thấy → UPDATE dựa trên thời hạn (xem bên dưới), return sub.id.
+     *      b) KHÔNG tìm thấy (user chưa từng có sub) → BOOTSTRAP: insert mới
+     *         bằng `insertFreeSubscriptionForUser`. Lý do: trước đây hàm này
+     *         trả null cho fresh users và kỳ vọng signup hook tạo free sub — nhưng
+     *         hook không tồn tại, dẫn đến user mới đăng ký xong upload CV → quota
+     *         check fail vì getMyCurrentPlan return null. Self-heal để fix cả
+     *         user cũ (chưa từng có sub) lẫn user mới (signup hook thiếu/bug).
+     *   3. UPDATE based on expiry:
      *      - ĐÃ HẾT HẠN (expires_at <= now):
      *          + Set lại `started_at = now`, `expires_at = now + duration_days`.
      *          + Set `status = 'active'`.
@@ -210,10 +217,10 @@ export const subscriptionService = {
      *          + Chỉ set `status = 'active'`, KHÔNG reset dates / usage.
      *
      * @param userId - User cần refresh free sub.
-     * @returns      - SubscriptionId sau refresh, hoặc null nếu:
+     * @returns      - SubscriptionId sau refresh/insert, hoặc null nếu:
      *                  - User còn paid sub active (safety).
      *                  - Free plan chưa seed.
-     *                  - User chưa có free sub (caller phải INSERT trước).
+     *                  - Bootstrap insert fail (log error).
      */
     refreshFreeSubscriptionForUser: async (
         userId: string,
@@ -261,7 +268,26 @@ export const subscriptionService = {
             .orderBy(desc(subscriptions.startedAt))
             .limit(1);
 
-        if (!sub) return null;
+        // 2b. BOOTSTRAP: user chưa từng có free sub → insert một cái.
+        //     Self-heal cho 2 trường hợp:
+        //       - User cũ: signed up trước khi signup hook được thêm (hook bị thiếu).
+        //       - User có sub bị xoá thủ công / data corruption.
+        //     Không cần lock đặc biệt — getMyCurrentPlan đã serialize phần lớn
+        //     qua initial SELECT; concurrent race tạo ra 2 rows free sub là case
+        //     hiếm và vô hại (cả 2 cùng 'active', quota check chỉ dùng 1, row
+        //     thừa nằm yên trong DB).
+        if (!sub) {
+            try {
+                const created = await subscriptionService.insertFreeSubscriptionForUser(userId);
+                return created.id;
+            } catch (err) {
+                logger.error(
+                    { userId, err },
+                    'refreshFreeSubscriptionForUser: bootstrap insert failed',
+                );
+                return null;
+            }
+        }
 
         // 3. UPDATE status nếu cần.
         const isPastExpiry = new Date(sub.expiresAt).getTime() <= Date.now();

@@ -38,4 +38,49 @@ export const userApi = {
       params: { q, limit },
       signal,
     }),
+
+  /**
+   * Cập nhật avatar URL — POST /auth/change-avatar.
+   *
+   * Flow chuẩn cho caller:
+   *   1. Upload file ảnh qua `uploadStore.uploadImage(file, 'avatars')`
+   *      → trả `{ url, key, mime, size }`.
+   *   2. Gọi `changeAvatar(url)` để persist URL mới vào `user_profiles.avatar_url`.
+   *   3. Update local state (auth store + profile view) để UI phản ánh ngay.
+   *
+   * Backend dùng `authService.changeAvatar` (backend/src/service/auth.service.ts),
+   * tự insert row mới nếu `user_profiles` chưa tồn tại — không cần user tạo
+   * profile trước.
+   *
+   * Response backend: `{ success: true, message: 'Avatar updated successfully' }`.
+   * Method này không trả data hữu ích — chỉ cần success/fail (fail throw error).
+   */
+  changeAvatar: (avatarUrl: string) =>
+    http.post<ApiResponse<{ message: string }>>('/auth/change-avatar', { avatarUrl }),
+
+  /**
+   * Đổi mật khẩu cho user đang đăng nhập — POST /auth/change-password.
+   *
+   * Caller (vd SettingsModal) phải validate client-side trước:
+   *   - newPassword.length >= 8 (đồng bộ với backend schema).
+   *   - confirm === newPassword (FE-only check, không gửi confirm lên BE).
+   *
+   * Backend flow:
+   *   1. Verify currentPassword qua bcrypt → 401 INVALID_PASSWORD nếu sai.
+   *   2. Reject nếu newPassword === currentPassword → 400 SAME_PASSWORD.
+   *   3. Hash + update `users.passwordHash`.
+   *
+   * Response backend: `{ success: true, message: 'Đổi mật khẩu thành công' }`.
+   *
+   * Sau khi đổi thành công:
+   *   - User vẫn dùng accessToken cũ (BE chỉ rotate refresh token ở /refresh).
+   *   - Không tự động logout — UX tốt hơn vì user đang trong flow cài đặt.
+   *   - Tuy nhiên, nếu muốn ép đăng nhập lại ngay → FE tự gọi auth.logout() +
+   *     router.push('/login') sau toast.
+   */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    http.post<ApiResponse<{ message: string }>>('/auth/change-password', {
+      currentPassword,
+      newPassword,
+    }),
 };
