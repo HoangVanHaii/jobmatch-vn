@@ -180,6 +180,8 @@ export const searchSimilarJobs = async (
     title: string;
     slug: string | null;
     company_id: string;
+    company_name: string | null;
+    company_logo_url: string | null;
     job_level: string | null;
     job_type: string | null;
     industry: string | null;
@@ -194,6 +196,7 @@ export const searchSimilarJobs = async (
     views_count: number;
     applies_count: number;
     published_at: Date | null;
+    created_at: Date;
     similarity: number;
   }>(sql`
     WITH scored AS (
@@ -201,11 +204,13 @@ export const searchSimilarJobs = async (
         j.id, j.title, j.slug, j.company_id, j.job_level, j.job_type,
         j.industry, j.salary_min, j.salary_max, j.salary_currency,
         j.salary_visible, j.location, j.remote_ok, j.deadline,
-        j.status, j.views_count, j.applies_count, j.published_at,
+        j.status, j.views_count, j.applies_count, j.published_at, j.created_at,
+        c.name AS company_name, c.logo_url AS company_logo_url,
         e.vector <=> ${vecLiteral}::vector AS distance,
         1 - (e.vector <=> ${vecLiteral}::vector) AS similarity
       FROM embeddings e
       INNER JOIN jobs j ON j.id = e.content_id
+      LEFT JOIN companies c ON c.id = j.company_id
       WHERE ${sql.join(filters, sql` AND `)}
     )
     SELECT * FROM scored
@@ -219,6 +224,8 @@ export const searchSimilarJobs = async (
     title: r.title,
     slug: r.slug,
     companyId: r.company_id,
+    companyName: r.company_name,
+    companyLogoUrl: r.company_logo_url,
     jobLevel: r.job_level as JobLevel | null,
     jobType: r.job_type as JobType | null,
     industry: r.industry,
@@ -233,6 +240,7 @@ export const searchSimilarJobs = async (
     viewsCount: r.views_count,
     appliesCount: r.applies_count,
     publishedAt: r.published_at,
+    createdAt: r.created_at,
     similarity: Number(r.similarity),
   }));
 };
