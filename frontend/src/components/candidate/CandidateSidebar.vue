@@ -332,9 +332,14 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
       props.mobileOpen
         ? 'translate-x-0 shadow-xl md:transform-none md:shadow-none'
         : '-translate-x-full md:transform-none',
-      // Width: mobile override (force expanded when open) | desktop collapse state
+      // Width:
+      //   - Mobile overlay (force expanded): w-72 (288px) — dễ đọc trên màn nhỏ.
+      //   - Mobile closed: w-0 (ẩn hoàn toàn, content tràn ra giữa viewport).
+      //   - Desktop expanded: w-64 (256px) — chuẩn SaaS (Slack/Linear/Vercel).
+      //     Label tiếng Việt có dấu + 11 menu items → 240px (w-60) hơi chật.
+      //   - Desktop collapsed: w-16 (64px) — đủ icon 16px + padding.
       props.mobileOpen ? 'w-72' : 'w-0',
-      collapsed ? 'md:w-16' : 'md:w-60',
+      collapsed ? 'md:w-16' : 'md:w-64',
       // Height: full screen on mobile overlay, normal on desktop
       'h-screen md:h-screen',
       // Overflow: clip trên mobile khi w-0 (ẩn content khi sidebar đóng), nhưng
@@ -346,7 +351,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
     <div
       class="relative border-b border-gray-200 flex items-center transition-all duration-200"
       :class="[
-        collapsed && !props.mobileOpen ? 'justify-center px-2 py-5' : 'pl-5 pr-3 py-5',
+        collapsed && !props.mobileOpen ? 'justify-center px-2 py-5' : 'pl-6 pr-3 py-5',
       ]"
     >
       <router-link v-if="!collapsed || props.mobileOpen" to="/candidate/resumes" class="block min-w-0">
@@ -392,7 +397,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
       <div v-for="group in groups" :key="group.title" class="mb-5 last:mb-0">
         <p
           v-if="!collapsed"
-          class="px-3 mb-2 text-[11px] font-semibold text-gray-400 uppercase tracking-wider"
+          class="pl-4 pr-3 mb-2 text-[11px] font-semibold text-gray-400 uppercase tracking-wider"
         >
           {{ group.title }}
         </p>
@@ -403,7 +408,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
             <button
               v-if="item.action"
               type="button"
-              class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition text-left text-gray-700 hover:bg-gray-50"
+              class="w-full flex items-center gap-3 pl-4 pr-3 py-2 rounded-lg text-sm transition text-left text-gray-700 hover:bg-gray-50"
               :class="collapsed ? 'justify-center' : ''"
               :title="collapsed ? item.label : undefined"
               @click="item.action()"
@@ -414,7 +419,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
             <router-link
               v-else
               :to="item.to!"
-              class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
+              class="flex items-center gap-3 pl-4 pr-3 py-2 rounded-lg text-sm transition"
               :class="[
                 isActive(item)
                   ? 'bg-primary-50 text-primary-700 font-medium'
@@ -436,7 +441,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
          - Collapsed: avatar 1 hàng, logout icon 1 hàng (xếp dọc). -->
     <div class="border-t border-gray-200">
       <!-- Expanded: avatar + (name + role) + icon logout (cùng hàng) -->
-      <div v-if="!collapsed" class="px-3 py-3">
+      <div v-if="!collapsed" class="pl-4 pr-3 py-3">
         <div class="flex items-center gap-2.5">
           <div
             :title="displayName"
