@@ -10,14 +10,19 @@ import { authService } from '../service/auth.service';
 export const authController = {
   registerRequestOtp: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { email, password, role } = req.body as { email: string; password: string; role: 'candidate' | 'employer' };
+      const { email, password, fullName, role } = req.body as {
+        email: string;
+        password: string;
+        fullName: string;
+        role: 'candidate' | 'employer';
+      };
       const existing = await db.query.users.findFirst({ where: eq(users.email, email) });
       if (existing) throw new AppError(409, 'EMAIL_TAKEN', 'Email already registered');
-     
-      await authService.requestOtp(email, password, role);
-     
+
+      await authService.requestOtp(email, password, fullName, role);
+
       await otpService.requestOtp(email, 'register');
-      
+
       res.status(201).json({
         success: true,
         message: 'User registered successfully. Please verify your email with the OTP sent.'
@@ -118,6 +123,22 @@ export const authController = {
       const avatarUrl = req.body.avatarUrl as string;
       await authService.changeAvatar(userId, avatarUrl);
       res.json({ success: true, message: 'Avatar updated successfully' });
+    } catch (err) { next(err); }
+  },
+  /**
+   * POST /auth/change-password — đổi mật khẩu cho user đang đăng nhập.
+   * Yêu cầu `auth` middleware (route) + `changePasswordSchema` validation.
+   */
+  changePassword: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+      const { currentPassword, newPassword } = req.body as {
+        currentPassword: string;
+        newPassword: string;
+      };
+      await authService.changePassword(userId, currentPassword, newPassword);
+      res.json({ success: true, message: 'Đổi mật khẩu thành công' });
     } catch (err) { next(err); }
   },
   upsertProfile: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
