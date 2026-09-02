@@ -24,6 +24,7 @@ import type {
   UpdateCompanyPayload,
   ListCompaniesQuery,
   CompanyListResult,
+  MyCompany,
 } from '@/types/company';
 
 /** Backend luôn bọc response: { success: boolean, data: T } */
@@ -36,6 +37,14 @@ export const companyApi = {
   /** GET /companies — danh sách + search/filter + phân trang */
   list: (params?: ListCompaniesQuery) =>
     http.get<ApiResponse<CompanyListResult>>('/companies', { params }),
+
+  /**
+   * GET /companies/me — company của user hiện tại (qua companyMembers).
+   * Trả `data = null` khi user chưa thuộc company nào (không phải lỗi).
+   * Slim shape (id, name, logoUrl) — dùng cho header/picker khi tạo job.
+   */
+  getMyCompany: () =>
+    http.get<ApiResponse<MyCompany | null>>('/companies/me'),
 
   /** GET /companies/:id — chi tiết (kèm jobs live) */
   getById: (id: string) => http.get<ApiResponse<Company>>(`/companies/${id}`),

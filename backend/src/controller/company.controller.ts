@@ -5,6 +5,7 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import { companyService } from '../service/company.service';
+import { companyMemberService } from '../service/companyMember.service';
 import { AppError } from '../middleware/errorHandler';
 import type {
   CreateCompanyInput,
@@ -66,6 +67,43 @@ export const companyController = {
       });
     } catch (err) {
       console.error('[getBySlug] error:', { slug: req.params.slug, err });
+      next(err);
+    }
+  },
+
+  /**
+   * GET /companies/me — company của user hiện tại (qua companyMembers).
+   *
+   * Trả `null` (KHÔNG 404) khi user chưa thuộc company nào — để FE phân biệt
+   * "chưa có" (cần tạo) với lỗi thực sự (sẽ là non-2xx).
+   *
+   * Chỉ trả field cần cho UI header / company picker (id, name, logoUrl) —
+   * tránh trả full company info gây lộ data không liên quan.
+   */
+  getMyCompany: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      const membership = await companyMemberService.findMembershipByUserId(userId);
+      if (!membership) {
+        res.json({ success: true, data: null });
+        return;
+      }
+      const company = await companyService.getById(membership.companyId);
+      if (!company) {
+        // Edge case: membership tồn tại nhưng company đã bị xoá → coi như chưa có.
+        res.json({ success: true, data: null });
+        return;
+      }
+      res.json({
+        success: true,
+        data: {
+          id: company.id,
+          name: company.name,
+          logoUrl: company.logoUrl,
+        },
+      });
+    } catch (err) {
+      console.error('[getMyCompany] error:', { userId: req.user?.userId, err });
       next(err);
     }
   },

@@ -139,7 +139,7 @@ const isoTime = (ts: number | null): string =>
       <Bell class="w-4 h-4 text-gray-900" />
       <span
         v-if="unread > 0"
-        class="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center"
+        class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center"
       >{{ unread > 99 ? '99+' : unread }}</span>
       
     </button>

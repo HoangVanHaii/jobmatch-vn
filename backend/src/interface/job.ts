@@ -66,6 +66,13 @@ export interface JobListItem {
   title: string;
   slug: string | null;
   companyId: string;
+  /**
+   * Tên + logo công ty — LEFT JOIN từ bảng `companies` trong service để frontend
+   * không phải gọi thêm API. NULL nếu job.companyId trỏ tới company đã xoá /
+   * không tồn tại (LEFT JOIN bảo toàn job row).
+   */
+  companyName: string | null;
+  companyLogoUrl: string | null;
   jobLevel: JobLevel | null;
   jobType: JobType | null;
   industry: string | null;
@@ -82,6 +89,10 @@ export interface JobListItem {
   viewsCount: number;
   appliesCount: number;
   publishedAt: Date | null;
+  /** Ngày tạo job (NOT NULL, defaultNow). Dùng làm sort key trong
+   *  jobService.list() vì `publishedAt` NULL với job draft/flagged/closed
+   *  sẽ làm NULLS LAST đẩy job mới tạo xuống cuối danh sách. */
+  createdAt: Date;
   // KHÔNG có: description, requirements, benefits, extraData, postedBy, searchTsv
 }
 /** GET /api/v1/jobs — danh sách có phân trang. */

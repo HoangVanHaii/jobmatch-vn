@@ -106,6 +106,21 @@ export interface GetCompanyByIdResponse extends Company {
 }
 
 /**
+ * Response của GET /companies/me — company của user hiện tại (qua membership).
+ *
+ * Trả `null` (không 404) khi user chưa thuộc company nào — để FE phân biệt
+ * "chưa có" (cần tạo) với lỗi thực sự.
+ *
+ * Chỉ trả field cần cho UI header/picker (id, name, logoUrl) — tránh lộ
+ * metadata nội bộ (social, address, ...).
+ */
+export interface MyCompanyResponse {
+  id: string;
+  name: string;
+  logoUrl: string | null;
+}
+
+/**
  * Response của GET /companies/by-slug/:slug.
  * Company kèm danh sách job đang live (đến 10 job mới nhất).
  */

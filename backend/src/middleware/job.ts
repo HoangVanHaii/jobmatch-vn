@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const jobLevelEnum = z.enum(['intern', 'fresher', 'junior', 'mid', 'senior', 'lead', 'manager']);
 const jobTypeEnum  = z.enum(['full-time', 'part-time', 'contract', 'internship', 'freelance']);
-const jobStatusEnum = z.enum(['draft', 'pending', 'live', 'expired', 'closed']);
+const jobStatusEnum = z.enum(['draft', 'pending', 'ai_scanning', 'ai_flagged', 'live', 'expired', 'closed']);
 const skillsSchema = z.array(z.string().min(1).max(100)).max(50);
 
 const locationSchema = z.object({
@@ -23,9 +23,35 @@ export const jobListQuerySchema = z.object({
   jobLevel: jobLevelEnum.optional(),
   jobType: jobTypeEnum.optional(),
 
+  /**
+   * Filter theo status job. Có thể truyền nhiều giá trị phân cách dấu phẩy,
+   * ví dụ `?status=live,ai_scanning` để vừa xem job đang hiển thị vừa xem
+   * job đang chờ AI scan (hữu ích cho trang "Job đã đăng" của employer).
+   *
+   * Nếu KHÔNG truyền `status`:
+   *   - public `/jobs` (candidate)        → mặc định chỉ trả `status='live'`
+   *     (logic cũ ở jobService.list).
+   *   - employer `/jobs/company`          → KHÔNG filter status, trả mọi
+   *     trạng thái để employer quản lý (draft, ai_scanning, ai_flagged,
+   *     expired, closed). Có thể ghi đè bằng cách truyền status cụ thể.
+   */
+  status: z
+    .string()
+    .min(1)
+    .max(200)
+    .transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean))
+    .pipe(z.array(jobStatusEnum).min(1).max(7))
+    .optional(),
+
   locationCity: z.string().min(1).max(100).optional(),
   salaryMin: z.coerce.number().int().nonnegative().optional(),
-  remoteOk: z.coerce.boolean().optional(),
+  // Lưu ý: KHÔNG dùng z.coerce.boolean() — nó dùng Boolean(value) của JS,
+  // mọi string non-empty (kể cả "false") đều trả về true. Phải preprocess
+  // thủ công để parse "false" thành boolean false.
+  remoteOk: z.preprocess(
+    (v) => (v === 'true' ? true : v === 'false' ? false : v),
+    z.boolean().optional(),
+  ),
   industry: z.string().min(1).max(100).optional(),
 
   page: z.coerce.number().int().positive().default(1),

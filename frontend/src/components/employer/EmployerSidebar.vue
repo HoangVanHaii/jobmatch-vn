@@ -1,34 +1,53 @@
 <script setup lang="ts">
+/**
+ * EmployerSidebar — sidebar cho khu vực `/employer/*`.
+ *
+ * Pattern mirror hoàn toàn CandidateSidebar:
+ *  - 5 nhóm: Tổng quan, Tuyển dụng, Công ty, Hỗ trợ, Gói dịch vụ.
+ *  - Mobile overlay + desktop collapse (w-60 / w-16), lưu localStorage.
+ *  - Footer: avatar + displayName + roleLabel ("Nhà tuyển dụng") + logout button
+ *    + Teleport confirm modal.
+ *
+ * Nghiệp vụ employer (mirror backend routers):
+ *  - Quản lý job: /employer/jobs, /employer/jobs/new
+ *  - Đơn ứng tuyển (applications): /employer/applications
+ *  - Phỏng vấn (interview): /employer/interviews
+ *  - Công ty (company profile + members): /employer/company, /employer/company/members
+ *  - Chat: /employer/chat
+ *  - Gói dịch vụ / billing: /employer/pricing, /employer/billing/history
+ *  - Cài đặt: /employer/settings
+ */
 import { ref, onMounted, watch, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useAuthStore } from '@stores/auth';
 import {
   Briefcase,
-  FileText,
   Plus,
   Home,
-  Bookmark,
-  Send,
-  User,
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
   MessageCircle,
-  Bot,
   CreditCard,
   History,
   X,
+  Building2,
+  Users,
+  Calendar,
+  Settings,
+  ClipboardList,
 } from 'lucide-vue-next';
 
 interface MenuItem {
   label: string;
   icon: typeof Briefcase;
   to: string;
-  /** Match the given path prefixes too (e.g. /candidate/resumes/new cũng coi là active ở "CV của tôi"). */
+  /** Match the given path prefixes too (e.g. /employer/jobs/new cũng coi là
+   *  active ở "Job đã đăng"). */
   activeOn?: string[];
-  /** Nếu true, chỉ match exact path (bỏ activeOn). Dùng cho root path như /candidate
-   *  để không match nhầm các route con (/candidate/resumes, /candidate/...). */
+  /** Nếu true, chỉ match exact path (bỏ activeOn). Dùng cho root path như
+   *  /employer để không match nhầm các route con. */
   exact?: boolean;
 }
 
@@ -65,9 +84,9 @@ watch(
   },
 );
 
-/** Thu nhỏ / m� rộng sidebar — lưu vào localStorage để giữ qua reload. */
+/** Thu nhỏ / mở rộng sidebar — lưu vào localStorage để giữ qua reload. */
 const collapsed = ref<boolean>(false);
-const SIDEBAR_KEY = 'candidate-sidebar-collapsed';
+const SIDEBAR_KEY = 'employer-sidebar-collapsed';
 
 onMounted(() => {
   const saved = localStorage.getItem(SIDEBAR_KEY);
@@ -83,9 +102,6 @@ const toggleCollapsed = (): void => {
 
 /* ============================================================================
  * Footer: avatar + logout
- * - Auth store đã có sẵn user (email + metadata?.fullName) + logout() action.
- * - Expanded: avatar + name/email + nút logout (icon) cùng row.
- * - Collapsed: chỉ avatar, click → popover (email + "Đăng xuất").
  * ==========================================================================*/
 const auth = useAuthStore();
 const { user } = storeToRefs(auth);
@@ -104,22 +120,17 @@ const initials = computed<string>(() => {
   return n ? n.charAt(0).toUpperCase() : '?';
 });
 
-/** Role label — Candidate sidebar luôn hiển thị "Ứng viên".
- *  (Map theo `user.role` để khớp thực tế, fallback nếu backend trả role khác.) */
+/** Role label — Employer sidebar luôn hiển thị "Nhà tuyển dụng". */
 const roleLabel = computed<string>(() => {
   const role = user.value?.role;
-  if (role === 'candidate') return 'Ứng viên';
   if (role === 'employer') return 'Nhà tuyển dụng';
+  if (role === 'candidate') return 'Ứng viên';
   if (role === 'admin') return 'Quản trị viên';
-  return 'Ứng viên';
+  return 'Nhà tuyển dụng';
 });
 
 /* ============================================================================
  * Confirm modal: bấm "Đăng xuất" → hỏi xác nhận trước khi gọi logout.
- * - confirmOpen: bật/tắt modal.
- * - openConfirm(): mở modal (gắn vào 2 button logout).
- * - confirmLogout(): thực sự logout + đóng modal.
- * - cancelLogout(): đóng modal, không logout.
  * ==========================================================================*/
 const confirmOpen = ref(false);
 
@@ -136,9 +147,8 @@ const confirmLogout = async (): Promise<void> => {
 };
 
 /**
- * Sidebar scope: CHỈ hiện các menu có route + view thực sự tồn tại.
- * Các menu đã có trong spec nhưng chưa implement (Saved, CV Scoring,
- * Applications, Settings) đã được ẩn — không tạo view placeholder.
+ * Sidebar scope: CHỈ hiện các menu có route thực sự tồn tại trong router.
+ * Mỗi menu item map với 1 endpoint backend tương ứng (xem header nghiệp vụ).
  */
 const groups: MenuGroup[] = [
   {
@@ -147,73 +157,68 @@ const groups: MenuGroup[] = [
       {
         label: 'Trang chủ',
         icon: Home,
-        to: '/candidate',
+        to: '/employer',
         exact: true,
       },
     ],
   },
 
   {
-    title: 'Việc làm',
+    title: 'Tuyển dụng',
     items: [
       {
-        label: 'Việc làm',
+        label: 'Job đã đăng',
         icon: Briefcase,
-        to: '/candidate/viec-lam',
-        activeOn: ['/candidate/viec-lam', '/candidate/viec-lam/:id'],
-      },
-      {
-        label: 'Việc làm đã lưu',
-        icon: Bookmark,
-        to: '/candidate/saved-jobs',
-        activeOn: ['/candidate/saved-jobs'],
+        to: '/employer/jobs',
+        activeOn: ['/employer/jobs'],
       },
       {
         label: 'Đơn ứng tuyển',
-        icon: Send,
-        to: '/candidate/applications',
-        activeOn: ['/candidate/applications'],
+        icon: ClipboardList,
+        to: '/employer/applications',
+        activeOn: ['/employer/applications'],
+      },
+      {
+        label: 'Lịch phỏng vấn',
+        icon: Calendar,
+        to: '/employer/interviews',
+        activeOn: ['/employer/interviews'],
       },
     ],
   },
 
   {
-    title: 'Hồ sơ & CV',
+    title: 'Công ty',
     items: [
       {
-        label: 'Hồ sơ của tôi',
-        icon: User,
-        to: '/candidate/profile',
-        activeOn: ['/candidate/profile'],
+        label: 'Hồ sơ công ty',
+        icon: Building2,
+        to: '/employer/company',
+        activeOn: ['/employer/company'],
       },
       {
-        label: 'CV của tôi',
-        icon: FileText,
-        to: '/candidate/resumes',
-        activeOn: ['/candidate/resumes'],
-      },
-      {
-        label: 'Tạo CV',
-        icon: Plus,
-        to: '/candidate/resumes/new',
-        activeOn: ['/candidate/resumes/new'],
+        label: 'Thành viên',
+        icon: Users,
+        to: '/employer/company/members',
+        activeOn: ['/employer/company/members'],
       },
     ],
   },
+
   {
     title: 'Hỗ trợ',
     items: [
       {
         label: 'Trò chuyện',
         icon: MessageCircle,
-        to: '/candidate/chat',
-        activeOn: ['/candidate/chat'],
+        to: '/employer/chat',
+        activeOn: ['/employer/chat'],
       },
       {
-        label: 'Chatbot AI',
-        icon: Bot,
-        to: '/candidate/chatbot',
-        activeOn: ['/candidate/chatbot'],
+        label: 'Cài đặt',
+        icon: Settings,
+        to: '/employer/settings',
+        activeOn: ['/employer/settings'],
       },
     ],
   },
@@ -224,25 +229,20 @@ const groups: MenuGroup[] = [
       {
         label: 'Nâng cấp',
         icon: CreditCard,
-        to: '/candidate/pricing',
-        activeOn: ['/candidate/pricing'],
-    },
+        to: '/employer/pricing',
+        activeOn: ['/employer/pricing'],
+      },
       {
-        label: 'Gói của tôi',
+        label: 'Lịch sử thanh toán',
         icon: History,
-        to: '/candidate/billing/history',
-        activeOn: ['/candidate/billing/history', '/candidate/billing/success', '/candidate/billing/cancel'],
-      }
+        to: '/employer/billing/history',
+        activeOn: ['/employer/billing/history', '/employer/billing/success', '/employer/billing/cancel'],
+      },
     ],
   },
 ];
 
-/** Tính điểm match cho 1 item:
- *  - exact=true: chỉ match khi path === to (điểm = độ dài `to`, -1 nếu không match).
- *  - exact=false: match exact `to` hoặc path nằm trong `activeOn` ở biên segment.
- *
- *  Trả về -1 nếu không match, ngược lại trả độ dài của path match được
- *  (dùng để so sánh "match nào cụ thể hơn"). */
+/** Tính điểm match cho 1 item — chọn match cụ thể nhất. */
 const matchScore = (item: MenuItem): number => {
   if (item.exact) {
     return route.path === item.to ? item.to.length : -1;
@@ -256,10 +256,6 @@ const matchScore = (item: MenuItem): number => {
   return -1;
 };
 
-/** Item active = item có matchScore lớn nhất.
- *  Ví dụ: ở `/candidate/resumes/new` thì "CV của tôi" (prefix `/candidate/resumes`, độ dài 19)
- *  và "Tạo CV" (prefix `/candidate/resumes/new`, độ dài 23) đều match — nhưng "Tạo CV"
- *  dài hơn nên thắng → chỉ 1 item active tại 1 thời điểm, không bị "highlight kép". */
 const allItems = computed<MenuItem[]>(() => groups.flatMap((g) => g.items));
 const activeItem = computed<MenuItem | null>(() => {
   let best: MenuItem | null = null;
@@ -314,13 +310,13 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
         collapsed && !props.mobileOpen ? 'justify-center px-2 py-5' : 'pl-5 pr-3 py-5',
       ]"
     >
-      <router-link v-if="!collapsed || props.mobileOpen" to="/candidate/resumes" class="block min-w-0">
+      <router-link v-if="!collapsed || props.mobileOpen" to="/employer" class="block min-w-0">
         <h1 class="text-lg font-bold text-gray-900 tracking-tight truncate">
           JOBMATCH<span class="text-primary-600">VN</span>
         </h1>
-        <p v-if="!collapsed" class="text-xs text-gray-500 mt-0.5">Candidate Workspace</p>
+        <p v-if="!collapsed" class="text-xs text-gray-500 mt-0.5">Employer Workspace</p>
       </router-link>
-      <router-link v-else to="/candidate/resumes" class="block" title="JOBMATCH VN">
+      <router-link v-else to="/employer" class="block" title="JOBMATCH VN">
         <h1 class="text-base font-bold text-primary-600 tracking-tight">JM</h1>
       </router-link>
 
@@ -382,9 +378,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
       </div>
     </nav>
 
-    <!-- Footer: account block.
-         - Expanded: avatar (40px) + name/role + logout icon CÙNG 1 HÀNG NGANG.
-         - Collapsed: avatar 1 hàng, logout icon 1 hàng (xếp dọc). -->
+    <!-- Footer: account block -->
     <div class="border-t border-gray-200">
       <!-- Expanded: avatar + (name + role) + icon logout (cùng hàng) -->
       <div v-if="!collapsed" class="px-3 py-3">

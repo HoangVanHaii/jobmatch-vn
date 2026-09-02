@@ -7,8 +7,13 @@ const jobTypeEnum = z.enum(['full-time', 'part-time', 'contract', 'internship', 
 export const savedJobListQuerySchema = z.object({
   jobLevel: jobLevelEnum.optional(),
   jobType: jobTypeEnum.optional(),
-  remoteOk: z.coerce.boolean().optional(),
+  remoteOk: z.preprocess(
+    (v) => (v === 'true' ? true : v === 'false' ? false : v),
+    z.boolean().optional(),
+  ),
   industry: z.string().min(1).max(100).optional(),
+  /** Free-text search trên title / companyName / requiredSkills của job đã lưu. */
+  search: z.string().min(1).max(200).optional(),
 
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),

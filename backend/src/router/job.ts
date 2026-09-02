@@ -21,7 +21,10 @@ export const jobRouter = Router();
 
 jobRouter.get('/search/semantic', optionalAuth, validate(jobSemanticSearchQuerySchema, 'query'), jobController.searchSemantic);
 jobRouter.get('/search', optionalAuth, validate(jobSearchQuerySchema, 'query'), jobController.searchByKeyWord);
-jobRouter.get('/company', optionalAuth, validate(jobListQuerySchema, 'query'), jobController.listOfCompany);
+// Employer xem job của company mình — yêu cầu auth, controller tự resolve
+// companyId từ session user (qua companyMemberService.findMembershipByUserId).
+jobRouter.get('/company', auth, employerOnly, validate(jobListQuerySchema, 'query'), jobController.listOfCompany);
+jobRouter.get('/industries', optionalAuth, jobController.listIndustries);
 jobRouter.get('/', optionalAuth, validate(jobListQuerySchema, 'query'), jobController.list);
 jobRouter.get('/:id', optionalAuth, validate(jobIdParamsSchema, 'params'), jobController.getById);
 
@@ -61,6 +64,17 @@ jobRouter.delete(
   jobWriteRateLimiter,
   validate(jobIdParamsSchema, 'params'),
   jobController.delete,
+);
+
+// Employer mở lại job đã đóng (status: closed → draft). Reverse của DELETE,
+// không xoá data. Phải submit lại cho AI scan trước khi live.
+jobRouter.post(
+  '/:id/reopen',
+  auth,
+  employerOnly,
+  jobWriteRateLimiter,
+  validate(jobIdParamsSchema, 'params'),
+  jobController.reopen,
 );
 
 // Employer xem top ứng viên match (stub — sort theo ai_match_score)
