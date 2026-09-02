@@ -1,4 +1,23 @@
 /**
+ * useLocations — fetch danh sách tỉnh/thành VN từ provinces.open-api.vn.
+ *
+ * Flow:
+ *   1. Gọi `https://provinces.open-api.vn/api/p/?depth=1` (depth=1 → chỉ lấy
+ *      province, không kèm districts/wards → payload nhẹ).
+ *   2. Nếu response là array rỗng HOẶC fetch fail → fallback 3 tỉnh chính:
+ *      Hà Nội, Hồ Chí Minh, Đà Nẵng.
+ *   3. Cache trong module scope — không gọi lại khi component remount.
+ *
+ * Trả về shape đơn giản:
+ *   { code: number, name: string }
+ *
+ * Match với `JobListQuery.locationCity` ở backend: dùng `name` (tiếng Việt có
+ * dấu) làm filter value, vì dữ liệu job.location.city trong DB đang lưu
+ * theo tên tiếng Việt.
+ *
+ * Không cần API key, không cần auth. CORS đã được open-api.vn enable.
+ */
+import { ref } from 'vue';
  * useLocations — fetch danh sách tỉnh/thành + quận/huyện VN từ provinces.open-api.vn.
  *
  * Flow (API v1 — provinces.open-api.vn đã đổi version từ /api/p/ sang /api/v1/):
@@ -42,6 +61,26 @@ export interface LocationItem {
   shortName: string;
 }
 
+/**
+ * Strip tiền tố hành chính phổ biến trong tên tỉnh/thành VN:
+ *  - "Thành phố Hà Nội"   → "Hà Nội"
+ *  - "Thành phố Hồ Chí Minh" → "Hồ Chí Minh"
+ *  - "Tỉnh Hà Giang"      → "Hà Giang"
+ * Case-insensitive để cover cả "thành phố"/"Thành Phố"/...
+ */
+const stripProvincePrefix = (raw: string): string => {
+  return raw.replace(/^(Thành phố|Thành Phố|Tỉnh|TỈNH|thành phố|tỉnh)\s+/i, '').trim();
+};
+
+const FALLBACK_LOCATIONS: LocationItem[] = [
+  { code: 1, name: 'Hà Nội', shortName: 'Hà Nội' },
+  { code: 79, name: 'Hồ Chí Minh', shortName: 'Hồ Chí Minh' },
+  { code: 48, name: 'Đà Nẵng', shortName: 'Đà Nẵng' },
+];
+
+const API_URL = 'https://provinces.open-api.vn/api/p/?depth=1';
+
+const items = ref<LocationItem[]>([]);
 export interface DistrictItem {
   code: number;
   /** Tên đầy đủ có tiền tố — vd "Quận Ba Đình", "Huyện Bình Chánh". */
@@ -97,6 +136,15 @@ const fetchLocations = async (): Promise<void> => {
     loading.value = true;
     error.value = null;
     try {
+      const res = await fetch(API_URL, { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as Array<{ code: number; name: string }>;
+      if (!Array.isArray(data) || data.length === 0) {
+        // Fallback theo yêu cầu: API trả [] → dùng 3 tỉnh.
+        items.value = FALLBACK_LOCATIONS;
+        return;
+      }
+      items.value = data.map((p) => ({
       // Fetch song song 2 endpoint — provinces + districts — để giảm latency.
       // Nếu 1 trong 2 fail, Promise.all sẽ reject → fallback ở catch.
       const [provincesRes, districtsRes] = await Promise.all([
@@ -128,6 +176,9 @@ const fetchLocations = async (): Promise<void> => {
         name: p.name,
         shortName: stripProvincePrefix(p.name),
       }));
+    } catch (e) {
+      // Fallback khi network fail / API down — vẫn cho user dùng được.
+      error.value = e instanceof Error ? e.message : 'Không tải được danh sách tỉnh/thành';
 
       // Group districts theo province_code — O(n) build map.
       // Dù từ /api/v1/d/ district list có thể đã là flat array, cũng merge
@@ -177,6 +228,13 @@ const fetchLocations = async (): Promise<void> => {
   return inflight;
 };
 
+export const useLocations = () => ({
+  items,
+  loading,
+  error,
+  /** Có thể gọi nhiều lần — chỉ fetch 1 lần nhờ dedupe + cache. */
+  fetch: fetchLocations,
+});
 /**
  * Lấy districts cho 1 province. Đồng bộ, không async vì cache đã được populate
  * bởi `fetchLocations()` (depth=2 fetch all upfront). Trả [] nếu:

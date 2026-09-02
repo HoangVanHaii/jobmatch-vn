@@ -1,7 +1,7 @@
 import { db } from '../config/database';
 import { savedJobs } from '../db/schema/applications';
-import { jobs } from '../db/schema/jobs';
-import { and, eq, desc, count } from 'drizzle-orm';
+import { jobs, companies } from '../db/schema';
+import { and, eq, desc, count, sql } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import type { SavedJobListQuery } from '../middleware/savedJob';
 import type { ListSavedJobsResponse, SaveJobResponse } from '../interface/savedJob';
@@ -13,6 +13,17 @@ export const savedJobService = {
     if (filters.jobType) conditions.push(eq(jobs.jobType, filters.jobType));
     if (filters.remoteOk != null) conditions.push(eq(jobs.remoteOk, filters.remoteOk));
     if (filters.industry) conditions.push(eq(jobs.industry, filters.industry));
+    if (filters.search) {
+      // Free-text search trên job đã lưu: title (qua searchTsv), company name
+      // và required skills. ILIKE để match substring không cần normalize
+      // Vietnamese (searchTsv dùng 'simple' dictionary không strip dấu).
+      const q = `%${filters.search}%`;
+      conditions.push(sql`(
+        ${jobs.searchTsv} @@ plainto_tsquery('simple', ${filters.search})
+        OR ${jobs.title} ILIKE ${q}
+        OR ${companies.name} ILIKE ${q}
+      )`);
+    }
 
     const [data, [{ total }]] = await Promise.all([
       db
@@ -23,6 +34,9 @@ export const savedJobService = {
             title: jobs.title,
             slug: jobs.slug,
             companyId: jobs.companyId,
+            // LEFT JOIN companies — match pattern ở job.service.ts:list/search.
+            companyName: companies.name,
+            companyLogoUrl: companies.logoUrl,
             jobLevel: jobs.jobLevel,
             jobType: jobs.jobType,
             industry: jobs.industry,
@@ -41,6 +55,7 @@ export const savedJobService = {
         })
         .from(savedJobs)
         .innerJoin(jobs, eq(jobs.id, savedJobs.jobId))
+        .leftJoin(companies, eq(jobs.companyId, companies.id))
         .where(and(...conditions))
         .orderBy(desc(savedJobs.savedAt))
         .limit(filters.limit)

@@ -5,9 +5,17 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import { jobService } from '../service/job.service';
+import { companyMemberService } from '../service/companyMember.service';
 import { JobListQuery, JobSemanticSearchQuery } from '../middleware/job';
 
 export const jobController = {
+  listIndustries: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await jobService.listIndustries();
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
   list: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const filters = req.query as unknown as JobListQuery;
@@ -28,8 +36,25 @@ export const jobController = {
   listOfCompany: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const filters = req.query as unknown as JobListQuery;
-      const companyId = req.params.companyId as string;
-      const { data, total } = await jobService.list(filters, companyId);
+      const userId = req.user!.userId;
+      // Resolve companyId từ session user. Employer có thể thuộc nhiều
+      // company khác nhau qua companyMembers → lấy active membership đầu tiên.
+      // Nếu user chưa thuộc company nào → trả list rỗng.
+      const membership = await companyMemberService.findMembershipByUserId(userId);
+      if (!membership) {
+        res.json({
+          success: true,
+          data: [],
+          pagination: {
+            page: filters.page,
+            limit: filters.limit,
+            total: 0,
+            totalPages: 1,
+          },
+        });
+        return;
+      }
+      const { data, total } = await jobService.list(filters, membership.companyId);
       res.json({
         success: true,
         data,
@@ -139,6 +164,19 @@ export const jobController = {
       const userId = req.user!.userId;
       await jobService.softDelete(userId, req.params.id as string);
       res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * POST /jobs/:id/reopen — owner mở lại job đã đóng (closed → draft).
+   * Backend tự gate status='closed'; không cho reopen job ở status khác.
+   */
+  reopen: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      const jobId = req.params.id as string;
+      await jobService.reopen(userId, jobId);
+      res.json({ success: true, message: 'Job đã chuyển về bản nháp' });
     } catch (err) { next(err); }
   },
 
