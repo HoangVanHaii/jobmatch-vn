@@ -159,7 +159,7 @@ onBeforeUnmount(() => {
 useSocket(
   'cv:status-changed',
   async (payload: { cvId: string; status: CvStatus; failureReason?: CvFailureReason | null }) => {
-    const { cvId, status, failureReason } = payload;
+      const { cvId, status, failureReason } = payload;
     if (!cvId || !status) return;
     cvStore.updateStatus(cvId, status, failureReason ?? null);
     if (status === 'ready') {

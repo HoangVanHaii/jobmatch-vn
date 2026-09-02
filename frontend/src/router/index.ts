@@ -12,8 +12,26 @@ const routes: RouteRecordRaw[] = [
   { path: '/register', name: 'register', component: () => import('@views/auth/RegisterView.vue'), meta: { guest: true } },
   { path: '/verify-otp', name: 'verify-otp', component: () => import('@views/auth/VerifyOtpView.vue'), meta: { guest: true } },
   { path: '/forgot-password', name: 'forgot-password', component: () => import('@views/auth/ForgotPasswordView.vue') },
-  { path: '/auth/callback/:provider', name: 'oauth-callback', component: () => import('@views/auth/OAuthCallbackView.vue') },
-  { path: '/onboarding', name: 'onboarding', component: () => import('@views/auth/OnboardingView.vue'), meta: { auth: true } },
+  { path: '/auth/callback/:provider', name: 'oauth-callback', component: () => import('@views/auth/OAuthCallbackView.vue'),
+    // Validate ngay tại route guard — invalid provider (vd user gõ /auth/callback/resumes
+    // do typo hay stale tab) → redirect thẳng về /login TRƯỚC khi component mount.
+    // Tránh page bị treo vô thời hạn nếu OAuthCallbackView bị stale cache hoặc HMR miss.
+    beforeEnter: (to) => {
+      const provider = String(to.params.provider ?? '');
+      const VALID = ['google', 'facebook', 'github'];
+      if (!VALID.includes(provider)) {
+        return { name: 'login' };
+      }
+      // Thiếu `code` query param → không thể verify OAuth → redirect luôn.
+      if (!to.query.code) {
+        return { name: 'login' };
+      }
+      return true;
+    },
+  },
+  // Select Role chỉ accessible khi có pending OAuth state (xem SelectRoleView.vue guard nội bộ).
+  // Không có meta.auth vì OAuth user mới CHƯA có session — pendingToken là proof-of-intent.
+  { path: '/select-role', name: 'select-role', component: () => import('@views/auth/OnboardingView.vue') },
   { path: '/jobs', name: 'jobs', component: () => import('@views/JobListView.vue') },
   { path: '/jobs/:id', name: 'job-detail', component: () => import('@views/JobDetailView.vue') },
   { path: '/search', name: 'search', component: () => import('@views/SearchView.vue') },
@@ -31,7 +49,8 @@ const routes: RouteRecordRaw[] = [
     meta: { auth: true, role: 'candidate' },
     children: [
     //   { path: '', name: 'candidate-dashboard', component: () => import('@views/candidate/CandidateDashboard.vue') },
-      { path: '', redirect: 'resumes' },
+    //   { path: '', redirect: 'resumes' },
+      { path: 'profile', name: 'candidate-profile', component: () => import('@views/candidate/ProfileView.vue') },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
       { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
    // { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true } }, 
@@ -49,7 +68,7 @@ const routes: RouteRecordRaw[] = [
     //   { path: 'applications', name: 'my-applications', component: () => import('@views/candidate/AppliedJobsView.vue') },
     //   { path: 'saved', name: 'saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
     //   { path: 'cv-score', name: 'cv-score', component: () => import('@views/candidate/CVScoringView.vue') },
-    //   { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
+      { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
     ],
   },
   

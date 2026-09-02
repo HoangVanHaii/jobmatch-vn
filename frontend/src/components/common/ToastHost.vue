@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * ToastHost — render global toast queue (useToastStore).
+ * ToastHost — render toast CHAT variant (useToastStore).
  *
  * Hiển thị ở góc trên-phải (cùng vị trí NotificationBell nhưng thấp hơn 1 chút
  * để không đè bell). Mỗi toast là 1 card:
@@ -12,11 +12,21 @@
  *
  * Position fixed z-index cao hơn bell để chồng lên. Slide-in animation từ
  * phải (Tailwind transition utility).
+ *
+ * Lưu ý phạm vi:
+ *   - ToastHost CHỈ render toast có `variant === 'chat'` — các toast đẩy qua
+ *     `toast.success/error/info/warning()` (không có variant) sẽ do
+ *     `<ToastContainer />` ở App.vue xử lý. Hai component cùng đọc 1 queue
+ *     nhưng filter khác nhau → không hiện 2 toast trùng nhau.
  */
+import { computed } from 'vue';
 import { MessageCircle, X } from 'lucide-vue-next';
 import { useToastStore } from '@stores/toast';
 
 const store = useToastStore();
+
+/** Chỉ lấy các toast chat-variant (peer message realtime). */
+const items = computed(() => store.items.filter((t) => t.variant === 'chat'));
 
 const onBodyClick = (id: string): void => {
   const t = store.items.find((x) => x.id === id);
@@ -46,13 +56,13 @@ const onMouseLeave = (id: string): void => store.resume(id);
   <!-- Container cố định — top-right, dưới NotificationBell (top: ~60px). -->
   <Teleport to="body">
     <div
-      v-if="store.items.length > 0"
+      v-if="items.length > 0"
       class="fixed top-[60px] right-2 z-[60] flex flex-col gap-2 max-w-[calc(100vw-1rem)] pointer-events-none"
       aria-live="polite"
       aria-atomic="false"
     >
       <div
-        v-for="t in store.items"
+        v-for="t in items"
         :key="t.id"
         class="pointer-events-auto w-[360px] max-w-full bg-white shadow-2xl rounded-xl border border-gray-200 overflow-hidden transition-all duration-200 ease-out cursor-pointer hover:shadow-3xl hover:border-primary-300"
         role="status"

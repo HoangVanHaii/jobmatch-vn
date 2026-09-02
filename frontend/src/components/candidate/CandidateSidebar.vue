@@ -19,17 +19,22 @@ import {
   CreditCard,
   History,
   X,
+    UserRound,
 } from 'lucide-vue-next';
 
 interface MenuItem {
   label: string;
   icon: typeof Briefcase;
-  to: string;
+  /** Route đích — bắt buộc nếu không có `action`. */
+  to?: string;
   /** Match the given path prefixes too (e.g. /candidate/resumes/new cũng coi là active ở "CV của tôi"). */
   activeOn?: string[];
   /** Nếu true, chỉ match exact path (bỏ activeOn). Dùng cho root path như /candidate
    *  để không match nhầm các route con (/candidate/resumes, /candidate/...). */
   exact?: boolean;
+  /** Nếu có — render thành <button> thay vì <router-link>, click sẽ gọi action
+   *  thay vì navigate. Dùng cho mục mở modal (vd Cài đặt → SettingsModal). */
+  action?: () => void;
 }
 
 interface MenuGroup {
@@ -83,20 +88,30 @@ const toggleCollapsed = (): void => {
 
 /* ============================================================================
  * Footer: avatar + logout
- * - Auth store đã có sẵn user (email + metadata?.fullName) + logout() action.
- * - Expanded: avatar + name/email + nút logout (icon) cùng row.
+ * - Auth store đã có sẵn user (email + fullName + avatarUrl từ /users/me) + logout().
+ * - Expanded: avatar + name/role + nút logout (icon) cùng row.
  * - Collapsed: chỉ avatar, click → popover (email + "Đăng xuất").
  * ==========================================================================*/
 const auth = useAuthStore();
 const { user } = storeToRefs(auth);
 const router = useRouter();
 
+/** Tên hiển thị ở sidebar — ưu tiên fullName từ user_profiles, fallback email prefix.
+ *
+ *  Thứ tự ưu tiên:
+ *    1. user.fullName (từ user_profiles, populate qua /users/me) — đã trim sẵn
+ *    2. email trước '@' (vd "huyvui" từ "huyvui@gmail.com")
+ *    3. rỗng → caller xử lý (initials sẽ là '?')
+ *
+ *  Không dùng metadata.fullName nữa vì backend không còn lưu ở metadata
+ *  (fullName được chuẩn hoá vào user_profiles ở refactor trước).
+ */
 const displayName = computed<string>(() => {
   const u = user.value;
   if (!u) return '';
-  const meta = u.metadata as Record<string, unknown> | undefined;
-  const name = (meta?.fullName as string) ?? u.email.split('@')[0];
-  return name.trim();
+  const fromProfile = u.fullName?.trim();
+  if (fromProfile) return fromProfile;
+  return u.email.split('@')[0];
 });
 
 const initials = computed<string>(() => {
@@ -113,6 +128,15 @@ const roleLabel = computed<string>(() => {
   if (role === 'admin') return 'Quản trị viên';
   return 'Ứng viên';
 });
+
+/* ============================================================================
+ * Settings page: mở từ menu "Cài đặt" → /candidate/settings (SettingsView).
+ *
+ * SettingsView là 1 trang duy nhất chứa 2 section: thông tin tài khoản + đổi
+ * mật khẩu. Menu item chỉ navigate route — không cần state/action phức tạp.
+ * ==========================================================================*/
+
+// (Không cần state/action cho modal — SettingsView là page thật, navigate bằng `to`.)
 
 /* ============================================================================
  * Confirm modal: bấm "Đăng xuất" → hỏi xác nhận trước khi gọi logout.
@@ -233,6 +257,17 @@ const groups: MenuGroup[] = [
         to: '/candidate/billing/history',
         activeOn: ['/candidate/billing/history', '/candidate/billing/success', '/candidate/billing/cancel'],
       }
+    ],
+  },
+  {
+    title: 'Cài đặt',
+    items: [
+        {
+            label: 'Tài khoản',
+            icon: UserRound,
+            to: '/candidate/settings',
+            activeOn: ['/candidate/settings'],
+        },
     ],
   },
 ];
@@ -362,9 +397,23 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
           {{ group.title }}
         </p>
         <ul class="space-y-1">
-          <li v-for="item in group.items" :key="item.to">
+          <li v-for="item in group.items" :key="item.label">
+            <!-- Item dạng action (vd Cài đặt) → render <button> thay vì <router-link>.
+                 Cùng style với link để menu đồng nhất, chỉ khác element + click handler. -->
+            <button
+              v-if="item.action"
+              type="button"
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition text-left text-gray-700 hover:bg-gray-50"
+              :class="collapsed ? 'justify-center' : ''"
+              :title="collapsed ? item.label : undefined"
+              @click="item.action()"
+            >
+              <component :is="item.icon" class="w-4 h-4 shrink-0" />
+              <span v-if="!collapsed">{{ item.label }}</span>
+            </button>
             <router-link
-              :to="item.to"
+              v-else
+              :to="item.to!"
               class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
               :class="[
                 isActive(item)
@@ -465,5 +514,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
         </div>
       </div>
     </Teleport>
+
+    <!-- Settings là 1 trang thật (SettingsView.vue) — không cần mount modal ở đây. -->
   </aside>
 </template>
