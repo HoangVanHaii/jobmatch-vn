@@ -25,6 +25,22 @@ const envSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
   ENCRYPTION_KEY: z.string().min(32),
 
+  // Print token (HMAC cho URL signed token BE cấp cho Playwright navigate tới
+  // /print/cv/:cvId — cho phép public access tạm thời tới CV render page mà
+  // không cần Bearer token).
+  PRINT_TOKEN_SECRET: z.string().min(32),
+  PRINT_TOKEN_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(120),
+
+  // Playwright (server-side PDF render cho CV direct).
+  // PLAYWRIGHT_BROWSERS_PATH = nơi cài Chromium binaries (npx playwright install).
+  // Trên Docker: set = "/ms-playwright" (default của playwright image) hoặc custom path.
+  // PLAYWRIGHT_EXECUTABLE_PATH = optional, override path tới chromium binary cụ thể.
+  PLAYWRIGHT_BROWSERS_PATH: z.string().optional(),
+  PLAYWRIGHT_EXECUTABLE_PATH: z.string().optional(),
+  /** Số lượng PDF render đồng thời tối đa. Browser instance là singleton, nhưng
+   *  mỗi page render tốn ~200-400MB RAM nên giới hạn concurrency tránh OOM. */
+  PLAYWRIGHT_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+
   // AI
   GEMINI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),

@@ -21,7 +21,8 @@ export type CvFailureReason =
   | 'quota_exceeded'
   | 'invalid_file'
   | 'parse_error'
-  | 'not_a_cv';
+  | 'not_a_cv'
+  | 'analysis_error';
 
 export interface AiAnalysis {
   isCv: boolean;
@@ -140,37 +141,29 @@ export interface Cv {
 
 export type CvDetail = Cv;
 
-/** Row rút gọn trong list GET /cvs
- *  - templateId: chỉ có với source='direct' (1-5); null với source='upload'.
- *    Thumbnail dùng field này để render template mockup (KHÔNG render CV thật).
- *  - aiAnalysisTotal: chỉ trả con số `total` (extract từ jsonb) để response gọn.
- *    Xem full object (strengths/weaknesses/suggestions) ở `GET /cvs/:cvId`. */
-export interface ListCv {
-  id: string;
-  candidateId: string;
-  title: string | null;
-  fileUrl: string | null;
-  fileType: string | null;
-  isPrimary: boolean;
-  status: CvStatus;
-  source: CvSource;
-  templateId: number | null;
-  aiAnalysisTotal: number | null;
-  failureReason: CvFailureReason | null;
-}
-
 /** Query param GET /cvs — pagination + filter. */
 export interface ListCvQuery {
   source?: CvSource;
+  /** Từ khoá search theo title (ILIKE %q%). Debounce 400ms ở FE trước khi gọi. */
+  q?: string;
   limit?: number;
   offset?: number;
 }
 
-/** Response của GET /cvs — items của trang hiện tại + tổng khớp filter. */
+/** Response của GET /cvs — items là FULL Cv row (BE getListDetail trả về
+ *  parsedData + ai_analysis luôn), không phải slim. FE render trực tiếp CV
+ *  thật trên thumbnail card mà không cần gọi thêm GET /cvs/:cvId. */
 export interface ListCvResponse {
-  items: ListCv[];
+  items: Cv[];
   total: number;
 }
+
+/**
+ * AI score (0–100) đọc từ `cv.ai_analysis.total`.
+ * Trả `null` khi CV chưa phân tích hoặc analysis fail trước khi ghi score.
+ */
+export const getAiScore = (cv: Pick<Cv, 'ai_analysis'>): number | null =>
+  typeof cv.ai_analysis?.total === 'number' ? cv.ai_analysis.total : null;
 
 /* ============================================================================
  * CvRenderData — shape data chung cho 3 template render.

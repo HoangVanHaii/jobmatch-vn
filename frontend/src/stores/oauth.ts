@@ -1,9 +1,13 @@
 /**
- * OAuth store — Google/Facebook/GitHub linked accounts
+ * OAuth store — Google/Facebook/GitHub linked accounts + pending registration state
  */
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { oauthApi, OAuthProvider } from '@services/auth.oauth.api';
+import {
+  oauthApi,
+  OAuthProvider,
+  OAuthProfilePreview,
+} from '@services/auth.oauth.api';
 
 interface LinkedAccount {
   id: string;
@@ -16,6 +20,12 @@ interface LinkedAccount {
 export const useOAuthStore = defineStore('oauth', () => {
   const linkedAccounts = ref<LinkedAccount[]>([]);
   const isLoading = ref(false);
+
+  /** Pending OAuth registration state — set khi callback trả về status=NEW_USER.
+   *  Cleared khi user hoàn tất (complete) hoặc huỷ (clearPending).
+   *  Used by /select-role để gọi completeRegistration và hiển thị profile preview. */
+  const pendingToken = ref<string | null>(null);
+  const pendingProfile = ref<OAuthProfilePreview | null>(null);
 
   const fetchLinked = async (): Promise<void> => {
     isLoading.value = true;
@@ -39,11 +49,39 @@ export const useOAuthStore = defineStore('oauth', () => {
     window.location.href = data.data.url;
   };
 
+  /**
+   * Callback handler — dispatch trên status:
+   *   - EXISTING_USER: caller setTokens + push về home.
+   *   - NEW_USER: lưu pendingToken/profile vào store, caller push tới /select-role.
+   */
   const handleCallback = async (provider: OAuthProvider, code: string, state: string) => {
     const verifier = sessionStorage.getItem('pkce_verifier');
     if (!verifier) throw new Error('Missing PKCE verifier');
     const { data } = await oauthApi.callback(provider, code, verifier, state);
+    const result = data.data;
+    if (result.status === 'NEW_USER') {
+      pendingToken.value = result.pendingToken;
+      pendingProfile.value = result.profile;
+    }
+    return result;
+  };
+
+  /** Hoàn tất pending registration với Role đã chọn. Trả tokens (giống login). */
+  const completeRegistration = async (
+    role: 'candidate' | 'employer',
+  ): Promise<{ user: { id: string; email: string; role: string }; accessToken: string; refreshToken: string }> => {
+    const token = pendingToken.value;
+    if (!token) throw new Error('No pending OAuth registration');
+    const { data } = await oauthApi.completeRegistration(token, role);
+    // Clear pending state — single-use token đã được BE consume.
+    pendingToken.value = null;
+    pendingProfile.value = null;
     return data.data;
+  };
+
+  const clearPending = (): void => {
+    pendingToken.value = null;
+    pendingProfile.value = null;
   };
 
   const unlink = async (provider: OAuthProvider): Promise<void> => {
@@ -51,7 +89,18 @@ export const useOAuthStore = defineStore('oauth', () => {
     await fetchLinked();
   };
 
-  return { linkedAccounts, isLoading, fetchLinked, initiateLogin, handleCallback, unlink };
+  return {
+    linkedAccounts,
+    isLoading,
+    pendingToken,
+    pendingProfile,
+    fetchLinked,
+    initiateLogin,
+    handleCallback,
+    completeRegistration,
+    clearPending,
+    unlink,
+  };
 });
 
 // PKCE helpers

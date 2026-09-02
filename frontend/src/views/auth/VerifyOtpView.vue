@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useRouter, useRoute } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { useAuthStore } from '@stores/auth';
 import { authApi } from '@services/auth.api';
 import OtpInput from '@components/auth/OtpInput.vue';
 
 const router = useRouter();
-const route = useRoute();
 const auth = useAuthStore();
 
-const email = computed(() => String(route.query.email ?? ''));
-if (!email.value) router.replace({ name: 'register' }); // không có email → về trang đăng ký
+/**
+ * Email đang verify — chỉ đọc từ auth store (in-memory). KHÔNG từ URL.
+ * F5 / refresh sẽ reset store về null → redirect về /register (yêu cầu user đăng
+ * ký lại, BE gửi OTP mới). Đánh đổi chấp nhận được để giữ email khỏi bị persist
+ * vào disk/browser storage.
+ */
+const email = computed(() => auth.pendingVerifyEmail ?? '');
+if (!email.value) router.replace({ name: 'register' }); // F5 hoặc direct nav → về register
 
 const otp = ref('');
 const otpInput = ref<InstanceType<typeof OtpInput> | null>(null);
@@ -50,6 +55,7 @@ const onSubmit = async (): Promise<void> => {
   loading.value = true;
   try {
     await auth.verifyOtp(email.value, otp.value);
+    auth.clearPendingVerifyEmail(); // OTP thành công → xóa pending, kết thúc flow
     router.push({ name: 'login' });
   } catch (e: any) {
     error.value = e?.response?.data?.error?.message ?? 'Xác thực thất bại';

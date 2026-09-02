@@ -31,6 +31,12 @@ import { useEmployerJobStore } from '@stores/employerJob';
 import { useToastStore } from '@stores/toast';
 import { useSocket } from '@composables/useSocket';
 import NotificationBell from '@components/notify/NotificationBell.vue';
+import ToastContainer from '@components/notify/ToastContainer.vue';
+
+// Chatbot AI giờ là trang full-page tại `/chatbot` (ChatbotView.vue).
+// Floating ChatbotWidget cũ đã thay thế — import giữ để tương thích nếu file còn được tham chiếu,
+// nhưng không mount để tránh trùng UI.
+// import ChatbotWidget from '@components/ai/ChatbotWidget.vue';
 import ToastHost from '@components/common/ToastHost.vue';
 import type { ChatNewPayload } from '@/types/chat';
 
@@ -168,5 +174,12 @@ useSocket(
 <template>
   <RouterView />
   <NotificationBell />
+  <!-- Toast container — render hàng đợi toast toàn cục. Teleport tới body.
+   *  - <ToastContainer /> : simple toasts (success/info/warning/error) với icon + title.
+   *  - <ToastHost />     : chat realtime variant (avatar + click → /chat).
+   *  Cả 2 đọc cùng queue trong stores/toast.ts — ToastHost đọc `items` (alias
+   *  của `toasts`), ToastContainer đọc `toasts`. Dedupe theo `id` để socket
+   *  emit duplicate không push 2 lần. -->
+  <ToastContainer />
   <ToastHost />
 </template>
