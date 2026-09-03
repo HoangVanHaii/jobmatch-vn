@@ -35,7 +35,16 @@ export const oauthController = {
     try {
       const provider = req.params.provider as Provider;
       const { code, codeVerifier } = req.body;
-      const state = req.cookies?.oauth_state;
+      // State có thể tới từ 2 nguồn:
+      //   1. Cookie 'oauth_state' (set lúc initiate, sameSite=Lax)
+      //   2. Request body 'state' (FE pass qua khi không có cookie — vd
+      //      cross-origin hoặc third-party cookie bị block)
+      // Ưu tiên body.state (đã validate client-side so với sessionStorage
+      // của FE trong useOAuth.ts:30). Fallback về cookie. Nếu cả 2 đều có
+      // mà KHÁC nhau → cookie bị stale, dùng body. Nếu cả 2 đều rỗng → fail.
+      const bodyState = typeof req.body?.state === 'string' ? req.body.state : '';
+      const cookieState = typeof req.cookies?.oauth_state === 'string' ? req.cookies.oauth_state : '';
+      const state = bodyState || cookieState;
       if (!code || !state || !codeVerifier) {
         throw new AppError(400, 'INVALID_CALLBACK', 'Missing code, state, or codeVerifier');
       }
