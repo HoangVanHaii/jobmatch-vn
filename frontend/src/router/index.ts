@@ -31,10 +31,10 @@ const routes: RouteRecordRaw[] = [
   },
   // Select Role chỉ accessible khi có pending OAuth state (xem SelectRoleView.vue guard nội bộ).
   // Không có meta.auth vì OAuth user mới CHƯA có session — pendingToken là proof-of-intent.
-  { path: '/select-role', name: 'select-role', component: () => import('@views/auth/OnboardingView.vue') },
-  { path: '/jobs', name: 'jobs', component: () => import('@views/JobListView.vue') },
-  { path: '/jobs/:id', name: 'job-detail', component: () => import('@views/JobDetailView.vue') },
-  { path: '/search', name: 'search', component: () => import('@views/SearchView.vue') },
+//   { path: '/select-role', name: 'select-role', component: () => import('@views/auth/OnboardingView.vue') },
+//   { path: '/jobs', name: 'jobs', component: () => import('@views/JobListView.vue') },
+//   { path: '/jobs/:id', name: 'job-detail', component: () => import('@views/JobDetailView.vue') },
+//   { path: '/search', name: 'search', component: () => import('@views/SearchView.vue') },
 
   // Print page — render-only view cho Playwright capture PDF.
   // KHÔNG có `meta.auth` (intentionally public) vì authorize qua HMAC signed
@@ -50,6 +50,10 @@ const routes: RouteRecordRaw[] = [
     children: [
     //   { path: '', name: 'candidate-dashboard', component: () => import('@views/candidate/CandidateDashboard.vue') },
     //   { path: '', redirect: 'resumes' },
+      // Default child cho /candidate — KHÔNG dùng string redirect (sẽ bị resolve
+      // relative so với URL hiện tại, vd OAuthCallback gọi /candidate từ
+      // /auth/callback/google → '/auth/callback/candidate' → 404 hoặc loop).
+      { path: '', redirect: { name: 'candidate-jobs' } },
       { path: 'profile', name: 'candidate-profile', component: () => import('@views/candidate/ProfileView.vue') },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
       { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
@@ -82,8 +86,14 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@views/employer/EmployerLayout.vue'),
     meta: { auth: true, role: 'employer' },
     children: [
-      // Default → Job đã đăng (entry point quan trọng nhất của employer)
-      { path: '', redirect: 'jobs' },
+      // Default → Job đã đăng (entry point quan trọng nhất của employer).
+      // BẮT BUỘC dùng named route (hoặc absolute path). Relative string
+      // 'jobs' sẽ được vue-router resolve dựa trên URL hiện tại — nếu user
+      // vừa đăng nhập OAuth xong (URL = /auth/callback/google), relative
+      // 'jobs' thành /auth/callback/jobs → match lại route oauth-callback →
+      // beforeEnter invalid → loop về /login → guard guest → /jobs. User
+      // thấy URL "treo" ở /auth/callback/jobs thay vì vào thẳng dashboard.
+      { path: '', redirect: { name: 'employer-jobs' } },
 
       // Tuyển dụng
       { path: 'jobs', name: 'employer-jobs', component: () => import('@views/employer/PostedJobsView.vue') },
@@ -140,8 +150,16 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore();
   await auth.ensureInit(); // đợi auth được khôi phục trước khi guard đánh giá
   if (to.meta.auth && !auth.isAuthenticated) return { name: 'login', query: { redirect: to.fullPath } };
-  // Lưu ý: route 'home' đang bị comment out → phải redirect về route có thật
-  if (to.meta.guest && auth.isAuthenticated) return { name: 'jobs' };
+  // Authenticated user truy cập guest route (vd /login, /register, /verify-otp)
+  // → redirect theo role, không phải về /jobs (trang public). Trước đây đẩy
+  // về { name: 'jobs' } khiến candidate/employer đã login bị "rớt" ra trang
+  // job list thay vì dashboard của họ.
+  if (to.meta.guest && auth.isAuthenticated) {
+    if (auth.user?.role === 'employer') return { name: 'employer-jobs' };
+    if (auth.user?.role === 'candidate') return { name: 'candidate-jobs' };
+    // Admin / role lạ / role chưa gán → trang chủ (public jobs) là fallback an toàn
+    return { name: 'login' };
+  }
   if (to.meta.role && auth.user?.role !== to.meta.role) return { name: 'forbidden' };
   return true;
 });
