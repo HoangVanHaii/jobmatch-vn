@@ -17,8 +17,20 @@
 --        docker compose down -v && docker compose up -d postgres
 -- ============================================================================
 
-CREATE TYPE company_member_role AS ENUM ('owner', 'member');
-CREATE TYPE company_member_status AS ENUM ('active', 'invited', 'inactive');
+-- PostgreSQL KHÔNG hỗ trợ `CREATE TYPE IF NOT EXISTS` natively (chỉ CREATE TABLE
+-- có). Idempotent qua DO block bắt exception `duplicate_object` (code 42710).
+-- Cú pháp này chạy OK trên mọi PG ≥ 9.0 (kể cả 16).
+DO $$ BEGIN
+  CREATE TYPE company_member_role AS ENUM ('owner', 'member');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE company_member_status AS ENUM ('active', 'invited', 'inactive');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
 CREATE TABLE IF NOT EXISTS company_members (
   company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
