@@ -6,6 +6,7 @@ import { storeToRefs } from 'pinia';
 
 export const useAuth = () => {
   const store = useAuthStore();
-  const { user, isAuthenticated, isLoading } = storeToRefs(store);
-  return { user, isAuthenticated, isLoading, ...store };
+  // storeToRefs tách state ra refs (giữ reactivity).
+  // Trả về refs trước + store sau → actions (login/logout/...) không ghi đè refs.
+  return { ...storeToRefs(store), ...store };
 };
