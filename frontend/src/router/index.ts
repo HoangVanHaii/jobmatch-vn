@@ -110,7 +110,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'settings', name: 'employer-settings', component: () => import('@views/employer/SettingsView.vue') },
 
       // Gói dịch vụ / billing
-      { path: 'pricing', name: 'employer-pricing', component: () => import('@views/employer/PricingView.vue') },
+      // Pricing dùng chung view với candidate (@views/PricingView.vue) — file
+      // detect role qua authStore và đổi theme/feature/redirect tương ứng.
+      { path: 'pricing', name: 'employer-pricing', component: () => import('@views/PricingView.vue') },
       { path: 'billing/history', name: 'employer-billing-history', component: () => import('@views/employer/BillingHistoryView.vue') },
       { path: 'billing/success', name: 'employer-billing-success', component: () => import('@views/BillingSuccessView.vue') },
       { path: 'billing/cancel', name: 'employer-billing-cancel', component: () => import('@views/BillingCancelView.vue') },
