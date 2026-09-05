@@ -108,12 +108,99 @@ export const useCompanyMemberStore = defineStore('companyMember', () => {
     }
   };
 
-  /** Member tự accept lời mời — đồng bộ local. */
-  const acceptInvite = async (companyId: string): Promise<CompanyMember | null> => {
+  /**
+   * Owner xoá cứng member khỏi công ty — hard delete row.
+   * Đồng bộ local bằng cách filter row khỏi cache (row không còn tồn tại trong DB).
+   * BE emit notification `system` cho user bị xoá — họ sẽ thấy trong bell.
+   */
+  const remove = async (companyId: string, userId: string): Promise<boolean> => {
     loading.value = true;
     error.value = null;
     try {
-      const { data } = await companyMemberApi.acceptInvite(companyId);
+      await companyMemberApi.remove(companyId, userId);
+      // Filter row khỏi cache
+      const list = membersByCompany.value[companyId];
+      if (list) {
+        setMembers(
+          companyId,
+          list.filter((m) => m.userId !== userId),
+        );
+      }
+      return true;
+    } catch (e) {
+      setError(e);
+      return false;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /**
+   * Member tự accept lời mời — đồng bộ local.
+   *
+   * BE route `/:companyId/members/:userId/accept` yêu cầu userId trên URL
+   * (controller check `req.user.userId !== :userId` để chặn accept hộ).
+   * Caller (view) lấy userId từ auth store và truyền vào.
+   */
+  const acceptInvite = async (
+    companyId: string,
+    userId: string,
+  ): Promise<CompanyMember | null> => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const { data } = await companyMemberApi.acceptInvite(companyId, userId);
+      syncMember(companyId, data.data);
+      return data.data;
+    } catch (e) {
+      setError(e);
+      return null;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /**
+   * Member tự decline lời mời — đồng bộ local. Mirror của acceptInvite;
+   * cùng cơ chế self-only check ở controller nên cũng cần truyền userId.
+   */
+  const declineMyInvite = async (
+    companyId: string,
+    userId: string,
+  ): Promise<CompanyMember | null> => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const { data } = await companyMemberApi.declineMyInvite(companyId, userId);
+      syncMember(companyId, data.data);
+      return data.data;
+    } catch (e) {
+      setError(e);
+      return null;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /**
+   * Member tự rời công ty (chỉ áp dụng cho member active, không phải owner).
+   * BE soft delete: status active → left, set ended_at.
+   *
+   * Sau khi thành công → caller nên:
+   *   - Filter row khỏi cache hiển thị
+   *   - Reload getMyCompany để chuyển user về state 'no-company'
+   *   - (Tuỳ chọn) navigate về /employer/company
+   *
+   * Lưu ý: store KHÔNG navigate / reload company — để view quyết định UX.
+   */
+  const leaveCompany = async (
+    companyId: string,
+    userId: string,
+  ): Promise<CompanyMember | null> => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const { data } = await companyMemberApi.leaveCompany(companyId, userId);
       syncMember(companyId, data.data);
       return data.data;
     } catch (e) {
@@ -163,6 +250,6 @@ export const useCompanyMemberStore = defineStore('companyMember', () => {
     // helpers
     getMembers,
     // actions
-    fetchList, add, update, acceptInvite, transferOwner, clearCompany, reset,
+    fetchList, add, update, remove, acceptInvite, declineMyInvite, leaveCompany, transferOwner, clearCompany, reset,
   };
 });

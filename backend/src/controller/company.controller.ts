@@ -108,6 +108,25 @@ export const companyController = {
     }
   },
 
+  /**
+   * GET /companies/me/invites — danh sách lời mời đang chờ (status='invited')
+   * của user hiện tại. Dùng để render invite cards khi user vào
+   * `/employer/company` mà chưa thuộc công ty nào.
+   *
+   * Trả [] khi không có invite (không phải lỗi). Endpoint chỉ query invite
+   * của chính user đang request (userId từ req.user), không nhận query param.
+   */
+  getMyInvites: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      const invites = await companyMemberService.getPendingInvitesForUser(userId);
+      res.json({ success: true, data: invites });
+    } catch (err) {
+      console.error('[getMyInvites] error:', { userId: req.user?.userId, err });
+      next(err);
+    }
+  },
+
   /** POST /companies — tạo công ty (createdBy lấy từ token user đăng nhập) */
   create: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
