@@ -2,8 +2,8 @@
  * Worker registry — start tất cả workers khi app boot
  */
 import { cvParseWorker } from './cvParse.worker';
-import { emailWorker } from './email.worker';
-import { matchingWorker } from './matching.worker';
+// import { emailWorker } from './email.worker';
+// import { matchingWorker } from './matching.worker';
 import { interviewReminderWorker } from './interviewReminder.worker';
 import { jobModerationWorker } from './jobModeration.worker';
 import { jobEmbeddingWorker } from './jobEmbedding.worker';
@@ -17,8 +17,8 @@ import { exportWorker } from './export.worker';
 export const startWorkers = (): void => {
   void cvAnalysisWorker;
   void cvParseWorker;
-  void emailWorker;
-  void matchingWorker;
+  // void emailWorker;
+  // void matchingWorker;
   void interviewReminderWorker;
   void jobModerationWorker;
   void jobEmbeddingWorker;
