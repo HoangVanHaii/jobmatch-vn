@@ -25,6 +25,7 @@ import type {
   ListCompaniesQuery,
   CompanyListResult,
   MyCompany,
+  CompanyInvite,
 } from '@/types/company';
 
 /** Backend luôn bọc response: { success: boolean, data: T } */
@@ -45,6 +46,14 @@ export const companyApi = {
    */
   getMyCompany: () =>
     http.get<ApiResponse<MyCompany | null>>('/companies/me'),
+
+  /**
+   * GET /companies/me/invites — danh sách lời mời đang chờ của user hiện tại.
+   * Trả [] nếu không có invite (không phải lỗi). Dùng để render invite cards
+   * trên CompanyView empty state khi user chưa thuộc công ty nào.
+   */
+  getMyInvites: () =>
+    http.get<ApiResponse<CompanyInvite[]>>('/companies/me/invites'),
 
   /** GET /companies/:id — chi tiết (kèm jobs live) */
   getById: (id: string) => http.get<ApiResponse<Company>>(`/companies/${id}`),

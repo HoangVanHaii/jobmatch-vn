@@ -34,7 +34,6 @@ export interface Company {
   name: string;
   slug: string;
   logoUrl?: string | null;
-  coverUrl?: string | null;
   description?: string | null;
   industry?: string | null;
   sizeRange?: string | null;
@@ -53,7 +52,6 @@ export interface Company {
 export interface CreateCompanyPayload {
   name: string;
   logoUrl?: string;
-  coverUrl?: string;
   description?: string;
   industry?: string;
   sizeRange?: string;
@@ -93,4 +91,38 @@ export interface MyCompany {
   id: string;
   name: string;
   logoUrl: string | null;
+}
+
+/**
+ * Thông tin người gửi lời mời — subset của User, đủ để hiển thị
+ * "Mời bởi <tên>" trên UI. `email`/`fullName`/`avatarUrl` nullable vì
+ * Drizzle LEFT JOIN infer type là `string | null` (mặc dù `users.email`
+ * thực tế NOT NULL trong DB, user_profiles.fullName/avatarUrl thì nullable).
+ */
+export interface InviterInfo {
+  userId: string;
+  fullName: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+}
+
+/**
+ * Một lời mời đang chờ user chấp nhận. Response của GET /companies/me/invites.
+ *
+ * Slim shape — chỉ field cần để render invite card trên CompanyView empty
+ * state. BE chỉ trả invite của chính user đang request (lấy userId từ token).
+ */
+export interface CompanyInvite {
+  companyId: string;
+  companyName: string;
+  companySlug: string;
+  companyLogoUrl: string | null;
+  companyIndustry: string | null;
+  companySizeRange: string | null;
+  /** Role mà user được mời vào. */
+  role: 'owner' | 'member';
+  /** Thời điểm được mời (= invitedAt vì member row được insert tại thời điểm invite). */
+  invitedAt: string;
+  /** Người gửi lời mời — null nếu row cũ trước migration 0025 hoặc owner tự tạo. */
+  invitedBy: InviterInfo | null;
 }
