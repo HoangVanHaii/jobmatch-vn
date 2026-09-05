@@ -8,10 +8,12 @@
 
 -- NULL = CV không ở trạng thái failed, hoặc đang pending/parsing/ready.
 -- Khi status='failed' → reason phải được set (worker/changeStatus đảm bảo).
+--
+-- Idempotent: ADD COLUMN IF NOT EXISTS + CREATE INDEX IF NOT EXISTS — native PG.
 ALTER TABLE cvs
-  ADD COLUMN failure_reason TEXT;
+  ADD COLUMN IF NOT EXISTS failure_reason TEXT;
 
 -- Index để debug: liệt kê các CV fail theo reason (admin/report).
-CREATE INDEX idx_cvs_failure_reason
+CREATE INDEX IF NOT EXISTS idx_cvs_failure_reason
   ON cvs(failure_reason)
   WHERE failure_reason IS NOT NULL;
