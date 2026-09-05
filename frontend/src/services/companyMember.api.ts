@@ -9,7 +9,7 @@
  *   GET    /companies/:id/members              list members (owner thấy hết, member chỉ thấy active)
  *   POST   /companies/:id/members              owner thêm member
  *   PATCH  /companies/:companyId/members/:userId  owner đổi role/status
- *   POST   /companies/:companyId/members/me/accept  member tự accept lời mời
+ *   POST   /companies/:companyId/members/:userId/accept  member tự accept lời mời
  *   POST   /companies/:id/transfer-owner       owner chuyển ownership
  *
  * Lỗi 401 đã do interceptor trong http.ts tự refresh token; các lỗi khác
@@ -46,10 +46,52 @@ export const companyMemberApi = {
       data,
     ),
 
-  /** POST /companies/:companyId/members/me/accept — member tự accept lời mời */
-  acceptInvite: (companyId: string) =>
+  /**
+   * DELETE /companies/:companyId/members/:userId — owner xoá cứng member
+   * khỏi công ty (hard delete row). Service emit notification `system` cho user
+   * bị xoá.
+   *
+   * BE sẽ reject nếu:
+   *   - 404 MEMBER_NOT_FOUND: row không tồn tại.
+   *   - 400 CANNOT_REMOVE_OWNER: target là owner active (phải transfer trước).
+   */
+  remove: (companyId: string, userId: string) =>
+    http.delete<ApiResponse<{ removedUserId: string; companyId: string }>>(
+      `/companies/${companyId}/members/${userId}`,
+    ),
+
+  /**
+   * POST /companies/:companyId/members/:userId/accept — member tự accept lời mời.
+   *
+   * BE controller check `req.user.userId !== :userId` để chặn user khác accept
+   * giúp → phải truyền userId của chính user đang đăng nhập (lấy từ auth store).
+   */
+  acceptInvite: (companyId: string, userId: string) =>
     http.post<ApiResponse<CompanyMember>>(
-      `/companies/${companyId}/members/me/accept`,
+      `/companies/${companyId}/members/${userId}/accept`,
+    ),
+
+  /**
+   * POST /companies/:companyId/members/:userId/decline — member tự từ chối lời mời.
+   * Mirror của acceptInvite; cùng cơ chế self-only check ở controller.
+   */
+  declineMyInvite: (companyId: string, userId: string) =>
+    http.post<ApiResponse<CompanyMember>>(
+      `/companies/${companyId}/members/${userId}/decline`,
+    ),
+
+  /**
+   * POST /companies/:companyId/members/:userId/leave — member tự rời công ty
+   * (soft delete: status active → left, set ended_at).
+   *
+   * Controller check self-only + service chặn last-owner (CANNOT_LEAVE_AS_LAST_OWNER).
+   *
+   * Lưu ý: BE endpoint trả về CompanyMember row đã update. FE chỉ cần
+   * invalidate cache + navigate user về trang state 'no-company'.
+   */
+  leaveCompany: (companyId: string, userId: string) =>
+    http.post<ApiResponse<CompanyMember>>(
+      `/companies/${companyId}/members/${userId}/leave`,
     ),
 
   /** POST /companies/:id/transfer-owner — owner chuyển ownership (atomic swap) */

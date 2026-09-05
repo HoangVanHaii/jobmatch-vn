@@ -22,7 +22,6 @@ import { validate } from './validate';
 export const createCompanySchema = z.object({
   name: z.string().trim().min(2).max(200),
   logoUrl: z.string().url().max(1000).optional(),
-  coverUrl: z.string().url().max(1000).optional(),
   description: z.string().max(5000).optional(),
   industry: z.string().trim().max(100).optional(),
   sizeRange: z.string().trim().max(20).optional(), // vd: '1-10', '11-50', '201-500', '1000+'
