@@ -22,6 +22,7 @@ const createCompany = [auth, requireRole('employer', 'admin')];
 
 companyRouter.get('/', optionalAuth, validateListCompanies, companyController.list);
 companyRouter.get('/me', auth, companyController.getMyCompany);
+companyRouter.get('/me/invites', auth, companyController.getMyInvites);
 companyRouter.get('/by-slug/:slug', optionalAuth, companyController.getBySlug);
 companyRouter.get('/:id', optionalAuth, validateCompanyIdParam, companyController.getById);
 

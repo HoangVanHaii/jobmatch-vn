@@ -16,7 +16,14 @@ export const subscriptionStatusEnum = pgEnum('subscription_status', ['active', '
 export const paymentStatusEnum = pgEnum('payment_status', ['pending', 'paid', 'failed', 'cancelled', 'refunded', 'expired']);
 export const companyStatusEnum = pgEnum('company_status', ['active', 'banned', 'removed']);
 export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'member']);
-export const companyMemberStatusEnum = pgEnum('company_member_status', ['active', 'invited', 'inactive']);
+export const companyMemberStatusEnum = pgEnum('company_member_status', [
+  'pending',
+  'active',
+  'declined',
+  'removed',
+  'left',
+  'auto_cancelled',
+]);
 export const notificationTypeEnum = pgEnum('notification_type', ['company_invite', 'job_match', 'message', 'system']);
 export const skillStatusEnum = pgEnum('skill_status', ['active', 'deleted']);
 export const cvStatusEnum = pgEnum('cv_status', [

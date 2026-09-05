@@ -1,0 +1,22 @@
+-- ============================================================================
+-- 0024 — Drop cột `cover_url` khỏi bảng `companies`
+--
+-- Lý do: company profile redesign bỏ ảnh bìa (cover) — chỉ giữ logo + thông
+-- tin cơ bản. Field `cover_url` không còn được sử dụng ở FE và không có giá trị
+-- business để giữ lại.
+--
+-- CÁCH CHẠY:
+--   1) Qua Node (tự động pick up file mới theo alphabet):
+--        cd backend && npm run db:migrate
+--
+--   2) Hoặc chạy tay qua psql trong Docker:
+--        Get-Content backend/src/db/migrations/0024_drop_companies_cover_url.sql `
+--          | docker exec -i jobmatch_postgres psql -U jobmatch -d jobmatch_vn -v ON_ERROR_STOP=1
+--
+--   3) DB mới (volume trống) — container tự chạy file này theo thứ tự alphabet
+--      khi `docker compose down -v && docker compose up -d postgres`.
+-- ============================================================================
+
+-- Idempotent: DROP COLUMN IF EXISTS — an toàn chạy lại nhiều lần, không lỗi nếu
+-- cột đã được drop ở lần trước (vd DB mới init từ 0000 đã không có cột này).
+ALTER TABLE companies DROP COLUMN IF EXISTS cover_url;
