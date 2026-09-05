@@ -50,6 +50,7 @@ export const savedJobService = {
             status: jobs.status,
             viewsCount: jobs.viewsCount,
             appliesCount: jobs.appliesCount,
+            createdAt: jobs.createdAt,
             publishedAt: jobs.publishedAt,
           },
         })
