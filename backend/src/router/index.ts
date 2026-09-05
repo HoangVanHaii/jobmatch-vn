@@ -21,9 +21,6 @@ import { subscriptionRouter } from './subscription';
 import { webhooksRouter } from './webhooks';
 import { adminRouter } from './admin';
 // Phase 2 & 3
-import { githubRouter } from './github';
-import { referenceRouter } from './reference';
-import { scheduleRouter } from './schedule';
 import { dialogflowRouter } from './dialogflow';
 import { notificationRouter } from "./notification";
 import { skillsRouter } from "./skills";
@@ -58,10 +55,7 @@ apiRouter.use("/cvs", cvRouter)
 apiRouter.use("/uploads", uploadRouter);
 apiRouter.use("/skills", candidateSkillRouter);
 // Phase 2
-apiRouter.use('/github', githubRouter);
-apiRouter.use('/references', referenceRouter);
 // Phase 3
-apiRouter.use('/schedule', scheduleRouter);
 apiRouter.use('/dialogflow', dialogflowRouter);
 
 // Chatbot AI (candidate + employer)
