@@ -285,16 +285,6 @@ function formatVnd(n: number): string {
                                 </span>
                             </div>
                         </div>
-
-                        <div class="flex items-center justify-center gap-2 mt-4 text-xs text-gray-500">
-                            <span class="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
-                            <span v-if="wsReceivedSuccess === false">
-                                Đang chờ thanh toán — cập nhật realtime qua WebSocket
-                            </span>
-                            <span v-else>
-                                Đang chờ thanh toán — tự động kiểm tra mỗi {{ POLL_INTERVAL_MS / 1000 }}s
-                            </span>
-                        </div>
                     </div>
 
                     <!-- ===== SUCCESS ===== -->
