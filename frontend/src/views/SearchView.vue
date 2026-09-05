@@ -18,7 +18,7 @@ watch(debouncedKeyword, async (val) => {
   router.replace({ query: { ...route.query, keyword: val } });
   await Promise.all([
     insight.fetch(val),
-    jobApi.search({ search: val }).then(({ data }) => { jobs.value = data.data; }),
+    jobApi.search(val).then(({ data }) => { jobs.value = data.data; }),
   ]);
 }, { immediate: true });
 </script>

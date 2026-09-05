@@ -8,7 +8,7 @@ const jobs = ref<any[]>([]);
 const filters = ref<Record<string, any>>({});
 
 const fetchJobs = async () => {
-  const { data } = await jobApi.search(filters.value);
+  const { data } = await jobApi.list(filters.value);
   jobs.value = data.data;
 };
 

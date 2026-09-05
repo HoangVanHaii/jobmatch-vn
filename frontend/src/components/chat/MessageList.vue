@@ -145,7 +145,7 @@ const grouped = computed(() => {
     </p>
 
     <div v-if="hasMore && messages.length > 0 && !loading" class="text-center">
-      <button class="text-xs text-primary-600 hover:underline" @click="loadMore">
+      <button class="text-xs text-primary-600 hover:underline" @click="$emit('loadMore')">
         Tải tin cũ hơn
       </button>
     </div>
