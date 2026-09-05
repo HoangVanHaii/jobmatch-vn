@@ -105,7 +105,7 @@ jobs:
 
       - name: Test
         working-directory: frontend
-        run: npm test -- --run --reporter=verbose
+        run: npm test -- --reporter=verbose
 
       - name: Build
         working-directory: frontend

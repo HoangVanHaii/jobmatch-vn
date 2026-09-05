@@ -17,7 +17,7 @@ export * from './usageLogs';
 export * from './reference';
 export * from './github';
 // Phase 3
-export * from './test';
+export * from './AiTest';
 export * from './interview';
 // Workflow + email logs
 export * from './workflowLogs';
