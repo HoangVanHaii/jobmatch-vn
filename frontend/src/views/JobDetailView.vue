@@ -1,14 +1,29 @@
 <script setup lang="ts">
+/**
+ * JobDetailView — public fallback cho route `/jobs/:id` (đã comment trong
+ * router — hiện tại route này không mount). Giữ file để tránh vỡ import ở
+ * các nơi khác, đồng thời dùng modal apply pattern giống candidate view.
+ */
 import { ref, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { jobApi } from '@services/job.api';
 import ApplyJob from '@components/job/ApplyJob.vue';
 
+interface MinimalJob {
+  id: string;
+  title: string;
+  description?: string | null;
+  company?: { name?: string | null } | null;
+  location?: { city?: string | null } | null;
+}
+
 const route = useRoute();
-const job = ref<any>(null);
+const job = ref<MinimalJob | null>(null);
+const applyOpen = ref(false);
+
 onMounted(async () => {
   const { data } = await jobApi.detail(route.params.id as string);
-  job.value = data.data;
+  job.value = data.data as MinimalJob;
 });
 </script>
 <template>
@@ -19,6 +34,17 @@ onMounted(async () => {
       <h2 class="font-semibold mb-2">Mô tả công việc</h2>
       <p class="whitespace-pre-line">{{ job.description }}</p>
     </div>
-    <ApplyJob :job="job" />
+    <button
+      type="button"
+      class="btn-primary"
+      @click="applyOpen = true"
+    >
+      Ứng tuyển ngay
+    </button>
+    <ApplyJob
+      v-if="job"
+      :job="{ id: job.id, title: job.title }"
+      v-model:open="applyOpen"
+    />
   </div>
 </template>

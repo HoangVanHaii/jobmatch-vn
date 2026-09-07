@@ -3,14 +3,14 @@
  * Phase 1: chỉ candidate-side, list 10 hồ sơ gần nhất.
  */
 import type { HandlerContext, HandlerSection } from '../types';
-import { jobApplicationService } from '../../../../service/jobApplication.service';
+import { applicationService } from '../../../../service/application.service';
 
-type ApplicationRow = Awaited<ReturnType<typeof jobApplicationService.listByCandidate>>[number];
+type ApplicationRow = Awaited<ReturnType<typeof applicationService.listByCandidateForChatbot>>[number];
 
 export const applicationHandler = async (ctx: HandlerContext): Promise<HandlerSection> => {
   let rows: ApplicationRow[];
   try {
-    rows = await jobApplicationService.listByCandidate(ctx.userId, 10);
+    rows = await applicationService.listByCandidateForChatbot(ctx.userId, 10);
   } catch {
     return {
       label: 'application',

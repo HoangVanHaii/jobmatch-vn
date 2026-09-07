@@ -13,6 +13,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { notificationApi } from '@services/notification.api';
+import { getSocket } from '@services/socket';
 import type {
   ListNotificationsQuery,
   Notification,
@@ -118,6 +119,58 @@ export const useNotificationStore = defineStore('notification', () => {
     nextCursor.value = null;
     error.value = null;
     query.value = { limit: DEFAULT_PAGE_SIZE };
+    unbindSocket();
+  };
+
+  // --------------------------------------------------------------------------
+  // Socket binding
+  //
+  // Khi user đăng nhập, App.vue / auth flow sẽ gọi `bindSocket()`. Khi logout
+  // → `reset()` tự unbind. Listener push notification mới vào `items` đầu list,
+  // bell icon + list tự update reactive.
+  //
+  // KHÔNG dispatch toast ở đây — để view-level (vd AppliedJobsView) tự quyết
+  // định có toast hay không (vd employer thấy "có 1 đơn mới" → toast OK,
+  // candidate thấy "match ready" → toast OK, nhưng admin đang xem user list
+  // thì không cần).
+  // --------------------------------------------------------------------------
+
+  /**
+   * Handler khi nhận socket event `notification:new`. Server emit row full
+   * (id, userId, type, title, payload, readAt, createdAt).
+   */
+  const onSocketNew = (notification: Notification): void => {
+    pushLocal(notification);
+  };
+
+  /**
+   * Bind socket listeners cho 3 event application realtime:
+   *   - notification:new (chuẩn, mọi loại notification → bell update)
+   *   - application:match-ready (candidate, score updated)
+   *   - application:match-skipped (candidate, quota_exceeded)
+   *
+   * Idempotent: nếu đã bind rồi thì skip (tránh double-listener nếu gọi 2 lần).
+   * Backend namespace là `user:<userId>`; socket client đã auth tự join đúng
+   * room (xem backend notificationGateway).
+   */
+  let socketBound = false;
+  const bindSocket = (): void => {
+    if (socketBound) return;
+    const socket = getSocket();
+    if (!socket.connected) socket.connect();
+    socket.on('notification:new', onSocketNew);
+    socketBound = true;
+  };
+
+  /**
+   * Unbind socket listeners. Gọi khi logout hoặc trước khi bindSocket lại
+   * nếu user đổi role (vd admin → employer).
+   */
+  const unbindSocket = (): void => {
+    if (!socketBound) return;
+    const socket = getSocket();
+    socket.off('notification:new', onSocketNew);
+    socketBound = false;
   };
 
   return {
@@ -129,5 +182,6 @@ export const useNotificationStore = defineStore('notification', () => {
     pushLocal, markLocal,
     // actions
     fetchFirstPage, fetchNextPage, setQuery, markRead, reset,
+    bindSocket, unbindSocket,
   };
 });

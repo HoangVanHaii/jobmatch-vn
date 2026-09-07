@@ -43,6 +43,7 @@ import { storeToRefs } from 'pinia';
 import { jobApi } from '@services/job.api';
 import { useToastStore } from '@stores/toast';
 import { useSavedJobStore } from '@stores/savedJob';
+import ApplyJob from '@components/job/ApplyJob.vue';
 import type { JobDetail } from '@/types/job';
 
 const route = useRoute();
@@ -54,6 +55,7 @@ const { savedIds, pendingIds } = storeToRefs(savedJobStore);
 const job = ref<JobDetail | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
+const applyModalOpen = ref(false);
 
 const jobId = computed<string>(() => String(route.params.id ?? ''));
 const saved = computed(() => (job.value ? savedIds.value.has(job.value.id) : false));
@@ -180,11 +182,13 @@ const goBack = (): void => {
 };
 
 const onApply = (): void => {
-  toast.push({
-    variant: 'info',
-    title: 'Tính năng đang phát triển',
-    body: 'Ứng tuyển job sẽ sớm được mở. Vui lòng quay lại sau!',
-  });
+  if (!job.value) return;
+  applyModalOpen.value = true;
+};
+
+const onApplied = (_applicationId: string): void => {
+  // Sau khi apply thành công → re-fetch để update appliesCount +1.
+  void fetchDetail();
 };
 
 const onSave = async (): Promise<void> => {
@@ -531,5 +535,13 @@ const onShare = async (): Promise<void> => {
         </div>
       </template>
     </div>
+
+    <!-- Apply modal -->
+    <ApplyJob
+      v-if="job"
+      :job="job"
+      v-model:open="applyModalOpen"
+      @applied="onApplied"
+    />
   </div>
 </template>

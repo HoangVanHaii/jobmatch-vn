@@ -51,7 +51,7 @@ export const classifyIntent = async (
   const llm = createGemini({
     model: 'gemini-2.5-flash',
     temperature: 0.1,
-    maxOutputTokens: 256,
+    maxOutputTokens: 8192,
   });
 
   try {

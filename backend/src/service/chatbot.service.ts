@@ -5,7 +5,7 @@ import { and, eq, desc } from 'drizzle-orm';
 import { cvService } from './cv.service';
 import { jobService } from './job.service';
 import { billingService } from './billing.service';
-import { jobApplicationService } from './jobApplication.service';
+import { applicationService } from './application.service';
 import { savedJobs as savedJobsTable } from '../db/schema/applications';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
@@ -638,7 +638,7 @@ resolveContextData: async (userId: string, ctx: { jobIds: string[]; cvIds: strin
       return result;
     }
     if (source === 'applied') {
-      const ids = await jobApplicationService.listAppliedJobIds(userId);
+      const ids = await applicationService.listAppliedJobIds(userId);
       if (!ids.length) return [];
       const jobs = await jobService.getByIdsPublic(ids);
       return jobs.map((j: any) => ({
