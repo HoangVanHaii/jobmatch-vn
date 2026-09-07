@@ -30,7 +30,7 @@ export interface JobModerationResult {
 
 const moderationLlm = createGemini({
   temperature: 0.1,
-  maxOutputTokens: 4096,
+  maxOutputTokens: 8192,
 });
 
 export const invokeJobModeration = async (

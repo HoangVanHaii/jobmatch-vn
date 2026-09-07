@@ -4,6 +4,9 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { authApi } from '@services/auth.api';
+// Import bằng dynamic require-style để tránh circular dependency:
+// notification.ts → socket.ts (không phụ thuộc auth), an toàn.
+import { useNotificationStore } from './notification';
 
 /** OAuth provider enum — đồng bộ với backend `oauthProviderEnum`. */
 export type OAuthProviderType = 'google' | 'facebook' | 'github';
@@ -77,6 +80,9 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const { data } = await authApi.me();
       user.value = data.data;
+      // Restore session: bind socket + notification listener để bell realtime
+      // hoạt động sau khi refresh page.
+      useNotificationStore().bindSocket();
     } catch { logout(); }
   };
 
@@ -94,6 +100,9 @@ export const useAuthStore = defineStore('auth', () => {
       const { data } = await authApi.login({ email, password });
       setTokens(data.data.accessToken, data.data.refreshToken);
       user.value = data.data.user;
+      // Kết nối socket + bind notification listener (bell realtime).
+      const notif = useNotificationStore();
+      notif.bindSocket();
     } finally { isLoading.value = false; }
   };
 
@@ -127,6 +136,9 @@ export const useAuthStore = defineStore('auth', () => {
       refreshToken.value = null;
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
+      // Unbind socket + reset notification list.
+      const notif = useNotificationStore();
+      notif.reset();
     }
   };
 

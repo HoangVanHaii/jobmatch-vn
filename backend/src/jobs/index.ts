@@ -12,13 +12,15 @@ import { logger } from '../config/logger';
 import { Queue } from 'bullmq';
 import { redis } from '../config/redis';
 import { cvAnalysisWorker } from './cvAnalysis.worker';
-import { exportWorker } from './export.worker';   
+import { cvMatchWorker } from './cvMatch.worker';
+import { exportWorker } from './export.worker';
 
 export const startWorkers = (): void => {
   void cvAnalysisWorker;
   void cvParseWorker;
   // void emailWorker;
   // void matchingWorker;
+  void cvMatchWorker;
   void interviewReminderWorker;
   void jobModerationWorker;
   void jobEmbeddingWorker;
@@ -39,6 +41,6 @@ export const startWorkers = (): void => {
   void scheduleJobExpiry();
 
   logger.info(
-    'All BullMQ workers started (CV parse/score, scan, GitHub, test, interview reminder, job moderation, job embedding, job expiry)',
+    'All BullMQ workers started (CV parse/score, scan, GitHub, test, cv-match, interview reminder, job moderation, job embedding, job expiry)',
   );
 };
