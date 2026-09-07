@@ -1,113 +1,109 @@
 /**
  * CompanyMember middleware — Zod schemas + validation middleware + guards.
  *
- * File này chỉ chịu trách nhiệm validation + authorization cho CompanyMember:
- *   - Khai báo Zod schemas.
- *   - Compose validation middleware từ generic `validate()`.
- *   - Ownership guards: `requireCompanyOwner`, `requireCompanyOwnerOrAdmin`.
+ * Validate input cho tất cả endpoints + 2 guards authorization:
+ *   - `requireCompanyOwner`: chỉ owner active mới pass.
+ *   - `requireActiveMember`: chỉ member active mới pass.
  *
- * Nghiệp vụ: 1 công ty CHỈ CÓ 1 OWNER DUY NHẤT.
- *   - requireCompanyOwner: chỉ owner active (admin KHÔNG pass). Cho thêm/sửa member.
- *   - requireCompanyOwnerOrAdmin: owner active HOẶC admin. Cho update company info + transfer owner.
- *
- * Input/response types nằm ở `interface/companyMember.ts` — interface và middleware
- * tách trách nhiệm độc lập.
+ * Service throw AppError với code từ `CompanyMemberErrorCode` (interface/companyMember.ts).
+ * Middleware cũng throw AppError nếu guard fail.
  */
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { and, eq } from 'drizzle-orm';
 import { validate } from './validate';
 import { AppError } from './errorHandler';
-import { companyMemberService } from '../service/companyMember.service';
+import { db } from '../config/database';
+import { companyMembers } from '../db/schema';
+import {
+  CompanyMemberErrorCode,
+  CompanyMemberRole,
+} from '../interface/companyMember';
 
-// ============================================================================
-// Zod schemas
-// ============================================================================
-
-/**
- * Body POST /companies/:id/members — owner thêm member.
- * role CHỈ được là 'member'. Nếu muốn thêm owner phải dùng transfer-owner.
- */
-export const addCompanyMemberSchema = z.object({
-  userId: z.string().uuid(),
-  // role CHỈ được 'member' — muốn chuyển owner phải dùng POST /:id/transfer-owner.
-  // (Trước đây dùng z.enum(['owner','member']) + refine nhưng owner luôn bị service
-  //  chặn → dead code. Khóa luôn literal cho rõ nghĩa.)
-  role: z.literal('member').default('member'),
-  status: z.enum(['active', 'invited', 'inactive']).default('invited'),
-});
+/* ============================================================================
+ * Zod schemas
+ * ==========================================================================*/
 
 /**
- * Body PATCH /companies/:companyId/members/:userId — đổi role/status.
- * KHÔNG cho phép đổi status của owner.
- * KHÔNG cho phép đổi role thành 'owner' (phải dùng transfer-owner).
+ * Body POST /companies/:companyId/members/invite — owner mời user.
+ * FE gửi email + role (optional). role chỉ được 'member' (owner phải dùng transfer).
  */
-export const updateCompanyMemberSchema = z.object({
-  role: z.enum(['owner', 'member']).optional(),
-  status: z.enum(['active', 'invited', 'inactive']).optional(),
-}).refine(
-  (v) => v.role !== undefined || v.status !== undefined,
-  { message: 'Cần ít nhất 1 trong role/status' },
-);
-
-/** Body POST /companies/:id/transfer-owner — chuyển ownership */
-export const transferOwnerSchema = z.object({
-  newOwnerUserId: z.string().uuid(),
+export const inviteMemberSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  role: z.enum(['owner', 'member']).default('member'),
 });
 
-/** Params /companies/:companyId/members/:userId */
-export const companyMemberParamsSchema = z.object({
+/** Params cho endpoints có :companyId + :userId (accept/decline/remove/leave). */
+export const companyMemberUserParamsSchema = z.object({
   companyId: z.string().uuid(),
   userId: z.string().uuid(),
 });
 
-/** Params /companies/:id/members và /companies/:id/transfer-owner (chỉ cần id) */
-export const companyIdParamSchema = z.object({
-  id: z.string().uuid(),
-});
-
-/** Params /companies/:companyId/members/me/accept */
-export const companyIdOnlyParamSchema = z.object({
+/** Params cho endpoint /:companyId/members (list, invite). */
+export const companyIdParamsSchema = z.object({
   companyId: z.string().uuid(),
 });
 
-// ============================================================================
-// Validation middleware
-// ============================================================================
+/* ============================================================================
+ * Validation middleware (composed from Zod schemas + generic validate())
+ * ==========================================================================*/
+export const validateInviteMember = validate(inviteMemberSchema, 'body');
+export const validateCompanyMemberUserParams = validate(companyMemberUserParamsSchema, 'params');
+export const validateCompanyIdParams = validate(companyIdParamsSchema, 'params');
 
-export const validateAddCompanyMember = validate(addCompanyMemberSchema, 'body');
-export const validateUpdateCompanyMember = validate(updateCompanyMemberSchema, 'body');
-export const validateTransferOwner = validate(transferOwnerSchema, 'body');
-export const validateCompanyMemberParams = validate(companyMemberParamsSchema, 'params');
-export const validateCompanyIdParam = validate(companyIdParamSchema, 'params');
-export const validateCompanyIdOnlyParam = validate(companyIdOnlyParamSchema, 'params');
-
-// ============================================================================
-// Guards (authorization)
-// ============================================================================
+/* ============================================================================
+ * Authorization guards
+ *
+ * Pattern: query row trong DB → check role/status → throw 403 nếu không pass.
+ * Đặt SAU `auth` middleware (cần req.user).
+ * ==========================================================================*/
 
 /**
- * Guard: owner active của company HOẶC admin mới được phép.
- * Dùng cho: PATCH /companies/:id (update info), POST /:id/transfer-owner.
- * Admin pass; user là owner active pass; member/inactive fail.
- * Sử dụng sau auth + validate params.
+ * Guard: owner active HOẶC admin.
+ * Dùng cho: PATCH /:id (update company info — route mount tại /companies, param là :id).
+ *
+ * Lưu ý: route dùng tên param `:id` (vì match RESTful convention), nhưng các
+ * routes ở companyMemberRouter dùng `:companyId`. Middleware accept CẢ HAI
+ * để dùng được cho cả 2 nhóm routes mà không cần wrapper.
  */
-export const requireCompanyOwnerOrAdmin = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+export const requireCompanyOwnerOrAdmin = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
     const params = req.params as { companyId?: string; id?: string };
     const companyId = params.companyId ?? params.id;
-    if (!companyId) throw new AppError(400, 'BAD_REQUEST', 'Missing companyId');
+    if (!companyId) {
+      throw new AppError(400, CompanyMemberErrorCode.MEMBER_NOT_FOUND, 'Thiếu companyId');
+    }
 
-    // Admin pass luôn
+    // Admin pass luôn (FE không có endpoint admin, nhưng giữ để tương lai).
     if (req.user!.role === 'admin') {
       next();
       return;
     }
 
     const userId = req.user!.userId;
-    const member = await companyMemberService.getByCompanyAndUser(companyId, userId);
+    const [member] = await db
+      .select({ role: companyMembers.role, status: companyMembers.status })
+      .from(companyMembers)
+      .where(
+        and(
+          eq(companyMembers.companyId, companyId),
+          eq(companyMembers.userId, userId),
+        ),
+      )
+      .limit(1);
+
     if (!member || member.role !== 'owner' || member.status !== 'active') {
-      throw new AppError(403, 'FORBIDDEN', 'Chỉ owner của công ty hoặc admin mới có quyền này');
+      throw new AppError(
+        403,
+        CompanyMemberErrorCode.FORBIDDEN_NOT_OWNER,
+        'Chỉ owner active của công ty hoặc admin mới có quyền này.',
+      );
     }
+
     next();
   } catch (err) {
     next(err);
@@ -115,23 +111,109 @@ export const requireCompanyOwnerOrAdmin = async (req: Request, _res: Response, n
 };
 
 /**
- * Guard: chỉ owner active của company (admin cũng KHÔNG được).
- * Dùng cho: thêm/sửa member — vì admin không quản lý membership.
- * Sử dụng sau auth + validate params.
+ * Guard: chỉ owner active mới pass.
+ * Dùng cho: POST /:companyId/members/invite, DELETE /:companyId/members/:userId.
+ * (Không dùng cho transfer-owner — endpoint đó có logic riêng.)
  */
-export const requireCompanyOwner = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+export const requireCompanyOwner = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
-    const params = req.params as { companyId?: string; id?: string };
-    const companyId = params.companyId ?? params.id;
-    if (!companyId) throw new AppError(400, 'BAD_REQUEST', 'Missing companyId');
+    const { companyId } = req.params as { companyId?: string };
+    if (!companyId) {
+      throw new AppError(400, CompanyMemberErrorCode.MEMBER_NOT_FOUND, 'Thiếu companyId');
+    }
 
     const userId = req.user!.userId;
-    const member = await companyMemberService.getByCompanyAndUser(companyId, userId);
+    const [member] = await db
+      .select({ role: companyMembers.role, status: companyMembers.status })
+      .from(companyMembers)
+      .where(
+        and(
+          eq(companyMembers.companyId, companyId),
+          eq(companyMembers.userId, userId),
+        ),
+      )
+      .limit(1);
+
     if (!member || member.role !== 'owner' || member.status !== 'active') {
-      throw new AppError(403, 'FORBIDDEN', 'Chỉ owner của công ty mới có quyền này');
+      throw new AppError(
+        403,
+        CompanyMemberErrorCode.FORBIDDEN_NOT_OWNER,
+        'Chỉ owner active của công ty mới có quyền này.',
+      );
     }
+
     next();
   } catch (err) {
     next(err);
   }
+};
+
+/**
+ * Guard: chỉ member active mới pass.
+ * Dùng cho: POST /:companyId/members/:userId/accept|leave (userId phải match
+ * auth.user, status phải 'active' hoặc 'pending' tùy endpoint).
+ *
+ * Lưu ý: chỉ check role/status active; không check userId khớp với auth.user
+ * (endpoint tự check ở controller — tránh hardcode rule ở middleware).
+ */
+export const requireActiveMember = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const { companyId } = req.params as { companyId?: string };
+    if (!companyId) {
+      throw new AppError(400, CompanyMemberErrorCode.MEMBER_NOT_FOUND, 'Thiếu companyId');
+    }
+
+    const userId = req.user!.userId;
+    const [member] = await db
+      .select({ role: companyMembers.role, status: companyMembers.status })
+      .from(companyMembers)
+      .where(
+        and(
+          eq(companyMembers.companyId, companyId),
+          eq(companyMembers.userId, userId),
+        ),
+      )
+      .limit(1);
+
+    if (!member || member.status !== 'active') {
+      throw new AppError(
+        403,
+        CompanyMemberErrorCode.FORBIDDEN_NOT_MEMBER,
+        'Bạn không phải thành viên active của công ty này.',
+      );
+    }
+
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Helper: lấy role/status row của (companyId, userId) — dùng trong service nếu cần.
+ * (Không phải middleware — đặt ở đây để gần các guard khác.)
+ */
+export const getMembershipRoleStatus = async (
+  companyId: string,
+  userId: string,
+): Promise<{ role: CompanyMemberRole; status: string } | null> => {
+  const [row] = await db
+    .select({ role: companyMembers.role, status: companyMembers.status })
+    .from(companyMembers)
+    .where(
+      and(
+        eq(companyMembers.companyId, companyId),
+        eq(companyMembers.userId, userId),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
 };
