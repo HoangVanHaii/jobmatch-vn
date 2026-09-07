@@ -7,6 +7,7 @@ import { authApi } from '@services/auth.api';
 // Import bằng dynamic require-style để tránh circular dependency:
 // notification.ts → socket.ts (không phụ thuộc auth), an toàn.
 import { useNotificationStore } from './notification';
+import { disconnectSocket } from '@services/socket';
 
 /** OAuth provider enum — đồng bộ với backend `oauthProviderEnum`. */
 export type OAuthProviderType = 'google' | 'facebook' | 'github';
@@ -149,6 +150,21 @@ export const useAuthStore = defineStore('auth', () => {
       // Unbind socket + reset notification list.
       const notif = useNotificationStore();
       notif.reset();
+      // Ngắt hẳn socket — BẮT BUỘC, không chỉ unbind listener.
+      //
+      // Socket là singleton (services/socket.ts) và `auth` callback chỉ đọc
+      // access_token tại thời điểm HANDSHAKE. Nếu để connection sống qua logout,
+      // nó vẫn mang danh tính user cũ và vẫn nằm trong room `user:<id cũ>` của
+      // backend (notificationGateway.emitToUser). Khi user khác đăng nhập trên
+      // cùng tab, bindSocket() thấy `socket.connected === true` nên KHÔNG connect
+      // lại → token mới không bao giờ được gửi đi → user mới nhận notification
+      // của user cũ.
+      //
+      // disconnect() ở đây làm `connected = false`, nên bindSocket() lần sau sẽ
+      // connect lại và handshake với token mới. Các listener đăng ký qua
+      // socket.on() (chat:new, notification:new, ...) bám vào instance chứ không
+      // vào connection nên vẫn sống qua reconnect — không cần đăng ký lại.
+      disconnectSocket();
     }
   };
 

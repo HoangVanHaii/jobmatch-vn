@@ -73,6 +73,18 @@ export const CompanyMemberErrorCode = {
    * Dùng để fail-fast ở invite (thay vì để user nhận notification rồi mới báo lỗi).
    */
   USER_ACTIVE_ELSEWHERE: 'USER_ACTIVE_ELSEWHERE',
+  /**
+   * User được mời không phải employer/admin (vd role='candidate').
+   * Company chỉ dành cho nhà tuyển dụng + admin; invite candidate là vô nghĩa
+   * và spam notification nhầm vai trò.
+   */
+  USER_NOT_EMPLOYER: 'USER_NOT_EMPLOYER',
+  /**
+   * User tồn tại nhưng không thể hoạt động (status ≠ 'active': pending
+   * chưa verify email, suspended, banned). Tách riêng USER_NOT_EMPLOYER
+   * vì lý do fail khác nhau → FE render message khác nhau.
+   */
+  USER_NOT_ACTIVE: 'USER_NOT_ACTIVE',
 } as const;
 export type CompanyMemberErrorCode =
   (typeof CompanyMemberErrorCode)[keyof typeof CompanyMemberErrorCode];

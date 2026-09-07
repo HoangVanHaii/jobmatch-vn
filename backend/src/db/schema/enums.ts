@@ -18,10 +18,20 @@ export const companyStatusEnum = pgEnum('company_status', ['active', 'banned', '
 export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'member']);
 /**
  * notification_type:
- *   - company_invite: gửi cho user được mời vào company
+ *   - company: tất cả sự kiện liên quan company-member lifecycle.
+ *     Dispatch bằng payload.kind:
+ *       company_invite_sent                — owner mời user (kèm navigate)
+ *       company_invite_accepted            — user accept (info, refetch)
+ *       company_invite_declined            — user decline hoặc auto-cancel (info)
+ *       invite_cancelled                   — owner huỷ invite pending (info)
+ *       removed_from_company               — owner xoá member (info, navigate nếu mình bị xoá)
+ *       company_member_left                — user tự rời (info)
+ *       company_owner_transferred          — transfer (info)
+ *       company_owner_transferred_to_you   — mình được promote (info)
+ *       company_owner_transferred_from_you — mình mất quyền (info)
  *   - job_match: gửi cho candidate khi có job match từ embedding/similarity scan
  *   - message: chat message giữa các user
- *   - system: thông báo hệ thống (vd: payment, quota)
+ *   - system: dự phòng cho payment / quota (hiện không emit, nhưng giữ enum value)
  *   - application_new: gửi cho employer (postedBy) khi có candidate apply job mình
  *     → bắn NGAY khi application insert, không đợi AI matching
  *   - application_match_ready: gửi cho candidate khi AI matching worker hoàn tất
@@ -30,12 +40,17 @@ export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'me
  *     (chỉ cho phép khi status=pending|viewed, xem service.application.withdraw)
  *     → employer biết realtime để update pipeline / không chờ candidate nữa.
  *
+ *   - company_invite: BACKWARD COMPAT. Rows cũ trước 0032 dùng type này cho
+ *     invite. Backend không emit nữa; FE fallback coi như kind='company_invite_sent'.
+ *
  * Tham chiếu migration:
  *   0025_notification_type_applications.sql (application_new + application_match_ready)
  *   0026_notification_type_withdraw.sql (application_withdrawn)
+ *   0032_add_notification_type_company.sql ('company' + gom company_* về 1 type)
  */
 export const notificationTypeEnum = pgEnum('notification_type', [
-  'company_invite',
+  'company_invite',         // legacy — xem comment trên
+  'company',
   'job_match',
   'message',
   'system',
