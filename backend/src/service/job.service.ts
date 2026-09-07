@@ -3,7 +3,7 @@ import { db } from '../config/database';
 import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
 import { eq, desc, and, sql, inArray } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
-import { Job, JobListItem, ExportApplicationsJobData } from '@/interface/job';
+import { Job, JobListItem, ExportApplicationsJobData, JobDetailPayload } from '@/interface/job';
 import {
   JobListQuery,
   JobCreateBody,
@@ -15,6 +15,7 @@ import { invokeJobGeneration } from '../lib/llm/jobGeneration';
 import { JOB_GENERATION_SYSTEM_PROMPT, buildJobGenerationUserPrompt } from '../prompts/jobGeneration';
 import { searchSimilarJobs, SemanticSearchResult } from '../lib/llm/jobEmbedding';
 import { usageLogService } from './usageLog.service';
+import { jobFeedbackService } from './jobFeedback.service';
 import { tryCatch } from 'bullmq';
 
 const slugify = (s: string): string => {
@@ -26,6 +27,29 @@ const slugify = (s: string): string => {
     .replace(/^-|-$/g, '')
     .slice(0, 80);
   return `${base || 'job'}-${crypto.randomBytes(3).toString('hex')}`;
+};
+
+/**
+ * Sinh slug unique bằng cách retry với random suffix mới khi gặp unique
+ * constraint violation. `jobs.slug` có partial unique index (xem migration
+ * 0032). Collision rate cực thấp (6 hex chars → ~16M combo) nhưng vẫn cần
+ * retry-safe để tránh race condition giữa 2 insert đồng thời.
+ *
+ * Loop tối đa 5 lần để tránh infinite; nếu vẫn trùng (gần như不可能) → ném
+ * 500 để caller retry request.
+ */
+const generateUniqueSlug = async (title: string): Promise<string> => {
+  for (let i = 0; i < 5; i += 1) {
+    const candidate = slugify(title);
+    const [existing] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(eq(jobs.slug, candidate))
+      .limit(1);
+    if (!existing) return candidate;
+  }
+  // 5 lần trượt → quay lại insert để DB tự reject, hoặc trả lỗi.
+  throw new AppError(500, 'SLUG_GENERATION_FAILED', 'Không sinh được slug unique');
 };
 
 export const jobService = {
@@ -139,14 +163,54 @@ export const jobService = {
     return rows.map((r) => r.industry).filter((s): s is string => Boolean(s));
   },
 
-  getById: async (id: string): Promise<Job> => {
+  getById: async (id: string): Promise<JobDetailPayload> => {
     const [row] = await db
       .update(jobs)
       .set({ viewsCount: sql`${jobs.viewsCount} + 1` })
       .where(eq(jobs.id, id))
       .returning();
     if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
-    return row;
+
+    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(id);
+
+    return { ...row, feedbacks, feedbackStats: stats };
+  },
+
+  /**
+   * Lấy job theo slug (URL SEO-friendly). Mirror `getById`:
+   *   - Tăng viewsCount +1 (side-effect như getById).
+   *   - Nhúng feedbacks + feedbackStats vào response.
+   *   - 404 nếu slug không tồn tại.
+   *
+   * Slug được generate unique lúc create (xem migration 0032), nên query theo
+   * slug chỉ trả tối đa 1 row.
+   */
+  getBySlug: async (slug: string): Promise<JobDetailPayload> => {
+    const [row] = await db
+      .update(jobs)
+      .set({ viewsCount: sql`${jobs.viewsCount} + 1` })
+      .where(eq(jobs.slug, slug))
+      .returning();
+    if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
+
+    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(row.id);
+
+    return { ...row, feedbacks, feedbackStats: stats };
+  },
+
+  /**
+   * Resolve jobId từ slug — dùng cho các sub-endpoint cần FK vào applications
+   * (vd `GET /jobs/by-slug/:slug/application-status`). Trả `null` nếu không
+   * tìm thấy (controller tự throw 404). Nhẹ hơn `getBySlug` vì không tăng
+   * viewsCount, không embed feedbacks.
+   */
+  getIdBySlug: async (slug: string): Promise<{ id: string } | null> => {
+    const [row] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(eq(jobs.slug, slug))
+      .limit(1);
+    return row ?? null;
   },
 
   searchByKeyWord: async (keyword: string, page = 1, limit = 20): Promise<{ data: JobListItem[]; total: number }> => {
@@ -329,7 +393,7 @@ generateDraft: async (
       .insert(jobs)
       .values({
         ...data,
-        slug: slugify(data.title),
+        slug: await generateUniqueSlug(data.title),
         postedBy: userId,
         publishedAt: data.status === 'live' ? new Date() : null,
         salaryMin: data.salaryMin != null ? String(data.salaryMin) : undefined,

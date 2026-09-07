@@ -137,8 +137,10 @@ const assertJobIsApplyable = async (
  *
  * Flow:
  *   1. Verify job applyable (status='live', chưa hết hạn).
- *   2. Nếu có cvId → snapshot CV (verify ownership).
- *   3. Insert application. DB unique (candidateId, jobId) chặn duplicate → catch error.
+ *   2. Snapshot CV (verify ownership) — cvId BẮT BUỘC từ migration 0033.
+ *      "1 CV - 1 job" thay cho "1 candidate - 1 job": 1 candidate có thể apply
+ *      cùng job bằng nhiều CV, mỗi CV là 1 application riêng với điểm AI riêng.
+ *   3. Insert application. DB unique (cvId, jobId) chặn duplicate → catch error.
  *   4. Notify employer (postedBy) — bắn NGAY khi insert, không đợi matching.
  *      Mục đích: employer mở tab ứng tuyển thấy badge realtime "có 1 đơn mới".
  *      Best-effort: lỗi notify KHÔNG rollback application (notification là
@@ -161,10 +163,10 @@ export const create = async (
 ): Promise<{ id: string; status: ApplicationStatusValue }> => {
   const { postedBy, companyId } = await assertJobIsApplyable(input.jobId);
 
-  let cvSnapshot: ApplicationCvSnapshot | null = null;
-  if (input.cvId) {
-    cvSnapshot = await snapshotCv(input.cvId, candidateId);
+  if (!input.cvId) {
+    throw new AppError(400, 'CV_ID_REQUIRED', 'Vui lòng chọn CV để ứng tuyển.');
   }
+  const cvSnapshot = await snapshotCv(input.cvId, candidateId);
 
   try {
     const [created] = await db
@@ -172,6 +174,7 @@ export const create = async (
       .values({
         candidateId,
         jobId: input.jobId,
+        cvId: input.cvId,
         cv: cvSnapshot,
         coverLetter: input.coverLetter ?? null,
         status: 'pending',
@@ -193,29 +196,27 @@ export const create = async (
       companyId,
     });
 
-    if (cvSnapshot) {
-      try {
-        const { cvMatchQueue } = await import('../config/queue');
-        await cvMatchQueue.add('cv-match', {
-          applicationId: created.id,
-          jobId: input.jobId,
-        });
-      } catch (err) {
-        logger.warn(
-          { err, applicationId: created.id },
-          'create: enqueue cvMatchQueue thất bại, application OK nhưng sẽ không có AI match score',
-        );
-      }
+    try {
+      const { cvMatchQueue } = await import('../config/queue');
+      await cvMatchQueue.add('cv-match', {
+        applicationId: created.id,
+        jobId: input.jobId,
+      });
+    } catch (err) {
+      logger.warn(
+        { err, applicationId: created.id },
+        'create: enqueue cvMatchQueue thất bại, application OK nhưng sẽ không có AI match score',
+      );
     }
 
     return created;
   } catch (err) {
-    // PostgreSQL unique violation (23505)
+    // PostgreSQL unique violation (23505) — trùng (cv_id, job_id).
     if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
       throw new AppError(
         409,
         'ALREADY_APPLIED',
-        'Bạn đã nộp hồ sơ cho job này rồi.',
+        'Bạn đã ứng tuyển job này bằng CV này rồi.',
       );
     }
     throw err;
@@ -327,6 +328,7 @@ export const listMine = async (
         // có thể đã xoá CV gốc nhưng snapshot vẫn còn để hiển thị.
         cvTitle: sql<string | null>`${applications.cv}->>'title'`,
         cvUrl: sql<string | null>`${applications.cv}->>'url'`,
+        cvId: applications.cvId,
         appliedAt: applications.appliedAt,
         viewedAt: applications.viewedAt,
       })
@@ -1068,6 +1070,67 @@ export const listAppliedJobIds = async (candidateId: string): Promise<string[]> 
   return rows.map((r) => r.jobId);
 };
 
+/**
+ * Lấy status + AI match score của application do `candidateId` tạo cho `jobId`.
+ * Trả `null` status nếu chưa apply job này (FE render Apply button thường).
+ *
+ * List applications của 1 candidate cho 1 job (kèm AI match + CV title).
+ * Từ migration 0033: 1 candidate có thể apply cùng job bằng NHIỀU CV → endpoint
+ * `GET /jobs/by-slug/:slug/application-status` trả MẢNG thay vì 1 row đơn.
+ *
+ * Lưu ý:
+ *   - `aiMatchScore` lưu dạng numeric(5,2) → cast qua `::text` rồi `Number(...)`
+ *     để ra số 0-100 với 1 chữ số thập phân.
+ *   - `aiMatchReason` extract từ jsonb `ai_match_reasoning->>'reason'`.
+ *   - LEFT JOIN cvs để lấy title cho UI "Danh sách CV đã ứng tuyển".
+ *   - Trả [] nếu chưa apply (FE render empty state).
+ */
+export const getStatusForCandidate = async (
+  candidateId: string,
+  jobId: string,
+): Promise<Array<{
+  status: string;
+  applicationId: string;
+  appliedAt: string;
+  cvId: string;
+  cvTitle: string | null;
+  aiMatchScore: number | null;
+  aiMatchReason: 'success' | 'quota_exceeded' | 'failed' | null;
+}>> => {
+  const rows = await db
+    .select({
+      status: applications.status,
+      applicationId: applications.id,
+      appliedAt: applications.appliedAt,
+      cvId: applications.cvId,
+      cvTitle: cvs.title,
+      aiMatchScore: sql<string | null>`${applications.aiMatchScore}::text`,
+      aiMatchReason: sql<
+        'success' | 'quota_exceeded' | 'failed' | null
+      >`${applications.aiMatchReasoning}->>'reason'`,
+    })
+    .from(applications)
+    .leftJoin(cvs, eq(cvs.id, applications.cvId))
+    .where(
+      and(
+        eq(applications.candidateId, candidateId),
+        eq(applications.jobId, jobId),
+      ),
+    )
+    .orderBy(desc(applications.appliedAt));
+
+  return rows.map((r) => ({
+    status: r.status,
+    applicationId: r.applicationId,
+    appliedAt: r.appliedAt.toISOString(),
+    cvId: r.cvId,
+    cvTitle: r.cvTitle,
+    aiMatchScore:
+      r.aiMatchScore != null ? Number(Number(r.aiMatchScore).toFixed(1)) : null,
+    aiMatchReason: r.aiMatchReason,
+  }));
+};
+
 // ============================================================================
 // Export gộp (giữ tương thích ngược nếu chỗ nào đang dùng `applicationService.X`).
 // ============================================================================
@@ -1081,6 +1144,7 @@ export const applicationService = {
   updateStatus,
   recomputeMatch,
   withdraw,
+  getStatusForCandidate,
   // Chatbot helpers
   listByCandidateForChatbot,
   listAppliedJobIds,
