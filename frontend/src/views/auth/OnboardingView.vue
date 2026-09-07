@@ -22,6 +22,7 @@ import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useOAuth } from '@composables/useOAuth';
 import { useOAuthStore } from '@stores/oauth';
+import { extractErrorCode, extractErrorMessage } from '@services/http';
 import { Check, Sparkles, UserRound, Building2 } from 'lucide-vue-next';
 
 type Role = 'candidate' | 'employer';
@@ -59,17 +60,18 @@ const onContinue = async (): Promise<void> => {
     const target = selectedRole.value === 'candidate' ? '/candidate' : '/employer';
     router.replace(target);
   } catch (e: any) {
-    const code = e?.response?.data?.error?.code ?? '';
+    // F4 FIX: dùng helper đọc đúng HttpError.
+    const code = extractErrorCode(e);
     if (code === 'INVALID_PENDING_TOKEN') {
       errorMsg.value = 'Phiên đăng ký đã hết hạn. Vui lòng đăng nhập lại.';
       oauthStore.clearPending();
       setTimeout(() => router.replace('/login'), 2000);
     } else if (code === 'EMAIL_TAKEN') {
-      errorMsg.value = e?.response?.data?.error?.message ?? 'Email đã được đăng ký.';
+      errorMsg.value = extractErrorMessage(e, 'Email đã được đăng ký.');
       oauthStore.clearPending();
       setTimeout(() => router.replace('/login'), 2000);
     } else {
-      errorMsg.value = e?.response?.data?.error?.message ?? 'Đăng ký thất bại. Vui lòng thử lại.';
+      errorMsg.value = extractErrorMessage(e, 'Đăng ký thất bại. Vui lòng thử lại.');
     }
   } finally {
     submitting.value = false;

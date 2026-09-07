@@ -12,6 +12,12 @@ const routes: RouteRecordRaw[] = [
   { path: '/register', name: 'register', component: () => import('@views/auth/RegisterView.vue'), meta: { guest: true } },
   { path: '/verify-otp', name: 'verify-otp', component: () => import('@views/auth/VerifyOtpView.vue'), meta: { guest: true } },
   { path: '/forgot-password', name: 'forgot-password', component: () => import('@views/auth/ForgotPasswordView.vue') },
+
+  // F3 FIX: /terms và /privacy — public legal pages.
+  // Trước đây RegisterView có link /terms và /privacy trong consent checkbox
+  // nhưng không có route → user click → 404 → vi phạm legal compliance.
+  { path: '/terms', name: 'terms', component: () => import('@views/pages/TermsView.vue') },
+  { path: '/privacy', name: 'privacy', component: () => import('@views/pages/PrivacyView.vue') },
   { path: '/auth/callback/:provider', name: 'oauth-callback', component: () => import('@views/auth/OAuthCallbackView.vue'),
     // Validate ngay tại route guard — invalid provider (vd user gõ /auth/callback/resumes
     // do typo hay stale tab) → redirect thẳng về /login TRƯỚC khi component mount.
@@ -31,7 +37,7 @@ const routes: RouteRecordRaw[] = [
   },
   // Select Role chỉ accessible khi có pending OAuth state (xem SelectRoleView.vue guard nội bộ).
   // Không có meta.auth vì OAuth user mới CHƯA có session — pendingToken là proof-of-intent.
-//   { path: '/select-role', name: 'select-role', component: () => import('@views/auth/OnboardingView.vue') },
+  { path: '/select-role', name: 'select-role', component: () => import('@views/auth/OnboardingView.vue') },
 //   { path: '/jobs', name: 'jobs', component: () => import('@views/JobListView.vue') },
 //   { path: '/jobs/:id', name: 'job-detail', component: () => import('@views/JobDetailView.vue') },
 //   { path: '/search', name: 'search', component: () => import('@views/SearchView.vue') },

@@ -273,6 +273,21 @@ const upsertOrDefer = async (profile: OAuthProfile): Promise<OAuthCallbackResult
 
     const user = await db.query.users.findFirst({ where: eq(users.id, existingAccount.userId) });
     if (!user) throw new AppError(500, 'USER_NOT_FOUND', 'User not found for existing OAuth account');
+
+    // BUG #1 FIX: check user.status ngay tại OAuth callback để tránh bypass.
+    // Trước đây: user bị ban/suspend mà đã link OAuth từ trước → vẫn OAuth login
+    // thành công → nhận access token mới → ~15 phút hoạt động trước khi refresh fail.
+    // Giờ: check status + deletedAt trước khi issue token.
+    if (user.deletedAt) {
+      throw new AppError(403, 'ACCOUNT_DELETED', 'Tài khoản đã bị xóa');
+    }
+    if (user.status === 'pending') {
+      throw new AppError(403, 'EMAIL_NOT_VERIFIED', 'Email chưa được xác thực');
+    }
+    if (user.status !== 'active') {
+      throw new AppError(403, 'ACCOUNT_INACTIVE', 'Tài khoản không hoạt động');
+    }
+
     return {
       status: 'EXISTING_USER',
       user: { id: user.id, email: user.email, role: user.role as 'candidate' | 'employer' | 'admin' },

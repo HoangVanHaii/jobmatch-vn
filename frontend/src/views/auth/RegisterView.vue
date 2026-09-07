@@ -14,9 +14,10 @@
  * fullName được gửi lên BE qua registerRequestOtp. Backend insert cả users lẫn
  * userProfiles trong cùng một transaction (xem auth.service.requestOtp).
  */
-import { ref, computed } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@stores/auth';
+import { extractErrorCode, extractErrorMessage } from '@services/http';
 import { UserRound, Building2, Check, Eye, EyeOff, Sparkles } from 'lucide-vue-next';
 
 type Role = 'candidate' | 'employer';
@@ -29,18 +30,29 @@ const email = ref('');
 const password = ref('');
 const role = ref<Role>('candidate');
 const showPassword = ref(false);
+// T19 FIX: ToS/Privacy consent — bắt buộc đồng ý trước khi đăng ký
+// (tuân thủ Nghị định 13/2023 về bảo vệ dữ liệu cá nhân VN).
+const agreedToTerms = ref(false);
 
 const error = ref('');
+const errorCode = ref('');
 const loading = ref(false);
+
+// Template refs để focus input đầu tiên bị lỗi khi submit.
+const fullNameInputRef = ref<HTMLInputElement | null>(null);
+const emailInputRef = ref<HTMLInputElement | null>(null);
+const passwordInputRef = ref<HTMLInputElement | null>(null);
+const tosCheckboxRef = ref<HTMLInputElement | null>(null);
 
 // Validation client-side (giữ logic cũ — HTML5 required + minlength 8)
 const emailValid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value));
-const passwordValid = computed(() => password.value.length >= 8);
+// T7 FIX: password complexity check — đồng bộ với BE passwordSchema.
+// Yêu cầu: min 8 ký tự, có chữ hoa, chữ thường, số.
+const passwordValid = computed(() => {
+  const p = password.value;
+  return p.length >= 8 && /[A-Z]/.test(p) && /[a-z]/.test(p) && /[0-9]/.test(p);
+});
 const nameValid = computed(() => fullName.value.trim().length >= 2);
-
-const canSubmit = computed(
-  () => !loading.value && emailValid.value && passwordValid.value && nameValid.value,
-);
 
 const selectRole = (r: Role): void => {
   role.value = r;
@@ -48,13 +60,32 @@ const selectRole = (r: Role): void => {
 };
 
 const onSubmit = async () => {
-  if (!canSubmit.value) {
-    // Trường hợp user disable HTML5 validation (autofill, paste, ...) — báo lỗi rõ ràng
-    if (!nameValid.value) error.value = 'Vui lòng nhập họ và tên';
-    else if (!emailValid.value) error.value = 'Email không hợp lệ';
-    else if (!passwordValid.value) error.value = 'Mật khẩu tối thiểu 8 ký tự';
+  // Validate từng field, set message + focus ô lỗi đầu tiên.
+  if (!nameValid.value) {
+    error.value = 'Vui lòng nhập họ và tên';
+    await nextTick();
+    fullNameInputRef.value?.focus();
     return;
   }
+  if (!emailValid.value) {
+    error.value = 'Email không hợp lệ';
+    await nextTick();
+    emailInputRef.value?.focus();
+    return;
+  }
+  if (!passwordValid.value) {
+    error.value = 'Mật khẩu phải có ít nhất 8 ký tự, gồm chữ hoa, chữ thường và số';
+    await nextTick();
+    passwordInputRef.value?.focus();
+    return;
+  }
+  if (!agreedToTerms.value) {
+    error.value = 'Vui lòng đồng ý với Điều khoản sử dụng và Chính sách bảo mật';
+    await nextTick();
+    tosCheckboxRef.value?.focus();
+    return;
+  }
+
   loading.value = true;
   error.value = '';
   try {
@@ -63,17 +94,24 @@ const onSubmit = async () => {
       password: password.value,
       fullName: fullName.value.trim(),
       role: role.value,
+      // F5 FIX: gửi consent lên BE để validate + audit trail.
+      agreedToTerms: true,
     });
     // fullName đã được BE lưu vào userProfiles trong cùng transaction với users
     // (xem auth.service.requestOtp). Onboarding sau này có thể đọc qua auth.me()
     // hoặc profile endpoint — không cần lưu tạm ở FE nữa.
     //
-    // Email KHÔNG truyền qua URL nữa (trước đây bị leak vào history, Referer,
-    // access log). Lưu vào sessionStorage qua store — VerifyOtpView đọc từ đó.
-    auth.setPendingVerifyEmail(email.value);
-    await router.push({ name: 'verify-otp' });
+    // D5 FIX: comment cũ nói "Lưu vào sessionStorage qua store" nhưng thực tế
+    // chỉ lưu trong Pinia memory (xem stores/auth.ts: pendingVerifyEmail ref).
+    // F5 sẽ mất email → user phải register lại (chấp nhận đánh đổi để tránh
+    // persist PII ra disk/browser storage).
+    auth.setPendingVerifyEmail(email.value, 'register');
+    // Pass source qua URL query → VerifyOtpView biết "← Quay lại đăng ký" là link phù hợp
+    await router.push({ name: 'verify-otp', query: { from: 'register' } });
   } catch (e: any) {
-    error.value = e?.response?.data?.error?.message ?? 'Đăng ký thất bại';
+    // F4 FIX: dùng helper đọc đúng HttpError envelope.
+    error.value = extractErrorMessage(e, 'Đăng ký thất bại');
+    errorCode.value = extractErrorCode(e);
   } finally {
     loading.value = false;
   }
@@ -345,6 +383,8 @@ const onSubmit = async () => {
               </label>
               <input
                 id="reg-name"
+                name="fullName"
+                ref="fullNameInputRef"
                 v-model="fullName"
                 type="text"
                 required
@@ -361,6 +401,8 @@ const onSubmit = async () => {
               </label>
               <input
                 id="reg-email"
+                name="email"
+                ref="emailInputRef"
                 v-model="email"
                 type="email"
                 required
@@ -378,6 +420,8 @@ const onSubmit = async () => {
               <div class="relative mt-1">
                 <input
                   id="reg-password"
+                  name="new-password"
+                  ref="passwordInputRef"
                   v-model="password"
                   :type="showPassword ? 'text' : 'password'"
                   required
@@ -397,22 +441,53 @@ const onSubmit = async () => {
                   <Eye v-else :size="18" />
                 </button>
               </div>
-              <p class="mt-1 text-xs text-slate-500">Mật khẩu tối thiểu 8 ký tự</p>
+              <p class="mt-1 text-xs text-slate-500">Mật khẩu tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và số</p>
             </div>
 
-            <!-- Error -->
+            <!-- Error (OAUTH_ONLY_ACCOUNT dùng banner đỏ đồng bộ với các lỗi khác, có thêm link) -->
             <p
-              v-if="error"
+              v-if="error && errorCode !== 'OAUTH_ONLY_ACCOUNT'"
               role="alert"
               class="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700"
             >
               {{ error }}
             </p>
 
+            <!-- OAUTH_ONLY_ACCOUNT: banner đỏ + link đến /login -->
+            <p
+              v-if="errorCode === 'OAUTH_ONLY_ACCOUNT'"
+              role="alert"
+              class="rounded-lg bg-red-50 border border-red-200 px-3 py-3 text-sm text-red-700 text-center"
+            >
+              Email này đã đăng ký qua Google/Facebook/GitHub.<br />
+              <RouterLink to="/login" class="font-semibold underline">
+                → Vào trang đăng nhập
+              </RouterLink>
+              và dùng nút mạng xã hội.
+            </p>
+
+            <!-- T19 FIX: ToS / Privacy consent checkbox (bắt buộc) -->
+            <label class="flex items-start gap-2 mt-2 text-xs text-slate-600 cursor-pointer">
+              <input
+                ref="tosCheckboxRef"
+                v-model="agreedToTerms"
+                type="checkbox"
+                required
+                class="mt-0.5 h-4 w-4 shrink-0 rounded border-0 ring-1 ring-slate-300 text-primary-600 focus:ring-1 focus:ring-primary-500"
+              />
+              <span class="leading-snug">
+                Tôi đồng ý với
+                <RouterLink to="/terms" target="_blank" class="text-primary-600 underline hover:text-primary-700">Điều khoản sử dụng</RouterLink>
+                và
+                <RouterLink to="/privacy" target="_blank" class="text-primary-600 underline hover:text-primary-700">Chính sách bảo mật</RouterLink>
+                của JobMatch VN.
+              </span>
+            </label>
+
             <!-- Submit -->
             <button
               type="submit"
-              :disabled="!canSubmit"
+              :disabled="loading"
               class="flex w-full items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span

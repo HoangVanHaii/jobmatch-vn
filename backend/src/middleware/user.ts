@@ -1,11 +1,26 @@
 
 import { z } from 'zod';
 
+// T7 FIX: password complexity rule. Tách thành const để dùng chung cho
+// requestOtpSchema, resetPasswordSchema, changePasswordSchema.
+const passwordSchema = z
+  .string()
+  .min(8, 'Mật khẩu phải có ít nhất 8 ký tự')
+  .regex(/[A-Z]/, 'Mật khẩu phải có ít nhất 1 chữ hoa')
+  .regex(/[a-z]/, 'Mật khẩu phải có ít nhất 1 chữ thường')
+  .regex(/[0-9]/, 'Mật khẩu phải có ít nhất 1 chữ số');
+
 export const requestOtpSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8),
+  password: passwordSchema,
   fullName: z.string().trim().min(2).max(100),
   role: z.enum(['candidate', 'employer']),
+  // F5 FIX: bắt buộc user đồng ý ToS/Privacy ở backend.
+  // Trước đây chỉ check ở FE → user bypass được bằng API call trực tiếp.
+  // Tuân thủ Nghị định 13/2023 về bảo vệ dữ liệu cá nhân VN.
+  agreedToTerms: z.literal(true, {
+    errorMap: () => ({ message: 'Bạn phải đồng ý với Điều khoản và Chính sách bảo mật' }),
+  }),
 });
 export const verifyOtpSchema = z.object({
   email: z.string().email(),
@@ -30,7 +45,7 @@ export const forgotPasswordSchema = z.object({
 export const resetPasswordSchema = z.object({
   email: z.string().email(),
   otp: z.string().regex(/^\d{6}$/, 'OTP phải gồm 6 chữ số'),
-  newPassword: z.string().min(8),
+  newPassword: passwordSchema,
 });
 export const changeAvatarSchema = z.object({
   avatarUrl: z.string().url(),
@@ -47,7 +62,7 @@ export const changeAvatarSchema = z.object({
  */
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Vui lòng nhập mật khẩu hiện tại'),
-  newPassword: z.string().min(8, 'Mật khẩu mới phải có ít nhất 8 ký tự'),
+  newPassword: passwordSchema,
 });
 
 /**
