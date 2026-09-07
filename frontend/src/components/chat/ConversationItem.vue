@@ -35,12 +35,12 @@ const onClick = (): void => emit('click', props.conversation.id);
 <template>
   <button
     type="button"
-    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition text-left"
+    class="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg transition text-left"
     :class="active ? 'bg-primary-100' : 'hover:bg-gray-100'"
     @click="onClick"
   >
     <!-- Avatar -->
-    <div class="shrink-0 w-12 h-12 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
+    <div class="shrink-0 w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
       <img
         v-if="conversation.peer.avatarUrl"
         :src="conversation.peer.avatarUrl"
@@ -59,7 +59,7 @@ const onClick = (): void => emit('click', props.conversation.id);
     <div class="flex-1 min-w-0">
       <div class="flex items-baseline justify-between gap-2">
         <p
-          class="truncate text-sm"
+          class="truncate text-[13px]"
           :class="active ? 'font-semibold text-primary-900' : 'font-medium text-gray-900'"
         >
           {{ conversation.peer.fullName ?? 'Người dùng' }}
@@ -67,12 +67,12 @@ const onClick = (): void => emit('click', props.conversation.id);
         <span class="shrink-0 text-[10px] text-gray-400 font-mono">{{ timeLabel }}</span>
       </div>
       <div class="flex items-center justify-between gap-2 mt-0.5">
-        <p class="text-xs text-gray-500 truncate flex-1">
+        <p class="text-[11px] text-gray-500 truncate flex-1">
           {{ conversation.lastMessagePreview ?? 'Chưa có tin nhắn' }}
         </p>
         <span
           v-if="conversation.unreadCount > 0"
-          class="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-primary-500 text-white text-[10px] font-bold flex items-center justify-center"
+          class="shrink-0 min-w-[18px] h-4 px-1 rounded-full bg-primary-500 text-white text-[10px] font-bold flex items-center justify-center"
         >
           {{ conversation.unreadCount > 99 ? '99+' : conversation.unreadCount }}
         </span>

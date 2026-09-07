@@ -1,23 +1,4 @@
 <script setup lang="ts">
-/**
- * PostedJobsView — trang "Job đã đăng" cho employer tại `/employer/jobs`.
- *
- * Pattern filter y hệt JobsView (candidate) nhưng với các khác biệt:
- *  - Filter status (live/draft/ai_scanning/ai_flagged/expired/closed) — vì
- *    employer cần quản lý job ở mọi trạng thái moderation pipeline.
- *  - Filter location/industry/jobType/jobLevel/remote giống candidate.
- *    Thứ tự filter row: Status → Địa điểm → Ngành nghề → Loại hình → Cấp bậc → Hình thức.
- *  - KHÔNG có "Có thể bạn sẽ cần" (gợi ý) — employer không cần.
- *  - Card dùng EmployerJobCard — có status badge + actions "Ứng viên / Sửa".
- *
- * Backend:
- *  - GET /api/v1/jobs/company — auth + employerOnly. Controller tự resolve
- *    companyId từ session user (qua companyMemberService.findMembershipByUserId).
- *  - Nếu employer chưa thuộc company nào → trả list rỗng → hiển thị CTA
- *    "Tạo công ty / Đăng job đầu tiên".
- *
- * Search/filter đều debounce 400ms + reset về page 1.
- */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useRouter } from 'vue-router';

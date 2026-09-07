@@ -1,25 +1,4 @@
 <script setup lang="ts">
-/**
- * CompanyView — `/employer/company`.
- *
- * Trang "Hồ sơ công ty" cho employer. Hiển thị hồ sơ công ty user đang thuộc
- * (logo, thông tin, mô tả, social, việc làm đang tuyển) + cho phép chỉnh sửa
- * (chỉ owner active hoặc admin mới PATCH được ở BE — backend enforce).
- *
- * Flow:
- *   1. Gọi `companyStore.getMyCompany()` → lấy id (slim shape id/name/logoUrl).
- *      - null → user chưa thuộc công ty nào → render empty state.
- *   2. Có id → `companyStore.fetchById(id)` để lấy full Company (kèm `jobs[]`).
- *   3. Edit mode → dùng form local, khi save gọi `companyStore.update(id, payload)`.
- *
- * Quy ước:
- *   - Dữ liệu `social` / `address` lưu dạng key-value (BE là Record).
- *     Không tự ý đoán structure — render theo đúng keys BE trả về; edit mode
- *     cho phép thêm/sửa/xoá các cặp key-value.
- *   - `slug` chỉ hiển thị (BE nói rõ slug giữ nguyên khi update).
- *   - Permission FE: ẩn nút Edit khi user không phải owner/admin. BE vẫn là
- *     lớp enforce cuối — không dựa vào FE để bảo mật.
- */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import {
