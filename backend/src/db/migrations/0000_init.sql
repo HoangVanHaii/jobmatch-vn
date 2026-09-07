@@ -87,7 +87,6 @@ CREATE TABLE companies (
   name         TEXT NOT NULL,
   slug         TEXT UNIQUE NOT NULL,
   logo_url     TEXT,
-  cover_url    TEXT,
   description  TEXT,
   industry     TEXT,
   size_range   TEXT,

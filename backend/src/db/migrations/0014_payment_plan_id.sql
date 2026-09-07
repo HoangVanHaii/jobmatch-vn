@@ -8,10 +8,14 @@
 --Get-Content backend/src/db/migrations/0014_payment_plan_id.sql | docker exec -i jobmatch_postgres psql -U jobmatch -d jobmatch_vn -v ON_ERROR_STOP=1
 
 -- Chạy: psql / scripts/migrate.ts tự động pick up file này.
+--
+-- Idempotent:
+--   - ADD COLUMN IF NOT EXISTS: PG 9.6+ native support
+--   - CREATE INDEX IF NOT EXISTS: PG native support
 -- ============================================================================
 
 ALTER TABLE payments
-  ADD COLUMN plan_id UUID REFERENCES plans(id),
-  ADD COLUMN order_code TEXT;
+  ADD COLUMN IF NOT EXISTS plan_id UUID REFERENCES plans(id),
+  ADD COLUMN IF NOT EXISTS order_code TEXT;
 
-CREATE INDEX idx_payments_plan ON payments(plan_id);
+CREATE INDEX IF NOT EXISTS idx_payments_plan ON payments(plan_id);
