@@ -1,22 +1,4 @@
 <script setup lang="ts">
-/**
- * BillingHistoryView (employer) — gói hiện tại + quota + lịch sử mua.
- *
- * Mirror candidate BillingHistoryView (frontend/src/views/candidate/BillingHistoryView.vue)
- * với:
-  - Quota keys là employer-specific (job_post, job_generation, AI tools)
-  - CTA "Nâng cấp" → /employer/pricing
-  - Theme màu indigo/amber thay vì blue/violet để phân biệt với candidate
- *
- * Layout 4 sections (EmployerLayout đã wrap qua route `/employer/*`):
- *  1. Current Plan — plan name + expiry + remainingDays + CTA "Nâng cấp"
- *  2. Quota Usage — mini-card grid cho employer-relevant quotas
- *  3. Subscriptions history (DESC theo startedAt, paginated)
- *  4. Payments history (DESC theo createdAt, paginated)
- *
- * Mỗi section fetch độc lập: 1 endpoint fail → section đó hiển thị error,
- * các section khác vẫn render bình thường.
- */
 import { computed, onMounted, ref } from 'vue';
 import {
   Calendar,

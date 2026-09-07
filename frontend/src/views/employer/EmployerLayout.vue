@@ -1,12 +1,4 @@
 <script setup lang="ts">
-/**
- * EmployerLayout
- *
- * Shell layout cho mọi page thuộc employer area — mirror CandidateLayout:
- *   - Desktop: sidebar trái (w-60 / w-16 collapsed) + main content
- *   - Mobile: sidebar ẩn mặc định, mở bằng hamburger → overlay trượt từ trái
- *     qua phải với backdrop + nút X. Auto-close khi navigate qua menu link.
- */
 import { ref } from 'vue';
 import { Menu } from 'lucide-vue-next';
 import EmployerSidebar from '@components/employer/EmployerSidebar.vue';

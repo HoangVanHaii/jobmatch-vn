@@ -19,8 +19,8 @@
  *   - Dropdown status: pending / viewed / ... / withdrawn + "Tất cả".
  *   - Pagination page/limit=20.
  */
-import { computed, onBeforeUnmount, onMounted, ref, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onBeforeUnmount, onMounted, ref, onUnmounted, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   Loader2,
   Briefcase,
@@ -55,6 +55,7 @@ import type {
 } from '@/types/application';
 
 const router = useRouter();
+const route = useRoute();
 const toast = useToastStore();
 const auth = useAuthStore();
 const chatStore = useChatStore();
@@ -171,6 +172,32 @@ const openDetail = (row: CandidateApplicationRow, e: Event): void => {
   detailOpen.value = true;
 };
 
+/**
+ * Khi user đóng detail panel (click X, Esc, click ra ngoài, navigate away…)
+ * → clear luôn `detailRow` để list row mất border-primary-500 highlight.
+ * Không clear thì row vẫn "focus" vô hình sau khi panel đã tắt.
+ */
+watch(detailOpen, (open) => {
+  if (!open) detailRow.value = null;
+});
+
+/**
+ * Deep-link từ trang khác (vd JobDetailView bấm badge điểm AI) bằng
+ * `?application=<id>`. Mở đúng đơn đó. Watch cả rows để xử lý trường hợp
+ * query có sẵn nhưng list chưa load xong (rows rỗng) — fetchList xong sẽ match lại.
+ */
+watch(
+  [() => route.query.application, rows],
+  ([appId, list]) => {
+    if (!appId || typeof appId !== 'string') return;
+    const row = list.find((r) => r.id === appId);
+    if (!row) return;
+    detailRow.value = row;
+    detailOpen.value = true;
+  },
+  { immediate: true },
+);
+
 const onDrawerWithdrawn = (id: string): void => {
   // Optimistic flip trong list (không refetch).
   const row = rows.value.find((r) => r.id === id);
@@ -195,7 +222,6 @@ const contactEmployer = async (row: CandidateApplicationRow, e: Event): Promise<
   try {
     const conversationId = await chatStore.createOrGet({
       peerUserId: row.jobPostedBy,
-      jobId: row.jobId,
     });
     void router.push({ name: 'chat', params: { id: conversationId } });
   } catch {
@@ -640,7 +666,7 @@ const confirmWithdraw = async (): Promise<void> => {
             - Mobile: không áp dụng flex-1/min-h-0, nội dung flow bình thường
               theo page scroll.
         -->
-        <div class="lg:flex-1 lg:min-h-0 lg:overflow-y-auto scrollbar-thin lg:pr-1 space-y-3 max-w-[640px]">
+        <div class="lg:flex-1 lg:min-h-0 lg:overflow-y-auto scrollbar-thin lg:pr-1 lg:pt-px space-y-3 max-w-[640px]">
           <!-- Loading -->
           <div v-if="loading" class="flex items-center justify-center py-16 text-sm text-gray-500">
             <Loader2 class="w-5 h-5 mr-2 animate-spin" /> Đang tải...
@@ -856,7 +882,7 @@ const confirmWithdraw = async (): Promise<void> => {
                     <button
                       v-if="row.jobPostedBy"
                       type="button"
-                      class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-gray-900 hover:bg-gray-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
                       :disabled="chatLoadingId === row.id"
                       @click="contactEmployer(row, $event)"
                     >
@@ -922,17 +948,20 @@ const confirmWithdraw = async (): Promise<void> => {
         />
         <!--
           Empty-state panel khi chưa chọn đơn nào.
-            - Container ngoài `h-full flex items-center justify-center` canh
-              giữa cả 2 chiều trong right column.
+            - Container ngoài wrap trong card có border + rounded giống 1 đơn
+              ứng tuyển đã chọn (`border border-gray-200 rounded-[14px]`), để
+              layout không bị "trống" khi user chưa click.
+            - Bên trong card canh giữa cả 2 chiều bằng flex.
             - `bg-white` đồng bộ với panel bên cạnh.
             - Inner `mt-12` đẩy content xuống 1 chút cho cảm giác thoáng.
         -->
         <div
           v-else
-          class="h-full flex items-center justify-center bg-white p-8"
+          class="h-full rounded-[14px] bg-white"
           aria-hidden="true"
         >
-          <div class="w-full max-w-[250px] flex flex-col items-center text-center mt-12">
+          <div class="h-full w-full flex items-center justify-center border border-gray-200 rounded-[14px] bg-white shadow-sm p-8">
+            <div class="w-full max-w-[250px] flex flex-col items-center text-center mt-12">
             <div
               class="relative w-[76px] h-[76px] rounded-[20px] bg-gradient-to-br from-violet-50 to-violet-100 flex items-center justify-center mb-5"
             >
@@ -977,6 +1006,7 @@ const confirmWithdraw = async (): Promise<void> => {
                 Chat trực tiếp với nhà tuyển dụng
               </div>
             </div>
+          </div>
           </div>
         </div>
       </div>

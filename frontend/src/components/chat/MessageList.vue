@@ -17,6 +17,13 @@ const props = defineProps<{
    * Messenger). Null nếu peer chưa set avatar → không render img slot.
    */
   peerAvatar: string | null;
+  /**
+   * Tên hiển thị của peer — chèn vào empty state ("Hãy bắt đầu cuộc trò
+   * chuyện với {name}!") để user biết đang chuẩn bị chat với ai, nhất là khi
+   * conversation được mở từ notification/JobDetailView mà user chưa thấy ở
+   * sidebar. Null → fallback "ai đó".
+   */
+  peerName?: string | null;
   hasMore: boolean;
   loading: boolean;
   peerTyping: boolean;
@@ -133,7 +140,7 @@ const grouped = computed(() => {
 <template>
   <div
     ref="scrollEl"
-    class="flex-1 overflow-y-auto scrollbar-visible px-4 py-3 space-y-3 bg-gray-50"
+    class="flex-1 overflow-y-auto scrollbar-visible px-4 py-3 space-y-1.5 bg-gray-50"
     @scroll="onScroll"
   >
     <div v-if="loading && messages.length === 0" class="flex justify-center py-12">
@@ -141,7 +148,9 @@ const grouped = computed(() => {
     </div>
 
     <p v-else-if="messages.length === 0" class="text-center text-gray-400 py-12 text-sm">
-      Chưa có tin nhắn nào. Hãy bắt đầu cuộc trò chuyện!
+      Chưa có tin nhắn nào. Hãy bắt đầu cuộc trò chuyện
+      <span v-if="peerName" class="text-gray-600 font-medium">với {{ peerName }}</span>
+      <span v-else>!</span>
     </p>
 
     <div v-if="hasMore && messages.length > 0 && !loading" class="text-center">
@@ -154,7 +163,7 @@ const grouped = computed(() => {
     </div>
 
     <template v-for="group in grouped" :key="group.date">
-      <div class="flex items-center justify-center my-2">
+      <div class="flex items-center justify-center my-1">
         <span class="px-2 py-0.5 text-[10px] text-gray-500 bg-white rounded-full border border-gray-200">
           {{ group.date === new Date().toDateString() ? 'Hôm nay' : group.date }}
         </span>
@@ -166,7 +175,7 @@ const grouped = computed(() => {
         :class="m.senderId === currentUserId ? 'justify-end' : 'justify-start'"
       >
         <div
-          class="max-w-[70%] px-3 py-2 rounded-2xl text-sm shadow-sm"
+          class="max-w-[70%] px-2.5 py-1.5 rounded-xl text-[13px] leading-snug shadow-sm"
           :class="m.senderId === currentUserId
             ? 'bg-primary-500 text-white rounded-br-md'
             : 'bg-white text-gray-800 border border-gray-200 rounded-bl-md'"
@@ -217,7 +226,7 @@ const grouped = computed(() => {
     </template>
 
     <div v-if="peerTyping" class="flex justify-start">
-      <div class="px-3 py-2 bg-white border border-gray-200 rounded-2xl rounded-bl-md">
+      <div class="px-2.5 py-1.5 bg-white border border-gray-200 rounded-xl rounded-bl-md">
         <div class="flex gap-1">
           <span class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms" />
           <span class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms" />
