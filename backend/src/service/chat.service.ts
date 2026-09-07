@@ -84,15 +84,15 @@ const decodeMessageCursor = (token: string): { createdAt: Date; id: string } => 
 
 export const chatService = {
   /**
-   * Tạo conversation với peer, hoặc trả về cái đã tồn tại (cùng cặp user + jobId).
+   * Tạo conversation với peer, hoặc trả về cái đã tồn tại (cùng cặp user).
    * - Normalize pair (userA = LEAST, userB = GREATEST) để tránh duplicate 2 chiều
    *   (xem memory conversations-unique-constraint-caveat).
    * - Không gate theo role (xem memory chat-free-form).
+   * - Migration 0034: bỏ jobId — 2 user chỉ có 1 conversation duy nhất bất kể job.
    */
   createOrGet: async (
     currentUserId: string,
     peerUserId: string,
-    jobId?: string | null,
   ): Promise<Conversation> => {
     if (currentUserId === peerUserId) {
       throw new AppError(400, 'INVALID_PEER', 'Cannot create conversation with yourself');
@@ -104,7 +104,6 @@ export const chatService = {
       where: and(
         eq(conversations.userA, userA),
         eq(conversations.userB, userB),
-        jobId ? eq(conversations.jobId, jobId) : isNull(conversations.jobId),
       ),
     });
     if (existing) return existing;
@@ -112,7 +111,6 @@ export const chatService = {
     const [created] = await db.insert(conversations).values({
       userA,
       userB,
-      jobId: jobId ?? null,
     }).returning();
 
     return created;
@@ -127,6 +125,31 @@ export const chatService = {
       throw new AppError(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found');
     }
     return conv;
+  },
+
+  /**
+   * Authz check + resolve cho cả REST controller (mini composer) lẫn
+   * socket handler (realtime emit). Trả về `conv` để caller dùng cho
+   * broadcast (`userA`/`userB` để tính peerId, tránh query lại).
+   *
+   * Throw:
+   *   - 404 CONVERSATION_NOT_FOUND nếu conv không tồn tại.
+   *   - 403 NOT_MEMBER nếu currentUser không phải userA hoặc userB.
+   */
+  assertMemberAndGetConv: async (
+    conversationId: string,
+    currentUserId: string,
+  ): Promise<{ conv: Conversation }> => {
+    const conv = await db.query.conversations.findFirst({
+      where: eq(conversations.id, conversationId),
+    });
+    if (!conv) {
+      throw new AppError(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found');
+    }
+    if (conv.userA !== currentUserId && conv.userB !== currentUserId) {
+      throw new AppError(403, 'NOT_MEMBER', 'Bạn không thuộc cuộc hội thoại này');
+    }
+    return { conv };
   },
 
   // ---------------------------------------------------------------------
@@ -217,7 +240,6 @@ export const chatService = {
 
       return {
         id: conv.id,
-        jobId: conv.jobId,
         lastMessageAt: conv.lastMessageAt,
         lastMessagePreview: conv.lastMessagePreview,
         createdAt: conv.createdAt,

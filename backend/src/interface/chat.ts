@@ -21,6 +21,17 @@ export interface MessagePayload {
   content: string;
 }
 
+/**
+ * Body POST /conversations/:id/messages — REST sync fallback.
+ *
+ * `tempId` optional — caller (FE) gửi kèm để reconcile optimistic UI; BE
+ * echo lại qua socket `chat:message` broadcast.
+ */
+export interface SendMessageBody {
+  content: string;
+  tempId?: string;
+}
+
 /** Body emit `chat:read` từ client */
 export interface ReadPayload {
   conversationId: string;
@@ -45,10 +56,12 @@ export interface ConversationPeer {
 /**
  * Conversation kèm peer (peer = user còn lại so với currentUser).
  * Build bằng cách: pick userA/userB, so với currentUserId → peer là user còn lại.
+ *
+ * Schema 0034 đã drop cột `jobId` (unique 2-user) — không còn jobContext
+ * ở conv. Job liên quan được track qua notification payload (nếu cần).
  */
 export interface ConversationWithPeer {
   id: Conversation['id'];
-  jobId: Conversation['jobId'];
   lastMessageAt: Conversation['lastMessageAt'];
   lastMessagePreview: Conversation['lastMessagePreview'];
   createdAt: Conversation['createdAt'];
