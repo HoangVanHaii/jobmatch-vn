@@ -6,6 +6,7 @@ import { oauthService } from '../service/oauth.service';
 import { AppError } from '../middleware/errorHandler';
 import { validate } from '../middleware/validate';
 import { completeOAuthSchema } from '../middleware/user';
+import { logger } from '../config/logger';
 
 type Provider = 'google' | 'facebook' | 'github';
 
@@ -46,12 +47,23 @@ export const oauthController = {
       const cookieState = typeof req.cookies?.oauth_state === 'string' ? req.cookies.oauth_state : '';
       const state = bodyState || cookieState;
       if (!code || !state || !codeVerifier) {
-        throw new AppError(400, 'INVALID_CALLBACK', 'Missing code, state, or codeVerifier');
+        throw new AppError(400, 'INVALID_CALLBACK', 'Thiếu mã xác thực từ nhà cung cấp. Vui lòng thử lại.');
       }
       const result = await oauthService.handleCallback(provider, code, codeVerifier, state);
       res.clearCookie('oauth_state');
       res.json({ success: true, data: result });
-    } catch (err: any) {console.error(err.message); next(err); }
+    } catch (err: any) {
+      // H3 FIX: dùng logger thay vì console.error để có structured log
+      // (context: provider, path, ip) → có thể ship lên Sentry/Datadog,
+      // consistent với các controller khác.
+      logger.error({
+        err,
+        provider: req.params.provider,
+        path: req.path,
+        ip: req.ip,
+      }, 'OAuth callback failed');
+      next(err);
+    }
   },
 
   /**

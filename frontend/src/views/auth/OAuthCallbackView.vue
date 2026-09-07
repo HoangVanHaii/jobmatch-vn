@@ -78,9 +78,21 @@ onMounted(async () => {
       // tình match các child relative redirect nếu sau này refactor router).
       const target =
         result.user.role === 'employer' ? 'employer-jobs' : 'candidate-jobs';
-      router.replace({ name: target });
+      // B2 FIX: wrap router.replace trong try/catch riêng để tránh
+      // treo vĩnh viễn nếu route bị rename/xóa/typo trong tương lai.
+      try {
+        await router.replace({ name: target });
+      } catch (navErr) {
+        console.error('[OAuthCallback] Navigation failed:', navErr);
+        error.value = 'Đăng nhập thành công nhưng không thể chuyển trang. Vui lòng nhấn F5.';
+      }
     } else {
-      router.replace({ name: 'select-role' });
+      try {
+        await router.replace({ name: 'select-role' });
+      } catch (navErr) {
+        console.error('[OAuthCallback] Navigation failed:', navErr);
+        error.value = 'Đăng ký thành công nhưng không thể chuyển trang. Vui lòng nhấn F5.';
+      }
     }
   } catch (e: any) {
     error.value = mapError(e);

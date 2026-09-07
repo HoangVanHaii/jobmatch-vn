@@ -4,6 +4,7 @@ import { oauthRateLimiter } from '../middleware/rateLimit';
 import { oauthController } from '../controller/auth.oauth.controller';
 import { validate } from '../middleware/validate';
 import { completeOAuthSchema } from '../middleware/user';
+import { auditLog } from '../middleware/auditLog';
 
 export const authOauthRouter = Router();
 
@@ -14,11 +15,11 @@ authOauthRouter.use(oauthRateLimiter);
 // với provider='complete' → initiate() → getProviderConfig(undefined) → 500.
 //
 // Thứ tự an toàn: route cụ thể trước, route động sau.
-authOauthRouter.post('/complete', validate(completeOAuthSchema, 'body'), oauthController.complete);
+authOauthRouter.post('/complete', auditLog('OAUTH_REGISTRATION_COMPLETE'), validate(completeOAuthSchema, 'body'), oauthController.complete);
 
 authOauthRouter.post('/:provider', oauthController.initiate);
-authOauthRouter.post('/:provider/callback', oauthController.callback);
+authOauthRouter.post('/:provider/callback', auditLog('OAUTH_CALLBACK'), oauthController.callback);
 
 authOauthRouter.get('/accounts', auth, oauthController.listLinked);
 authOauthRouter.post('/:provider/link', auth, oauthController.link);
-authOauthRouter.delete('/:provider', auth, oauthController.unlink);
+authOauthRouter.delete('/:provider', auth, auditLog('OAUTH_UNLINK'), oauthController.unlink);
