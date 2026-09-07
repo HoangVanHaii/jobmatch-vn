@@ -167,7 +167,7 @@ const groups: MenuGroup[] = [
     title: 'Tuyển dụng',
     items: [
       {
-        label: 'Job đã đăng',
+        label: 'Việc làm đã đăng',
         icon: Briefcase,
         to: '/employer/jobs',
         activeOn: ['/employer/jobs'],

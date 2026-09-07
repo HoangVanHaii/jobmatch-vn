@@ -71,7 +71,7 @@ export const cvParsedDataSchema = z.object({
 export type CvParsedData = z.infer<typeof cvParsedDataSchema>;
 const parsingLlm = createGemini({
     temperature: 0.1,
-    maxOutputTokens: 4096
+    maxOutputTokens: 8192
 });
 export interface CvParseResult {
   data: CvParsedData;

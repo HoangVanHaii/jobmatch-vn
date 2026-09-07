@@ -60,6 +60,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'viec-lam', name: 'candidate-jobs', component: () => import('@views/candidate/JobsView.vue') },
       { path: 'viec-lam/:id', name: 'candidate-job-detail', component: () => import('@views/candidate/JobDetailView.vue') },
       { path: 'saved-jobs', name: 'candidate-saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
+      { path: 'applications', name: 'candidate-applications', component: () => import('@views/candidate/AppliedJobsView.vue') },
    // { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true } }, 
 
       { path: 'chat/:id?', name: 'chat', component: ChatView, meta: { auth: true },},

@@ -19,6 +19,7 @@ export const jobModerationQueue = new Queue('jobModeration', queueOptions);
 export const jobEmbeddingQueue = new Queue('jobEmbedding', queueOptions);
 export const cvParsingQueue = new Queue('cvParsing', queueOptions);
 export const cvAnalysisQueue = new Queue('cvAnalysis', queueOptions);
+export const cvMatchQueue = new Queue('cvMatch', queueOptions);
 
 export type JobName =
   | "send-email"

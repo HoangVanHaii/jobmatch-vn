@@ -21,7 +21,7 @@ export type JdDraft = z.infer<typeof jdDraftSchema>;
 
 const generationLlm = createGemini({
   temperature: 0.7,
-  maxOutputTokens: 4096,
+  maxOutputTokens: 8192,
 });
 export interface JdDraftData {
   data: JdDraft;
