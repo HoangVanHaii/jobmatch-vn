@@ -1,28 +1,4 @@
 <script setup lang="ts">
-/**
- * CompanyMembersView — `/employer/company/members`.
- *
- * Trang quản lý thành viên công ty (owner-only actions). Cho phép:
- *   - Owner: mời member, sửa role/status của member, chuyển ownership.
- *   - Member: chỉ xem danh sách (BE filter ở service.listByCompany).
- *
- * Flow:
- *   1. `companyApi.getMyCompany()` → lấy id (slim). Null → empty state.
- *   2. Có id → `companyMemberStore.fetchList(id)`.
- *   3. Quyết định permission + render UI theo role/status của current user.
- *
- * Permission UX:
- *   - `isOwner` (current user có row role='owner' + status='active'): hiển thị
- *     nút Mời, menu sửa/transfer. BE vẫn enforce — không tin FE.
- *   - `hasPendingInvite` (current user có row status='pending'): banner Accept.
- *
- * Quy ước BE (CompanyMember schema + service):
- *   - Chỉ có 1 owner active duy nhất. Promote member → owner bằng transfer.
- *   - Owner luôn active (status='active') — không thể đổi status của owner.
- *   - Add member: role bị khóa literal 'member'.
- *   - Update member: KHÔNG cho role='owner' (dùng transfer).
- *   - Transfer: chỉ transfer từ owner hiện tại sang 1 ACTIVE member khác.
- */
 import { computed, onMounted, ref } from 'vue';
 import {
   AlertCircle,

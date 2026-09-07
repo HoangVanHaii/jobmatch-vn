@@ -1,28 +1,4 @@
 <script setup lang="ts">
-/**
- * ChatView — trang chat realtime giữa user ↔ user.
- *
- * Layout:
- *   ┌──────────────┬───────────────────────────────┐
- *   │ Sidebar      │ ChatWindow                    │
- *   │ (conv list)  │  - Header (peer info + back)  │
- *   │              │  - MessageList                │
- *   │              │  - MessageInput               │
- *   └──────────────┴───────────────────────────────┘
- *
- * Responsive behavior:
- *   - Desktop (≥768px): sidebar + main LUÔN cùng hiện cạnh nhau, không toggle.
- *     Click 1 conversation trên desktop → chỉ update phần content bên phải,
- *     sidebar KHÔNG bị ẩn.
- *   - Mobile (<768px): chỉ 1 panel tại 1 thời điểm — toggle sidebar ↔ chat
- *     qua `isMobileSidebar`. Click peer/conversation → chuyển sang chat view;
- *     tap back trong peer header → quay sidebar.
- *
- * URL params:
- *   /chat                      → sidebar view (chưa chọn conversation)
- *   /chat?peer=<userId>        → tạo/lấy conversation với peer, navigate
- *   /chat/:conversationId      → chat view của conversation
- */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useChatStore } from '@stores/chat';
@@ -46,20 +22,6 @@ const activeId = computed<string | null>(() => {
 
 /** Hook socket + useChat cho conversation hiện tại. */
 const chatHook = useChat(() => activeId.value ?? '');
-
-/**
- * NOTE: `chat:new` listener đã chuyển lên App.vue (global) để handle cả khi
- * user ở trang khác (chatbot, profile, ...). ChatView chỉ tập trung vào
- * conversation đang mở + realtime message/typing/read của conv đó.
- */
-
-/* ============================================================================
- * Responsive: tách rõ desktop (md+) vs mobile (<md).
- *   - Desktop: sidebar luôn hiện cạnh main.
- *   - Mobile : toggle giữa sidebar ↔ chat.
- * isDesktop phản ứng với resize để khi user xoay ngang/dọc hoặc kéo cửa sổ
- * trình duyệt, layout tự cập nhật mà không cần reload.
- * ==========================================================================*/
 const MOBILE_BREAKPOINT = 768;
 const isDesktop = ref(true);
 
@@ -78,30 +40,14 @@ onBeforeUnmount(() => {
   }
 });
 
-/**
- * Mobile-only routing — tương tự ChatbotView:
- *   - true  → hiển thị sidebar (danh sách conversation)
- *   - false → hiển thị chat area
- * Bootstrap set dựa trên activeId: có conversation → chat, không có → sidebar.
- * Chỉ có ý nghĩa trên mobile (xem `showSidebar` bên dưới).
- */
 const isMobileSidebar = ref(true);
 
 const setInitialMobileView = (): void => {
   isMobileSidebar.value = !activeId.value;
 };
 
-/**
- * Sidebar visibility (feed `v-show` cho `<ConversationList>`):
- *   - Desktop (md+): luôn `true` — sidebar không bao giờ bị ẩn, dù có chọn
- *     conversation hay không. Click conv trên desktop chỉ update content bên phải.
- *   - Mobile (<md): theo `isMobileSidebar` — toggle giữa sidebar view ↔ chat view.
- * v-show giữ DOM tĩnh nên search input + scroll position trong ConversationList
- * được bảo toàn khi user chuyển panel (đỡ reset UX).
- */
 const showSidebar = computed(() => isDesktop.value || isMobileSidebar.value);
 
-// === On mount: handle deep-link /chat?peer=<userId> ===
 onMounted(async () => {
   const peer = route.query.peer;
   if (typeof peer === 'string' && peer.length > 0) {
@@ -112,15 +58,8 @@ onMounted(async () => {
       console.error('createOrGet failed:', e);
     }
   }
-  // Set mobile view SAU khi route (có thể vừa replace sang /chat/:id).
   setInitialMobileView();
 });
-
-// === Initial load + đổi route → setActive + update mobile view ===
-// `immediate: true` để load messages NGAY khi mount nếu URL đã có `:id`
-// (vd F5 reload /chat/X — route param đã có sẵn, watch với `immediate: false`
-// sẽ không fire vì activeId "không đổi" → setActive không chạy → store.messages
-// trống + activeId = null → send() và onMessage bị filter sai).
 watch(
   () => activeId.value,
   async (id) => {
@@ -131,19 +70,6 @@ watch(
   { immediate: true },
 );
 
-/**
- * NOTE: markRead tự động được xử lý bên trong `useChat` (watcher trên
- * `lastPeerMessageId`). Khi messages load xong (initial) hoặc peer gửi tin
- * mới → useChat tự emit `chat:read` qua socket. KHÔNG cần gọi markRead ở
- * đây — race với watcher + có thể double-emit.
- *
- * Trước đây có `setTimeout(markRead, 800)` — đã bỏ vì:
- *   1) Nếu fetchMessages chậm >800ms → markRead early-return (lastPeerMessageId
- *      chưa set), chat:read không bao giờ được emit.
- *   2) Sau khi useChat có watcher, hành vi này đã được cover đầy đủ và
- *      idempotent (track lastEmittedPeerId để tránh spam).
- */
-
 const onSelect = (id: string): void => {
   auth.user?.role == 'candidate'
     ? router.push({ name: 'chat', params: { id } })
@@ -152,11 +78,6 @@ const onSelect = (id: string): void => {
   isMobileSidebar.value = false;
 };
 
-/**
- * User click 1 peer trong search results (ConversationList gọi API /users/search).
- * Flow: tạo hoặc lấy conversation với peer → navigate tới /chat/:conversationId.
- * Trên mobile, tự chuyển sang chat view (giống onSelect conversation cũ).
- */
 const onSelectPeer = async (peer: { id: string; fullName: string | null; avatarUrl: string | null; role: 'candidate' | 'employer' | 'admin' }): Promise<void> => {
   try {
     const id = await store.createOrGet({ peerUserId: peer.id });
@@ -204,17 +125,10 @@ const onBackToSidebar = (): void => {
         />
       </Transition>
 
-      <!--
-        Main chat area — trên desktop (md+) luôn visible. Trên mobile:
-          - showSidebar=true → main ẩn (đang ở sidebar view).
-          - showSidebar=false → main hiện (chat view, sidebar đã bật sang phải).
-        md:flex luôn override 'hidden' ở md+ (CSS source order).
-      -->
-      <main
+     <main
         class="flex-1 flex flex-col bg-white"
         :class="[(!isDesktop && showSidebar) ? 'hidden' : 'flex', 'md:flex']"
       >
-        <!-- Empty state khi chưa chọn conversation (chỉ desktop — mobile ở sidebar) -->
         <div
           v-if="!activeId"
           class="hidden flex-1 flex-col items-center justify-center text-gray-400 md:flex"
@@ -225,11 +139,6 @@ const onBackToSidebar = (): void => {
 
         <!-- Active conversation -->
         <template v-if="activeId">
-          <!--
-            Header — có nút back (mobile only) quay về sidebar danh sách conversation.
-            UX hợp nhất với chatbot pattern: header này là header duy nhất của
-            ChatWindow (không có top bar ngoài), back chỉ hiện trên mobile.
-          -->
           <header class="shrink-0 px-4 py-3 border-b border-gray-200 flex items-center gap-3 bg-white">
             <button
               type="button"
@@ -270,6 +179,7 @@ const onBackToSidebar = (): void => {
             :messages="chatHook.messages.value"
             :current-user-id="auth.user?.id ?? ''"
             :peer-avatar="store.activeConversation?.peer.avatarUrl ?? null"
+            :peer-name="store.activeConversation?.peer.fullName ?? null"
             :has-more="!!store.messagesCursor"
             :loading="store.loadingMessages"
             :peer-typing="chatHook.peerTyping.value"

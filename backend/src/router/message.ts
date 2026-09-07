@@ -8,5 +8,13 @@ messageRouter.use(auth);
 messageRouter.post('/conversations', messageController.create);
 messageRouter.get('/conversations', messageController.list);
 messageRouter.get('/conversations/:id/messages', messageController.listMessages);
-// TODO: wire khi sẵn sàng
-messageRouter.post('/conversations/:id/messages', (_req, res) => res.json({ success: true }));
+/**
+ * POST /conversations/:id/messages — REST sync fallback cho socket.
+ *
+ * Authz (member-only) + persist + broadcast realtime xem
+ * [controller/message.ts:send](src/controller/message.ts). Content validation
+ * (empty + max-length) làm inline trong controller để đồng nhất với socket
+ * handler `chat:message`. Tái sử dụng helpers từ
+ * [socket/chatBroadcast.ts](src/socket/chatBroadcast.ts) để DRY với socket path.
+ */
+messageRouter.post('/conversations/:id/messages', messageController.send);

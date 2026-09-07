@@ -1,25 +1,4 @@
 <script setup lang="ts">
-/**
- * MyResumesView — trang quản lý CV của candidate.
- *
- * BEHAVIOR (KHÔNG ĐỔI, chỉ đổi UI):
- *  - Filter theo source (server-side, query string): all | upload | direct
- *  - Pagination (server-side): ?limit, ?offset
- *  - Search client-side theo title
- *  - Open preview (click card hoặc menu "Xem chi tiết")
- *  - Set primary (in preview modal + quick-action trên card)
- *  - Re-analyze bằng AI (quick-action trên card, chỉ khi ready/failed)
- *  - Soft delete + confirm
- *  - Socket cv:status-changed → patch list + refresh detail khi ready
- *
- * UI/UX redesign v3 — "document workspace" polish pass:
- *  - Toolbar/filter làm lại: tab có icon riêng cho từng loại nguồn,
- *    chip "Xoá lọc" hiện khi có filter/search đang active
- *  - Thumbnail CV thật vẫn là trung tâm, hiệu ứng "xếp chồng giấy" bằng box-shadow
- *  - Dải màu trạng thái mảnh ở mép trên card
- *  - Quick-actions (Đặt chính / Phân tích lại) nổi trên thumbnail, gọn trong dropdown ⋮ còn Xem/Xóa
- *  - Skeleton loading, transition mượt cho modal
- */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';

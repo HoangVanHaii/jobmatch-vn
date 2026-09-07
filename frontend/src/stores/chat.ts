@@ -226,12 +226,13 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * Tạo hoặc lấy conversation với peer — dùng khi bấm "Chat với X".
    * Trả về conversationId để navigate.
+   *
+   * Migration 0034: 2-user unique, không còn jobId.
    */
   const createOrGet = async (input: CreateConversationInput): Promise<string> => {
     const { data } = await chatApi.createOrGet(input);
     upsertConversation({
       id: data.data.id,
-      jobId: data.data.jobId,
       lastMessageAt: data.data.lastMessageAt,
       lastMessagePreview: data.data.lastMessagePreview,
       createdAt: data.data.createdAt,
