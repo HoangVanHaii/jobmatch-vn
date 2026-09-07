@@ -1,0 +1,30 @@
+-- =============================================================================
+-- 0032 — Thêm 'company' vào notification_type enum
+--
+-- Lý do: trước đây company-member lifecycle dùng 2 type khác nhau (mâu thuẫn):
+--   - 'company_invite' (specific)
+--   - 'system' (generic, 9 kind trong payload)
+-- Cả hai đều liên quan cùng một domain (company membership) nhưng bị tách,
+-- khiến frontend phải dispatch 2 nhánh riêng.
+--
+-- Refactor: gom vào 1 type 'company', phân biệt bằng payload.kind. Cụ thể:
+--   - type='company' + kind='company_invite_sent'         (was: company_invite)
+--   - type='company' + kind='company_invite_accepted'      (was: system)
+--   - type='company' + kind='company_invite_declined'      (was: system)
+--   - type='company' + kind='invite_cancelled'             (was: system)
+--   - type='company' + kind='removed_from_company'         (was: system)
+--   - type='company' + kind='company_member_left'           (was: system)
+--   - type='company' + kind='company_owner_transferred'     (was: system)
+--   - type='company' + kind='company_owner_transferred_to_you'
+--   - type='company' + kind='company_owner_transferred_from_you'
+--
+-- 'system' giữ lại trong enum cho tương lai (payment / quota notifications)
+-- dù hiện không có emit nào.
+--
+-- 'company_invite' giữ nguyên trong enum cho BACKWARD COMPAT với rows cũ
+-- (PG không cho DROP VALUE trong pgEnum). Backend sẽ không emit type này nữa;
+-- frontend fallback type='company_invite' → coi như kind='company_invite_sent'
+-- để xử lý navigate.
+-- =============================================================================
+
+ALTER TYPE notification_type ADD VALUE 'company';

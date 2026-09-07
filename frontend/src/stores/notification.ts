@@ -9,6 +9,11 @@
  *
  * Lỗi 401 đã được interceptor trong http.ts tự refresh token; các lỗi khác
  * store catch → ghi vào `error.value` để UI hiển thị (toast/banner).
+ *
+ * Badge bell: `unreadCount` ưu tiên `totalUnread` từ server (count thực tế từ
+ * DB) thay vì đếm trên items đã tải. Khi `totalUnread === null` (chưa fetch
+ * lần đầu) → fallback đếm từ items (chỉ để khởi đầu). Optimistic update
+ * khi markRead/socket push để badge phản hồi ngay.
  */
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
@@ -28,12 +33,26 @@ export const useNotificationStore = defineStore('notification', () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
+  /**
+   * Tổng chưa đọc từ server (response list). `null` = chưa fetch lần đầu.
+   * `unreadCount` computed ưu tiên giá trị này → bell badge chính xác bất kể
+   * page size. Trước đây bug: đếm trên items đã tải (≤20) → user có 50 unread
+   * thấy badge "20". Bây giờ server count cho tổng thực.
+   */
+  const totalUnread = ref<number | null>(null);
+
   /** Query cho list: unread + cursor + limit (đổi filter sẽ reset ở setQuery). */
   const query = ref<ListNotificationsQuery>({ limit: DEFAULT_PAGE_SIZE });
 
   // --- Computed ---
-  /** Đếm số notification chưa đọc — dùng cho badge chuông. */
-  const unreadCount = computed(() => items.value.filter((n) => n.readAt === null).length);
+  /**
+   * Badge bell — ưu tiên `totalUnread` (server-truth). Fallback `items.filter`
+   * chỉ khi server chưa trả lần nào (khởi đầu trước khi fetchFirstPage chạy).
+   */
+  const unreadCount = computed(() => {
+    if (totalUnread.value !== null) return totalUnread.value;
+    return items.value.filter((n) => n.readAt === null).length;
+  });
   const hasMore = computed(() => nextCursor.value !== null);
   const isEmpty = computed(() => !loading.value && items.value.length === 0);
 
@@ -56,6 +75,21 @@ export const useNotificationStore = defineStore('notification', () => {
     items.value = [notification, ...items.value];
   };
 
+  /** Helper — dùng cho "Đọc tất cả": giảm badge theo số item đã mark. */
+  const decrementUnread = (count: number): void => {
+    if (count <= 0) return;
+    if (totalUnread.value !== null) {
+      totalUnread.value = Math.max(0, totalUnread.value - count);
+    }
+  };
+
+  /** Increment local totalUnread (khi socket push notification mới unread). */
+  const incrementUnread = (): void => {
+    if (totalUnread.value !== null) {
+      totalUnread.value += 1;
+    }
+  };
+
   // --- Actions ---
 
   /** Lấy trang đầu theo query hiện tại. */
@@ -66,6 +100,7 @@ export const useNotificationStore = defineStore('notification', () => {
       const { data } = await notificationApi.list(query.value);
       items.value = data.data.items;
       nextCursor.value = data.data.nextCursor;
+      totalUnread.value = data.data.totalUnread;
     } catch (e) {
       setError(e);
     } finally {
@@ -73,7 +108,10 @@ export const useNotificationStore = defineStore('notification', () => {
     }
   };
 
-  /** Lấy trang tiếp theo (cursor-based). Không làm gì nếu hết page. */
+  /**
+   * Lấy trang tiếp theo (cursor-based). Không làm gì nếu hết page.
+   * `totalUnread` luôn lấy từ response mới nhất (server-truth) thay vì cộng dồn.
+   */
   const fetchNextPage = async (): Promise<void> => {
     if (!nextCursor.value || loading.value) return;
     loading.value = true;
@@ -85,6 +123,7 @@ export const useNotificationStore = defineStore('notification', () => {
       });
       items.value = [...items.value, ...data.data.items];
       nextCursor.value = data.data.nextCursor;
+      totalUnread.value = data.data.totalUnread;
     } catch (e) {
       setError(e);
     } finally {
@@ -101,11 +140,23 @@ export const useNotificationStore = defineStore('notification', () => {
     }
   };
 
-  /** Đánh dấu 1 notification là đã đọc — đồng bộ local ngay. */
+  /** Đánh dấu 1 notification là đã đọc — đồng bộ local ngay.
+   *
+   * Bug 3: reset `error.value = null` đầu action. Trước đây nếu request fail
+   * trước đó → error banner cũ vẫn hiển thị → user nghĩ đang lỗi dù đã retry
+   * thành công. fetchFirstPage/fetchNextPage đã reset từ trước; markRead thiếu.
+   *
+   * Badge: optimistic decrement 1 khi server trả readAt (success).
+   */
   const markRead = async (id: string): Promise<boolean> => {
+    error.value = null;
     try {
       const { data } = await notificationApi.markRead(id);
+      // Chỉ decrement nếu lần đầu tiên mark (readAt chưa có → có).
+      // (Backend không cho mark-read 2 lần, nhưng check defensive vẫn đúng.)
+      const wasUnread = items.value.find((n) => n.id === id)?.readAt === null;
       markLocal(id, data.data.readAt);
+      if (wasUnread) decrementUnread(1);
       return true;
     } catch (e) {
       setError(e);
@@ -118,6 +169,7 @@ export const useNotificationStore = defineStore('notification', () => {
     items.value = [];
     nextCursor.value = null;
     error.value = null;
+    totalUnread.value = null;
     query.value = { limit: DEFAULT_PAGE_SIZE };
     unbindSocket();
   };
@@ -138,9 +190,15 @@ export const useNotificationStore = defineStore('notification', () => {
   /**
    * Handler khi nhận socket event `notification:new`. Server emit row full
    * (id, userId, type, title, payload, readAt, createdAt).
+   *
+   * Badge: optimistic increment 1 — server vẫn coi đó là unread (readAt === null).
+   * Race vs `fetchNextPage`: nếu server response chưa thấy push mới, totalUnread
+   * có thể bị overwrite thấp. Acceptable: hiếm và chỉ "giật" 1 giây cho tới
+   * khi fetch/push đồng bộ.
    */
   const onSocketNew = (notification: Notification): void => {
     pushLocal(notification);
+    incrementUnread();
   };
 
   /**
@@ -175,11 +233,11 @@ export const useNotificationStore = defineStore('notification', () => {
 
   return {
     // state
-    items, nextCursor, loading, error, query,
+    items, nextCursor, loading, error, query, totalUnread,
     // computed
     unreadCount, hasMore, isEmpty,
     // helpers
-    pushLocal, markLocal,
+    pushLocal, markLocal, decrementUnread, incrementUnread,
     // actions
     fetchFirstPage, fetchNextPage, setQuery, markRead, reset,
     bindSocket, unbindSocket,
