@@ -1,36 +1,4 @@
 <script setup lang="ts">
-/**
- * JobDetailView (employer) — trang chi tiết job tại `/employer/jobs/:id`.
- *
- * Khác với candidate JobDetailView:
- *  - Có AI Moderation card (verdict/score/flags) để employer xem lý do job bị
- *    gắn cờ (ai_flagged) hoặc tình trạng scan gần nhất.
- *  - Right sidebar là "Quản lý" chứ không phải Apply:
- *    • Nút Sửa (chỉ job draft / ai_flagged / closed)
- *    • Nút Gửi kiểm duyệt AI (chỉ draft)
- *    • Nút Re-scan (ai_flagged / expired)
- *    • Nút Xem ứng viên (link → /employer/applications?jobId=...)
- *    • Nút Xem trang công khai (mở candidate view trong tab mới)
- *    • Nút Xoá (soft delete → status=closed)
- *  - Hiển thị stats: lượt xem, ứng viên, ngày đăng, hạn nộp.
- *
- * Status color mapping (mirror EmployerJobCard):
- *   live        → green
- *   draft       → gray
- *   ai_scanning → yellow
- *   ai_flagged  → red
- *   expired     → orange
- *   closed      → gray line-through
- *
- * Backend:
- *  - GET /api/v1/jobs/:id — full detail, side-effect tăng viewsCount +1.
- *    (Owner & admin đều xem được; public ẩn job non-live.)
- *  - GET /api/v1/jobs/:id/scan — verdict + flags (nếu có).
- *    Backend check `postedBy === userId` hoặc role='admin'.
- *  - POST /api/v1/jobs/:id/submit — owner submit job draft cho AI.
- *  - POST /api/v1/jobs/:id/resubmit — admin force re-scan.
- *  - DELETE /api/v1/jobs/:id — soft delete (status='closed').
- */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {

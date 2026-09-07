@@ -1,32 +1,4 @@
 <script setup lang="ts">
-/**
- * ProfileView — Candidate Profile Dashboard.
- *
- * Mục tiêu UX: biến trang từ "form CRUD thông tin cá nhân" thành "dashboard
- * hồ sơ nghề nghiệp" — có overview, completion %, CTA rõ ràng cho field
- * trống, và section icon đồng bộ design system.
- *
- * Business logic giữ nguyên 100%:
- *   - GET/PATCH /candidates/profile (candidate.api.ts).
- *   - View ↔ Edit mode toggle, validation, dirty tracking, partial payload.
- *   - Toast feedback (success/error/info).
- *   - Cancel confirm khi dirty.
- *
- * UI redesign:
- *   - Card lớn hơn (max-w-5xl), padding 24–28px, border neutral + shadow rất
- *     nhẹ. Không dùng shadow nặng.
- *   - Section header: icon trong icon-container 36×36 primary-50, title 16px
- *     font-semibold, optional description 12px slate-500.
- *   - Field label 13px font-medium; field value 14-15px font-medium;
- *     secondary text 13px slate-500.
- *   - Empty state CTA "+ Thêm ..." thay cho "Chưa cập nhật" — click sẽ
- *     vào edit mode + focus field tương ứng.
- *   - Profile Overview card đầu trang: avatar lớn 80×80 / 96×96 + tên +
- *     email (verified badge) + location + progress bar hoàn thiện.
- *   - Social links: row-style với brand icon container, value rút gọn,
- *     ExternalLink icon khi có data, chevron khi CTA.
- *   - Career section: link "CV của tôi" → /candidate/resumes.
- */
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import {

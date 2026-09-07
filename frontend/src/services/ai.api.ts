@@ -1,5 +1,10 @@
 import { http } from './http';
 
+export interface ApiResponse<T> {
+  success: boolean;
+  data: T;
+}
+
 export const aiApi = {
   chat: async function* (messages: Array<{ role: string; content: string }>) {
     const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/ai/chat`, {
@@ -39,6 +44,9 @@ export const aiApi = {
   scoreCv: (cvData: Record<string, unknown>) => http.post('/ai/cv/score', { cvData }),
   generateJd: (data: { title: string; industry: string; level: string; keywords: string[] }) =>
     http.post('/ai/jd/generate', data),
-  generateCoverLetter: (cvData: Record<string, unknown>, jobDescription: string) =>
-    http.post('/ai/cover-letter', { cvData, jobDescription }),
+  generateCoverLetter: (params: { jobId: string; cvId?: string; language?: 'vi' | 'en' }) =>
+    http.post<ApiResponse<{ content: string }>>(
+      '/candidates/me/cover-letter',
+      params,
+    ),
 };

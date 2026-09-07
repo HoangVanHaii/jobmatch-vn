@@ -14,10 +14,13 @@ export interface ConversationPeer {
   role: PeerRole;
 }
 
-/** Conversation + peer + unread count (response shape cho GET /conversations). */
+/**
+ * Conversation + peer + unread count (response shape cho GET /conversations).
+ *
+ * Backend migration 0034: bỏ `jobId` (2-user unique).
+ */
 export interface ConversationWithPeer {
   id: string;
-  jobId: string | null;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
   createdAt: string;
@@ -37,10 +40,16 @@ export interface ListConversationsQuery {
   limit?: number;
 }
 
-/** Body POST /conversations */
+/**
+ * Body POST /conversations
+ *
+ * Backend migration 0034: 2-user unique → bỏ `jobId` param. 2 user chỉ có
+ * 1 conversation duy nhất bất kể job (trước đây mỗi job = 1 conv riêng).
+ * Nếu cần truy ngữ cảnh job, lưu vào metadata của message đầu tiên hoặc
+ * notification.payload — không FK cứng.
+ */
 export interface CreateConversationInput {
   peerUserId: string;
-  jobId?: string | null;
 }
 
 /** 1 dòng trong bảng chat_messages. */

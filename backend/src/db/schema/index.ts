@@ -24,5 +24,7 @@ export * from './workflowLogs';
 // AI job moderation
 export * from './jobAiScans';
 export * from './jobAiFlags';
+// Job feedback (rating + comment) từ candidate sau khi apply
+export * from './jobFeedbacks';
 // Embeddings (pgvector — polymorphic: contentType + contentId)
 export * from './embeddings';

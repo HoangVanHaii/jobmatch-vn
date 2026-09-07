@@ -1,26 +1,5 @@
 <script setup lang="ts">
-/**
- * SettingsView — trang Cài đặt cho candidate.
- *
- * Layout: 3 card (đồng bộ design system với ProfileView) trong `max-w-5xl` container.
- *   1. Tài khoản — avatar + name + email + role + status + link "Chỉnh sửa hồ sơ".
- *   2. Bảo mật — list "Phương thức đăng nhập" (email/password + OAuth đã link) +
- *      row "Mật khẩu" (chỉ hiện khi user có local password; click mở modal đổi MK).
- *      OAuth-only user thấy notice "Tài khoản dùng Google — không cần mật khẩu".
- *   3. Ngôn ngữ — dropdown chọn Tiếng Việt / English (UI only, chưa có backend).
- *
- * Provider detection: lấy từ `auth.user.hasPassword` + `auth.user.linkedProviders`
- * (đã populate qua GET /users/me — xem backend/src/router/user.ts).
- * Mặc định `hasPassword = true` nếu backend chưa trả field → user legacy không bị
- * mất khả năng đổi password.
- *
- * UX:
- *   - Card bo góc vừa (rounded-2xl), border + shadow rất nhẹ (đồng bộ ProfileView).
- *   - Typography hierarchy rõ (title 16-18px font-semibold, secondary 12-13px slate-500).
- *   - Icon Lucide đồng nhất; không emoji.
- *   - Click "Chỉnh sửa hồ sơ" → router.push('/candidate/profile').
- *   - Click "Đổi mật khẩu" → mở ChangePasswordModal (Teleport, có backdrop+Esc).
- */
+
 import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';

@@ -1,37 +1,4 @@
 <script setup lang="ts">
-/**
- * JobsView — trang listing việc làm cho candidate tại `/candidate/viec-lam`.
- *
- * Pattern filter:
- *   - 4 nút dropdown đặt ngang hàng (Địa điểm ưu tiên đầu, sau đó Loại hình /
- *     Cấp bậc / Hình thức). Click → panel absolute hiện ra bên dưới.
- *   - Click ngoài panel hoặc chọn option → đóng panel + apply filter.
- *   - Chip removable hiện dưới thanh filter khi filter active.
- *
- * Locations:
- *   - Lấy từ provinces.open-api.vn (composable useLocations), fallback HN/HCM/ĐN
- *     nếu API trả [] hoặc fail.
- *
- * Pattern y hệt MyResumesView cho phần còn lại:
- *   - Header phẳng, không CTA
- *   - Search input debounce 400ms → fetchList({ search }, 1)
- *   - Grid 1/2/3 cols, pagination "Trước / Sau"
- *   - Local savedIds (Set) để toggle bookmark UI, chưa persist qua API.
- *
- * Gợi ý "Có thể bạn sẽ cần" (suggestions):
- *   - Khi search/filter trả 0 job → hiển thị thêm section bên dưới empty state.
- *   - Nguồn: job mới nhất (không áp filter), fetch 1 lần lúc mount, lưu trong
- *     `suggestedItems`. Không dùng search query vì semantic search cần API riêng.
- *   - UX: hiển thị 3 job đầu + nút "Xem thêm" tăng lên 6 (tối đa). Disable nút
- *     khi đã hiện hết. Save toggle dùng chung `savedIds` với list chính.
- *
- * Navigation:
- *   - Watch route.fullPath: khi user navigate đi rồi quay lại `/candidate/viec-lam`
- *     → reset local filter + store query về rỗng + fetchList({}) để bắt đầu tươi.
- *     Nếu không reset, store giữ filter cũ (vd locationCity = Hà Nội) → backend
- *     trả 0 job với local filter đã reset → hiển thị "chưa có job nào được đăng"
- *     gây nhầm lẫn.
- */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';

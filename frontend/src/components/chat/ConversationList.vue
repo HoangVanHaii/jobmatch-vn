@@ -1,19 +1,4 @@
 <script setup lang="ts">
-/**
- * ConversationList — sidebar trái: search + list conversation HOẶC search results.
- *
- * Search behavior:
- *   - Khi input rỗng → render conversation list bình thường (ConversationItem).
- *   - Khi input có text (≥2 chars) → debounce 300ms, gọi GET /users/search?q=...,
- *     render kết quả search (UserSearchResult) thay vì conversation list.
- *   - AbortSignal được gắn vào request; nếu user gõ tiếp trước khi response
- *     về, request cũ bị cancel → tránh race + flicker.
- *
- *   Click 1 search result → emit 'select-peer' (peerId + peer) để parent
- *   (ChatView) gọi chatStore.createOrGet rồi navigate tới /chat/:conversationId.
- *
- * Lấy data conversation từ chatStore + search users qua userApi.
- */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useChatStore } from '@stores/chat';
 import { userApi } from '@services/user.api';
@@ -27,13 +12,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  /** Click 1 conversation cũ — truyền conversationId. */
   (e: 'select', id: string): void;
-  /**
-   * Click 1 search result — peer chưa từng chat.
-   * Parent gọi chatStore.createOrGet(peerUserId) → navigate /chat/:id.
-   * Truyền cả full peer object để parent upsert cache mà không cần refetch.
-   */
   (e: 'select-peer', peer: UserSearchResult): void;
 }>();
 
@@ -43,12 +22,6 @@ const search = ref('');
 onMounted(async () => {
   if (store.conversations.length === 0) await store.fetchConversations(true);
 });
-
-/* ============================================================================
- * Search logic — fetch /users/search với debounce 300ms + AbortController.
- * ==========================================================================*/
-
-/** Có đang search hay không (search text đã trim ≥ 2 ký tự). */
 const isSearching = computed(() => search.value.trim().length >= 2);
 
 /** Kết quả search hiện tại. */
@@ -56,7 +29,6 @@ const searchResults = ref<UserSearchResult[]>([]);
 const searching = ref(false);
 const searchError = ref<string | null>(null);
 
-/** AbortController cho request hiện tại — abort khi user gõ tiếp hoặc unmount. */
 let currentAbort: AbortController | null = null;
 
 const cancelInFlight = (): void => {
@@ -66,7 +38,6 @@ const cancelInFlight = (): void => {
   }
 };
 
-/** Fetch với debounce — mỗi lần input đổi, debounce 300ms rồi mới gọi. */
 const runSearch = useDebounceFn(async () => {
   const q = search.value.trim();
   // Nếu không đủ dài (clear input giữa chừng) → reset state, không gọi.
@@ -154,15 +125,15 @@ const roleLabel = (role: UserSearchResult['role']): string => {
     class="flex h-full min-h-0 w-full flex-col border-r border-gray-200 bg-white md:w-80 lg:w-96 scrollbar-visible"
   >
     <!-- Header -->
-    <header class="px-4 py-3 border-b border-gray-100">
-      <h2 class="font-semibold text-gray-800 mb-2">Tin nhắn</h2>
+    <header class="px-4 py-2 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-800 mb-1.5">Tin nhắn</h2>
       <div class="relative">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
         <input
           v-model="search"
           type="text"
           placeholder="Tìm người..."
-          class="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-primary-400 focus:bg-white"
+          class="w-full pl-9 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-primary-400 focus:bg-white"
           aria-label="Tìm người để nhắn tin"
         />
         <!-- Loading indicator nhỏ bên phải search box khi đang fetch. -->
@@ -182,7 +153,7 @@ const roleLabel = (role: UserSearchResult['role']): string => {
     <div class="flex-1 min-h-0 overflow-y-auto">
       <!-- =========== SEARCH RESULTS =========== -->
       <template v-if="isSearching">
-        <p class="px-4 pt-2 pb-1 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+        <p class="px-4 pt-2 pb-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
           Kết quả tìm kiếm
         </p>
 
@@ -212,10 +183,10 @@ const roleLabel = (role: UserSearchResult['role']): string => {
           v-for="peer in searchResults"
           :key="peer.id"
           type="button"
-          class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition text-left hover:bg-primary-50 focus:bg-primary-50 focus:outline-none"
+          class="w-full flex items-center gap-3 px-4 py-2 rounded-lg transition text-left hover:bg-primary-50 focus:bg-primary-50 focus:outline-none"
           @click="onSelectPeer(peer)"
         >
-          <div class="shrink-0 w-12 h-12 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
+          <div class="shrink-0 w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
             <img
               v-if="peer.avatarUrl"
               :src="peer.avatarUrl"
@@ -230,10 +201,10 @@ const roleLabel = (role: UserSearchResult['role']): string => {
             />
           </div>
           <div class="flex-1 min-w-0">
-            <p class="font-medium text-gray-900 truncate text-sm">
+            <p class="font-medium text-gray-900 truncate text-[13px]">
               {{ peer.fullName ?? 'Người dùng' }}
             </p>
-            <p class="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+            <p class="text-[11px] text-gray-500 flex items-center gap-1 mt-0.5">
               <Briefcase v-if="peer.role === 'employer'" class="w-3 h-3" />
               {{ roleLabel(peer.role) }}
             </p>
@@ -244,10 +215,10 @@ const roleLabel = (role: UserSearchResult['role']): string => {
 
       <!-- =========== CONVERSATION LIST (default) =========== -->
       <template v-else>
-        <p class="px-4 pt-2 pb-1 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+        <p class="px-4 pt-2 pb-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
           Cuộc hội thoại
         </p>
-        <div class="px-2 py-2 space-y-1">
+        <div class="px-2 py-1.5 space-y-0.5">
           <p
             v-if="store.loadingList && store.conversations.length === 0"
             class="text-center text-gray-400 py-8 text-sm"

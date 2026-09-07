@@ -27,11 +27,12 @@ import {
   BookmarkCheck,
   Briefcase,
   Building2,
+  Clock,
+  DollarSign,
   Eye,
   FileText,
   Loader2,
   MapPin,
-  Wallet,
 } from 'lucide-vue-next';
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
@@ -126,7 +127,9 @@ const publishedLabel = computed((): string => {
 });
 
 const onCardClick = (): void => {
-  router.push(`/candidate/viec-lam/${props.job.id}`);
+  // Ưu tiên slug (SEO-friendly); fallback id cho job cũ chưa có slug.
+  const path = props.job.slug ?? props.job.id;
+  router.push(`/candidate/viec-lam/${path}`);
 };
 
 const onSaveClick = (e: MouseEvent): void => {
@@ -159,7 +162,7 @@ const onSaveClick = (e: MouseEvent): void => {
         <span v-else>{{ companyInitial }}</span>
       </div>
       <div class="min-w-0 flex-1">
-        <p class="flex items-center gap-1.5 text-sm font-medium text-gray-900">
+        <p class="flex items-center gap-1.5 text-sm font-semibold text-gray-900">
           <Building2 v-if="!job.companyLogoUrl" class="h-3.5 w-3.5 shrink-0 text-gray-400" />
           <span class="truncate">{{ job.companyName ?? 'Công ty ẩn danh' }}</span>
         </p>
@@ -191,7 +194,7 @@ const onSaveClick = (e: MouseEvent): void => {
       Main: title + chips.
       - Title clamp 2 dòng để card đều nhau khi grid.
     -->
-    <h3 class="mt-3 line-clamp-2 text-[15px] font-semibold leading-snug text-gray-900 group-hover:text-primary-700">
+    <h3 class="mt-3 line-clamp-2 text-[15px] font-bold leading-snug text-gray-900 group-hover:text-primary-700">
       {{ job.title }}
     </h3>
 
@@ -205,14 +208,15 @@ const onSaveClick = (e: MouseEvent): void => {
       </span>
       <span
         v-if="job.jobType"
-        class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700"
+        class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700"
       >
+        <Clock class="h-3 w-3" />
         {{ jobTypeLabel }}
       </span>
       <span
         class="inline-flex items-center gap-1 rounded-md bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700"
       >
-        <Wallet class="h-3 w-3" />
+        <DollarSign class="h-3 w-3" />
         {{ salaryLabel }}
       </span>
       <span
