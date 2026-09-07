@@ -24,7 +24,6 @@ export const googleVerify = async (code: string, codeVerifier: string) => {
   });
   const payload = ticket.getPayload();
   if (!payload) throw new Error('Invalid id_token payload');
-  console.log('Google profile payload:', payload as unknown as Record<string, unknown>);
   return {
     provider: 'google' as const,
     providerUserId: payload.sub,

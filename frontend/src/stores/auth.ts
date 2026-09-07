@@ -65,10 +65,19 @@ export const useAuthStore = defineStore('auth', () => {
   const refreshToken = ref<string | null>(localStorage.getItem('refresh_token'));
   const isLoading = ref(false);
   /**
-   * Email đang chờ verify OTP. Null = chưa register / F5 / verify xong → redirect
-   * về /register. Chỉ sống trong SPA memory — không persist.
+   * Email đang chờ verify OTP. Null = chưa register / verify xong → redirect
+   * về /register hoặc /login (tùy source). Chỉ sống trong SPA memory — F5 sẽ mất.
    */
   const pendingVerifyEmail = ref<string | null>(null);
+  /**
+   * Đánh dấu email pending đến từ flow nào:
+   * - 'register': OTP vừa được gửi ở RegisterView → KHÔNG cần resend
+   * - 'login'   : User bấm "Xác thực ngay" từ LoginView → OTP có thể đã expired → CẦN resend
+   *
+   * VerifyOtpView đọc flag này để quyết định auto-resend + hiển thị link "← Quay lại".
+   * F5-safe: source cũng được pass qua URL query (?from=login|register) để sống qua reload.
+   */
+  const pendingVerifySource = ref<'register' | 'login' | null>(null);
   let initPromise: Promise<void> | null = null;
 
   const isAuthenticated = computed(() => !!user.value && !!accessToken.value);
@@ -102,6 +111,7 @@ export const useAuthStore = defineStore('auth', () => {
     password: string;
     fullName: string;
     role: 'candidate' | 'employer';
+    agreedToTerms: true;
   }): Promise<void> => {
     isLoading.value = true;
     try {
@@ -144,20 +154,27 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Setter gọi SAU khi register thành công (BE đã gửi OTP), TRƯỚC khi navigate
    * sang /verify-otp. Chỉ lưu in-memory; F5/refresh sẽ reset.
+   *
+   * `source` cho biết email đến từ flow nào:
+   * - 'register' (mặc định): OTP đã được gửi ở RegisterView → KHÔNG cần resend.
+   * - 'login': User bấm "Xác thực ngay" từ LoginView → OTP có thể đã expired → CẦN resend.
    */
-  const setPendingVerifyEmail = (email: string): void => {
+  const setPendingVerifyEmail = (email: string, source: 'register' | 'login' = 'register'): void => {
     pendingVerifyEmail.value = email;
+    pendingVerifySource.value = source;
   };
 
   /** Clear sau khi verify xong, hoặc khi user quay lại /register. */
   const clearPendingVerifyEmail = (): void => {
     pendingVerifyEmail.value = null;
+    pendingVerifySource.value = null;
   };
 
   return {
     user, accessToken, refreshToken, isLoading,
     isAuthenticated,
     pendingVerifyEmail,
+    pendingVerifySource,
     fetchMe, ensureInit, login, register, verifyOtp, logout, setTokens,
     setPendingVerifyEmail, clearPendingVerifyEmail,
   };

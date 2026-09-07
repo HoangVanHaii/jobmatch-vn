@@ -37,12 +37,31 @@ export const authService = {
         password: string,
         fullName: string,
         role: 'candidate' | 'employer',
+        agreedAt?: string, // BUG #2 FIX: timestamp khi user đồng ý ToS/Privacy (ISO 8601)
     ): Promise<void> => {
         const passwordHash = await bcrypt.hash(password, 12);
+        // BUG #2 FIX: lưu consent metadata vào users.metadata để có audit trail
+        // (tuân thủ Nghị định 13/2023 về bảo vệ dữ liệu cá nhân VN).
+        // Cấu trúc metadata.consent: { tos: { acceptedAt: ISO }, privacy: { acceptedAt: ISO } }
+        const consentMetadata = agreedAt
+            ? {
+                consent: {
+                    tos: { acceptedAt: agreedAt, version: '1.0' },
+                    privacy: { acceptedAt: agreedAt, version: '1.0' },
+                },
+            }
+            : {};
+
         await db.transaction(async (tx) => {
             const [created] = await tx
                 .insert(users)
-                .values({ email, passwordHash, role, metadata: {} })
+                .values({
+                    email,
+                    passwordHash,
+                    role,
+                    status: 'pending', // CRITICAL: phải set explicit — DB default đang là 'active' do migration cũ
+                    metadata: consentMetadata,
+                })
                 .returning({ id: users.id });
             if (!created) {
                 throw new AppError(500, 'USER_INSERT_FAILED', 'Failed to create user');
@@ -50,24 +69,96 @@ export const authService = {
             await tx.insert(userProfiles).values({ userId: created.id, fullName });
         });
     },
+    /**
+     * D1 FIX: Update user đangở status='pending' (chưa verify) để cho phép
+     * user đăng ký lại cùng email. UPDATE thay vì DELETE giữ nguyên user.id
+     * ổn định, tránh FK reference broken, đồng thời vẫn preserve fullName mới.
+     *
+     * Caller PHẢI check trước:
+     *  - existing.status === 'pending'
+     *  - existing.metadata.oauth_linked rỗng (chưa OAuth)
+     *
+     * Wrap trong transaction để đảm bảo users + userProfiles update cùng lúc
+     * — nếu 1 bên fail, rollback cả2.
+     */
+    updatePendingUser: async (
+        userId: string,
+        passwordHash: string,
+        role: 'candidate' | 'employer',
+        fullName: string,
+        agreedAt?: string, // BUG #2 FIX: update consent timestamp khi re-register
+    ): Promise<void> => {
+        // BUG #2 FIX: giữ consent metadata cũ nếu có, hoặc set mới nếu là lần đầu.
+        // Khi re-register, user phải đồng ý lại → cập nhật timestamp mới.
+        const existing = await db.query.users.findFirst({
+            where: eq(users.id, userId),
+            columns: { metadata: true },
+        });
+        const existingConsent = (existing?.metadata as any)?.consent;
+        const newConsentMetadata = agreedAt
+            ? {
+                consent: {
+                    tos: { acceptedAt: agreedAt, version: '1.0' },
+                    privacy: { acceptedAt: agreedAt, version: '1.0' },
+                },
+            }
+            : existingConsent
+            ? { consent: existingConsent }
+            : {};
+
+        await db.transaction(async (tx) => {
+            await tx.update(users)
+                .set({ passwordHash, role, updatedAt: new Date(), metadata: newConsentMetadata })
+                .where(eq(users.id, userId));
+            await tx.update(userProfiles)
+                .set({ fullName })
+                .where(eq(userProfiles.userId, userId));
+        });
+    },
     verifyEmail: async (email: string): Promise<void> => {
         await db.update(users).set({ emailVerifiedAt: new Date(), status: 'active' }).where(eq(users.email, email));
     },
     verifyPassword: async (email: string, password: string): Promise<any> => {
         const user = await db.query.users.findFirst({ where: eq(users.email, email) });
-        if (!user || !user.passwordHash) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
-        if (user.status !== 'active') {
-            if (user.status === 'pending') throw new AppError(403, 'EMAIL_NOT_VERIFIED', 'Email not verified');
-            throw new AppError(403, 'ACCOUNT_INACTIVE', 'Account is not active');
+        if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
+
+        // OAuth-only user tồn tại nhưng không có local password → báo để user biết
+        // cách đăng nhập đúng (qua Google/FB/GitHub). Trước đây throw USER_NOT_FOUND
+        // generic → user confused vì "đăng ký rồi mà báo không tồn tại".
+        if (!user.passwordHash) {
+            throw new AppError(
+                400,
+                'OAUTH_ONLY_ACCOUNT',
+                'Tài khoản này đăng ký qua Google/Facebook/GitHub. Vui lòng đăng nhập bằng phương thức đó.',
+            );
         }
-        if (user.deletedAt) throw new AppError(403, 'ACCOUNT_DELETED', 'Account has been deleted');
+
+        if (user.status !== 'active') {
+            if (user.status === 'pending') throw new AppError(403, 'EMAIL_NOT_VERIFIED', 'Email chưa được xác thực. Vui lòng kiểm tra email và nhập mã OTP.');
+            throw new AppError(403, 'ACCOUNT_INACTIVE', 'Tài khoản không hoạt động. Vui lòng liên hệ hỗ trợ.');
+        }
+        if (user.deletedAt) throw new AppError(403, 'ACCOUNT_DELETED', 'Tài khoản đã bị xóa.');
         const isMatch = await bcrypt.compare(password, user.passwordHash);
-        if (!isMatch) throw new AppError(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
+        if (!isMatch) throw new AppError(401, 'INVALID_CREDENTIALS', 'Email hoặc mật khẩu không đúng.');
 
         await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
         return user;
     },
     resetPassword: async (email: string, newPassword: string): Promise<void> => {
+        // S1 FIX: chặn OAuth-only forgot-password attack.
+        // Nếu user đăng ký qua OAuth (Google/FB/GitHub) và CHƯA có local password,
+        // KHÔNG cho phép reset qua email → tránh chiếm tài khoản bằng cách
+        // biết email + compromise được OTP qua email.
+        // User OAuth-only phải đăng nhập bằng provider, hoặc qua flow riêng
+        // (set-password sau khi verify OAuth session).
+        const existing = await db.query.users.findFirst({ where: eq(users.email, email) });
+        if (existing && !existing.passwordHash) {
+            throw new AppError(
+                400,
+                'OAUTH_ONLY_ACCOUNT',
+                'Tài khoản này sử dụng đăng nhập qua Google/Facebook/GitHub. Vui lòng đăng nhập bằng phương thức đó, hoặc liên hệ hỗ trợ để đặt mật khẩu mới.',
+            );
+        }
         const passwordHash = await bcrypt.hash(newPassword, 12);
         await db.update(users).set({ passwordHash }).where(eq(users.email, email));
     },

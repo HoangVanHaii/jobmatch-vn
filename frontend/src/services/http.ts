@@ -103,6 +103,83 @@ const buildHttpErrorFromAxios = (error: AxiosError): HttpError | null => {
   return new HttpError(status, beError.code, beError.message, beError.details);
 };
 
+/**
+ * Extract user-friendly error message từ bất kỳ error nào — HttpError, AxiosError,
+ * Error thường, hoặc unknown.
+ *
+ * F4 FIX: trước đây các view đọc `e?.response?.data?.error?.message` (axios cũ) → sau
+ * khi http.ts unwrap thành HttpError, .response là undefined → fallback generic
+ * → user KHÔNG thấy message Tiếng Việt từ BE.
+ *
+ * Helper này đọc đúng:
+ * - HttpError → .message (BE đã localize)
+ * - AxiosError fallback → .response.data.error.message (chưa qua interceptor)
+ * - Error thường → .message
+ * - Unknown → fallback string
+ *
+ * Ví dụ:
+ *   try { await auth.login(...) } catch (e) {
+ *     error.value = extractErrorMessage(e, 'Đăng nhập thất bại');
+ *   }
+ */
+/**
+ * Lấy thông tin lỗi từ HttpError hoặc AxiosError body.
+ * Ưu tiên field-level details (VD: { email: ['Email không đúng định dạng'] }) nếu có,
+ * fallback envelope message.
+ */
+const getErrorInfo = (e: unknown): { message: string; details?: Record<string, unknown> } | null => {
+  // HttpError (đã qua interceptor)
+  if (e instanceof HttpError && e.message) {
+    return { message: e.message, details: e.details as Record<string, unknown> | undefined };
+  }
+  // AxiosError fallback (chưa qua interceptor)
+  if (e && typeof e === 'object' && 'response' in e) {
+    const axiosErr = e as AxiosError<ApiResponseEnvelope<unknown>>;
+    const errorBody = axiosErr.response?.data?.error;
+    if (errorBody?.message) {
+      return {
+        message: errorBody.message,
+        details: errorBody.details as Record<string, unknown> | undefined,
+      };
+    }
+  }
+  // Error thường
+  if (e instanceof Error && e.message) {
+    return { message: e.message };
+  }
+  return null;
+};
+
+/** Lấy message field-level đầu tiên (VD: "Email không đúng định dạng") để hiển thị cụ thể. */
+const getFirstFieldError = (details: Record<string, unknown> | undefined): string | null => {
+  if (!details) return null;
+  for (const _field of Object.keys(details)) {
+    const value = details[_field];
+    if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
+      return value[0] as string;
+    }
+    if (typeof value === 'string') return value;
+  }
+  return null;
+};
+
+export const extractErrorMessage = (e: unknown, fallback: string): string => {
+  const info = getErrorInfo(e);
+  if (!info) return fallback;
+  // Ưu tiên field-level message (cụ thể) > envelope message (chung)
+  return getFirstFieldError(info.details) ?? info.message ?? fallback;
+};
+
+/** Extract error code tương tự extractErrorMessage. Trả empty string nếu không có. */
+export const extractErrorCode = (e: unknown): string => {
+  if (e instanceof HttpError && e.code) return e.code;
+  if (e && typeof e === 'object' && 'response' in e) {
+    const axiosErr = e as AxiosError<ApiResponseEnvelope<unknown>>;
+    return axiosErr.response?.data?.error?.code ?? '';
+  }
+  return '';
+};
+
 // Request interceptor — attach access token
 http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = localStorage.getItem('access_token');

@@ -42,6 +42,7 @@ import {
   ArrowLeft,
 } from 'lucide-vue-next';
 import { authApi } from '@services/auth.api';
+import { extractErrorCode, extractErrorMessage } from '@services/http';
 import OtpInput from '@components/auth/OtpInput.vue';
 import { useToastStore } from '@stores/toast';
 
@@ -113,7 +114,11 @@ const emailError = computed(() => {
 const newPasswordError = computed(() => {
   if (!newPasswordTouched.value) return '';
   if (!newPassword.value) return 'Vui lòng nhập mật khẩu mới';
+  // BUG #5 FIX: check password complexity — đồng bộ với BE passwordSchema (T7).
   if (newPassword.value.length < 8) return 'Mật khẩu phải có ít nhất 8 ký tự';
+  if (!/[A-Z]/.test(newPassword.value)) return 'Mật khẩu phải có ít nhất 1 chữ hoa';
+  if (!/[a-z]/.test(newPassword.value)) return 'Mật khẩu phải có ít nhất 1 chữ thường';
+  if (!/[0-9]/.test(newPassword.value)) return 'Mật khẩu phải có ít nhất 1 chữ số';
   return '';
 });
 
@@ -130,6 +135,9 @@ const canSubmitVerify = computed(
   () =>
     otp.value.length === 6 &&
     newPassword.value.length >= 8 &&
+    /[A-Z]/.test(newPassword.value) &&
+    /[a-z]/.test(newPassword.value) &&
+    /[0-9]/.test(newPassword.value) &&
     newPassword.value === confirmPassword.value,
 );
 
@@ -192,10 +200,12 @@ const sendCode = async (): Promise<void> => {
     otp.value = '';
     otpInputRef.value?.reset();
   } catch (e: any) {
-    // BE chỉ throw khi rate-limit IP (429) hoặc lỗi mạng. Không nêu email tồn tại.
-    submitError.value =
-      e?.response?.data?.error?.message ??
-      'Không thể gửi mã OTP. Vui lòng thử lại sau.';
+    // F4 FIX: dùng helper đọc đúng HttpError. BE chỉ throw khi rate-limit IP (429)
+    // hoặc lỗi mạng. Không nêu email tồn tại.
+    submitError.value = extractErrorMessage(
+      e,
+      'Không thể gửi mã OTP. Vui lòng thử lại sau.',
+    );
   } finally {
     loading.value = false;
   }
@@ -214,12 +224,12 @@ const resend = async (): Promise<void> => {
     // Toast thông báo đã gửi lại — không thay step vẫn ở verify.
     toast.info(`Đã gửi lại mã OTP đến ${maskedEmail.value}`);
   } catch (e: any) {
-    const code = e?.response?.data?.error?.code;
+    // F4 FIX: dùng helper đọc đúng HttpError.
+    const code = extractErrorCode(e);
     if (code === 'RESEND_COOLDOWN') {
       submitError.value = 'Vui lòng đợi thêm vài giây trước khi gửi lại.';
     } else {
-      submitError.value =
-        e?.response?.data?.error?.message ?? 'Gửi lại mã thất bại. Vui lòng thử lại.';
+      submitError.value = extractErrorMessage(e, 'Gửi lại mã thất bại. Vui lòng thử lại.');
     }
   } finally {
     resending.value = false;
@@ -246,7 +256,8 @@ const submitReset = async (): Promise<void> => {
     await authApi.resetPassword(email.value, otp.value, newPassword.value);
     step.value = 'success';
   } catch (e: any) {
-    const code = e?.response?.data?.error?.code as string | undefined;
+    // F4 FIX: dùng helper đọc đúng HttpError + switch error code.
+    const code = extractErrorCode(e);
     if (code === 'OTP_INVALID') {
       submitError.value = 'Mã OTP không chính xác. Vui lòng kiểm tra lại.';
     } else if (code === 'OTP_EXPIRED') {
@@ -255,9 +266,10 @@ const submitReset = async (): Promise<void> => {
       submitError.value = 'Bạn đã nhập sai quá nhiều lần. Vui lòng gửi lại mã mới.';
     } else if (code === 'RESEND_COOLDOWN') {
       submitError.value = 'Vui lòng đợi thêm vài giây trước khi gửi lại.';
+    } else if (code === 'OAUTH_ONLY_ACCOUNT') {
+      submitError.value = 'Tài khoản này dùng Google/Facebook/GitHub. Không thể đặt lại mật khẩu qua email.';
     } else {
-      submitError.value =
-        e?.response?.data?.error?.message ?? 'Đặt lại mật khẩu thất bại. Vui lòng thử lại.';
+      submitError.value = extractErrorMessage(e, 'Đặt lại mật khẩu thất bại. Vui lòng thử lại.');
     }
     // KHÔNG reset toàn bộ form khi OTP sai — chỉ clear OTP để user nhập lại.
     // BE đã lock OTP sau MAX_ATTEMPTS=5 lần sai, lúc đó errorCode sẽ là
@@ -540,6 +552,7 @@ watch(step, (s) => {
                   <div class="relative mt-1">
                     <input
                       id="forgot-email"
+                      name="email"
                       v-model="email"
                       type="email"
                       required
@@ -661,6 +674,7 @@ watch(step, (s) => {
                   <div class="relative mt-1">
                     <input
                       id="new-password"
+                      name="new-password"
                       v-model="newPassword"
                       :type="showNewPassword ? 'text' : 'password'"
                       required
@@ -697,7 +711,7 @@ watch(step, (s) => {
                     id="new-password-hint"
                     class="mt-1 text-xs text-slate-500"
                   >
-                    Mật khẩu tối thiểu 8 ký tự
+                    Mật khẩu tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và số
                   </p>
                 </div>
 
