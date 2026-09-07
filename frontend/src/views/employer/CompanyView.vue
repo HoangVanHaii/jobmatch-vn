@@ -130,19 +130,27 @@ const fetchPendingInvites = async (): Promise<void> => {
 /**
  * Realtime handlers:
  *
- * 1. `notification:new` với type='company_invite' → user vừa được owner mời,
- *    refetch danh sách pending invites để user thấy invite mới ngay.
+ * Notification type dùng cho company-member lifecycle là 'company' (sau refactor
+ * 0032) với payload.kind phân biệt. Listener này phải match CẢ type mới lẫn
+ * type cũ ('system' / 'company_invite' — rows trước migration 0032) để tránh
+ * user phải F5 mới thấy cập nhật realtime.
  *
- * 2. `notification:new` với type='system' + kind='removed_from_company' /
- *    'invite_cancelled' (chỉ áp dụng cho user vừa bị xoá / invite bị huỷ —
- *    xem backend remove() service) → reload
- *    getMyCompany() để phát hiện user không còn active ở company nào → state
- *    'no-company' → show empty state + modal tạo công ty.
+ * 1. Mời user vào company (`type='company_invite_sent'` legacy + `type='company'`
+ *    + kind='company_invite_sent') → user vừa được owner mời, refetch pending
+ *    invites để thấy invite mới ngay.
  *
- * 3. `notification:new` với type='system' + kind='company_member_left' → có
- *    member rời khỏi company hiện tại của user (vd owner nhận notify khi
- *    member rời). Refetch getMyCompany để update member count (nếu có
- *    hiển thị sau này).
+ * 2. User vừa bị xoá / invite pending bị owner huỷ
+ *    (kind: 'removed_from_company' / 'invite_cancelled') → reload
+ *    getMyCompany() để phát hiện mất membership → state 'no-company' →
+ *    show empty state + modal tạo công ty.
+ *
+ * 3. Member khác rời company hiện tại
+ *    (kind: 'company_member_left') → refetch getMyCompany để update member
+ *    count + hiển thị ở hero/stats (nếu có).
+ *
+ * 4. Invite mới bị auto-cancel khi user tạo company mới
+ *    (kind: 'invite_auto_cancelled_on_create_company') → invite này không còn
+ *    pending nữa, refetch danh sách để cập nhật UI.
  */
 useSocket('notification:new', (n: unknown) => {
   const notif = n as {
@@ -151,32 +159,49 @@ useSocket('notification:new', (n: unknown) => {
   };
   if (!notif) return;
 
-  // Case 1: có invite mới cho user hiện tại
-  if (notif.type === 'company_invite' && loadState.value === 'no-company') {
-    void fetchPendingInvites();
+  const type = notif.type;
+  const kind = notif.payload?.kind;
+  const isCompany = type === 'company';
+  const isLegacyCompanyInvite = type === 'company_invite';
+
+  // Case 1: có invite mới cho user hiện tại (legacy + type mới).
+  if (isLegacyCompanyInvite || (isCompany && kind === 'company_invite_sent')) {
+    if (loadState.value === 'no-company') {
+      void fetchPendingInvites();
+    }
     return;
   }
 
-  // Case 2: user vừa bị xoá khỏi company (active) HOẶC invite pending bị
-  // owner huỷ → reload getMyCompany để phát hiện mất membership → state
-  // 'no-company' → show modal tạo công ty.
-  if (
-    notif.type === 'system' &&
-    (notif.payload?.kind === 'removed_from_company' ||
-      notif.payload?.kind === 'invite_cancelled')
-  ) {
+  // Case 2: user vừa bị xoá / invite pending bị huỷ.
+  // Match cả type='company' (mới) lẫn 'system' (rows cũ).
+  const isRemovedOrCancelled =
+    (isCompany || type === 'system') &&
+    (kind === 'removed_from_company' || kind === 'invite_cancelled');
+  if (isRemovedOrCancelled) {
     void loadMyCompany();
     return;
   }
 
-  // Case 3: member khác rời company hiện tại → reload để consistency
-  if (
-    notif.type === 'system' &&
-    notif.payload?.kind === 'company_member_left' &&
-    typeof notif.payload.companyId === 'string' &&
-    current.value?.id === notif.payload.companyId
-  ) {
+  // Case 3: member khác rời company hiện tại (cùng companyId).
+  const isMemberLeft =
+    (isCompany || type === 'system') &&
+    kind === 'company_member_left' &&
+    typeof notif.payload?.companyId === 'string' &&
+    current.value?.id === notif.payload.companyId;
+  if (isMemberLeft) {
     void loadMyCompany();
+    return;
+  }
+
+  // Case 4: invite tự động bị huỷ khi user tạo company mới →
+  // refetch để list pending bám sát server.
+  const isAutoCancelled =
+    (isCompany || type === 'system') &&
+    kind === 'invite_auto_cancelled_on_create_company';
+  if (isAutoCancelled) {
+    if (loadState.value === 'no-company') {
+      void fetchPendingInvites();
+    }
   }
 });
 
@@ -209,6 +234,11 @@ const acceptInvite = async (invite: CompanyInvite): Promise<void> => {
 
 /**
  * Từ chối invite → status='declined' → remove khỏi list.
+ *
+ * Bug 4 (optimistic + rollback): trước đây đợi server confirm xong mới filter
+ * local → user đợi ~200-500ms cho mỗi click. Giờ filter NGAY (optimistic) rồi
+ * rollback nếu server fail. UX mượt hơn, an toàn vì rollback đầy đủ.
+ *
  * Cùng pattern với acceptInvite — phải truyền userId vì BE check self-only.
  */
 const declineInvite = async (invite: CompanyInvite): Promise<void> => {
@@ -217,18 +247,26 @@ const declineInvite = async (invite: CompanyInvite): Promise<void> => {
     return;
   }
   inviteActionId.value = invite.companyId;
+
+  // Optimistic: snapshot + filter NGAY.
+  const snapshot = pendingInvites.value;
+  pendingInvites.value = pendingInvites.value.filter(
+    (i) => i.companyId !== invite.companyId,
+  );
+
   try {
     const result = await memberStore.declineMyInvite(invite.companyId, auth.user.id);
     if (result) {
       toast.success(`Đã từ chối lời mời từ ${invite.companyName}.`);
-      // Remove khỏi list ngay để UX mượt.
-      pendingInvites.value = pendingInvites.value.filter(
-        (i) => i.companyId !== invite.companyId,
-      );
+      // Server đã confirm, snapshot không cần rollback.
     } else {
+      // Rollback + toast.
+      pendingInvites.value = snapshot;
       toast.error(memberStore.error ?? 'Không thể từ chối lời mời.');
     }
   } catch (e) {
+    // Rollback + toast.
+    pendingInvites.value = snapshot;
     toast.error(e instanceof Error ? e.message : 'Đã có lỗi xảy ra.');
   } finally {
     inviteActionId.value = null;

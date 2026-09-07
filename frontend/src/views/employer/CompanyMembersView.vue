@@ -221,6 +221,9 @@ useSocket('notification:new', (n: unknown) => {
   const reloadKinds = new Set([
     'company_invite_accepted',
     'company_invite_declined',
+    // User thực sự decline — row chuyển sang 'declined'.
+    // Tách riêng với auto-cancelled (xem dưới) — khác về ngữ nghĩa.
+    'company_invite_auto_cancelled',
     // User bị xoá khỏi company (case soft delete active row).
     'removed_from_company',
     // Invite pending bị owner huỷ (case soft delete pending row).
@@ -233,8 +236,10 @@ useSocket('notification:new', (n: unknown) => {
     // bị auto-cancel → inviter (owner) nhận kind này và cần reload list.
     'invite_auto_cancelled_on_create_company',
   ]);
+  // Sau refactor 0032: company-member lifecycle đi qua type='company' + kind.
+  // Vẫn accept type='system' cho rows cũ chưa migrate; cùng một handler.
   if (
-    notif?.type === 'system' &&
+    (notif?.type === 'system' || notif?.type === 'company') &&
     notif.payload?.kind &&
     reloadKinds.has(notif.payload.kind) &&
     notif.payload?.companyId
@@ -374,6 +379,12 @@ const friendlyInviteError = (raw: string | null): string => {
   if (upper.includes('ALREADY_IN_COMPANY')) return 'Người dùng này đang thuộc một công ty khác.';
   if (upper.includes('USER_ACTIVE_ELSEWHERE')) {
     return 'Người dùng này đang là thành viên active của công ty khác. Họ cần rời trước khi có thể nhận lời mời mới.';
+  }
+  if (upper.includes('USER_NOT_EMPLOYER')) {
+    return 'Email này thuộc tài khoản ứng viên. Chỉ tài khoản nhà tuyển dụng mới có thể tham gia công ty.';
+  }
+  if (upper.includes('USER_NOT_ACTIVE')) {
+    return 'Tài khoản chưa kích hoạt hoặc đang bị tạm khoá — không thể tham gia công ty.';
   }
   if (upper.includes('ALREADY_PENDING')) return 'Đã có lời mời đang chờ user này phản hồi.';
   if (upper.includes('ALREADY_ACTIVE')) return 'Người dùng này đã là thành viên active của công ty.';
