@@ -44,6 +44,14 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'application_match_ready',
   'application_withdrawn',
 ]);
+export const companyMemberStatusEnum = pgEnum('company_member_status', [
+  'pending',
+  'active',
+  'declined',
+  'removed',
+  'left',
+  'auto_cancelled',
+]);
 export const skillStatusEnum = pgEnum('skill_status', ['active', 'deleted']);
 export const cvStatusEnum = pgEnum('cv_status', [
   'pending',

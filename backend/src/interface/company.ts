@@ -24,7 +24,6 @@ export type CompanyStatus = typeof companies.status.enumValues[number];
 export interface CreateCompanyInput {
   name: string;
   logoUrl?: string;
-  coverUrl?: string;
   description?: string;
   industry?: string;
   sizeRange?: string;
@@ -41,7 +40,6 @@ export interface CreateCompanyInput {
 export interface UpdateCompanyInput {
   name?: string;
   logoUrl?: string;
-  coverUrl?: string;
   description?: string;
   industry?: string;
   sizeRange?: string;
@@ -143,3 +141,43 @@ export type UpdateCompanyResponse = Company;
  * Trả về Company sau khi đổi status.
  */
 export type UpdateCompanyStatusResponse = Company;
+
+/**
+ * Thông tin người gửi lời mời — subset của User, đủ để hiển thị
+ * "Mời bởi <tên>" trên UI mà không cần JOIN bảng users đầy đủ.
+ *
+ * `email`/`fullName`/`avatarUrl` nullable vì Drizzle LEFT JOIN infer type là
+ * `string | null` (mặc dù thực tế `users.email` NOT NULL trong DB).
+ */
+export interface InviterInfo {
+  userId: string;
+  fullName: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+}
+
+/**
+ * Response của GET /companies/me/invites — danh sách lời mời đang chờ
+ * (status='invited') cho user hiện tại. Trả slim shape đủ để render invite
+ * card: thông tin company + role được mời + thông tin inviter.
+ *
+ * Trả [] khi user không có invite nào. Endpoint chỉ trả invite của chính
+ * user đang request (lấy userId từ req.user) — không có query param.
+ */
+export interface CompanyInvite {
+  companyId: string;
+  companyName: string;
+  companySlug: string;
+  companyLogoUrl: string | null;
+  companyIndustry: string | null;
+  companySizeRange: string | null;
+  /** Role mà user được mời vào. Hiện tại BE chỉ cho role='member' qua POST /members. */
+  role: 'owner' | 'member';
+  /** Thời điểm được mời (= joinedAt vì member row được insert tại thời điểm invite). */
+  invitedAt: string;
+  /** Người gửi lời mời — null nếu là owner tự tạo công ty hoặc row cũ trước migration 0025. */
+  invitedBy: InviterInfo | null;
+}
+
+/** Response của GET /companies/me/invites. */
+export type GetMyInvitesResponse = CompanyInvite[];
