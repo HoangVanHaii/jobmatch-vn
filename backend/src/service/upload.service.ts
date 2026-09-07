@@ -73,9 +73,28 @@ const mimeToExt = (mime: string): string => {
   return map[mime] ?? "bin";
 };
 
+/**
+ * RFD-01: Content-Disposition cho header (RFC 6266, chỉ ASCII).
+ * Filename gốc có thể chứa tiếng Việt → dùng filename* (RFC 5987) để
+ * giữ Unicode mà vẫn tương thích trình duyệt cũ.
+ */
+const buildContentDisposition = (originalName: string, mime: string): string => {
+  const ext = mimeToExt(mime);
+  const asciiName = `${randomUUID()}.${ext}`;
+  // UTF-8 percent-encode cho filename* (giữ nguyên dấu tiếng Việt)
+  const utf8 = `utf-8''${encodeURIComponent(originalName)}`;
+  return `attachment; filename="${asciiName}"; filename*=${utf8}`;
+};
+
 const sanitizeName = (original: string): string => {
   const base = path.basename(original);
-  const safe = base.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80);
+  // Strip extension — buildKey luôn append ext theo MIME để tránh double
+  // extension (vd. "HoangVanHai.pdf.pdf" khi MIME cũng là application/pdf).
+  const withoutExt = base.replace(/\.[^.]+$/, "");
+  const safe = withoutExt
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
   return safe || "file";
 };
 
@@ -83,6 +102,7 @@ const buildKey = (userId: string, folder: string, mime: string, originalName: st
   const now = new Date();
   const yyyy = now.getUTCFullYear();
   const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  // ext lấy từ MIME là nguồn duy nhất — sanitizeName chỉ lo phần "name".
   return `uploads/${userId}/${folder}/${yyyy}-${mm}/${randomUUID()}-${sanitizeName(originalName)}.${mimeToExt(mime)}`;
 };
 
@@ -102,6 +122,8 @@ const putBuffer = async (input: UploadInput, key: string): Promise<void> => {
   await ensureBucketOnce();
   await s3.putObject(env.S3_BUCKET, key, input.buffer, input.buffer.length, {
     "Content-Type": input.mime,
+    "Content-Disposition": buildContentDisposition(input.originalName, input.mime),
+    "Cache-Control": "private, max-age=0, no-cache",
   });
 };
 

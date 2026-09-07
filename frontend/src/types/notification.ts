@@ -3,8 +3,24 @@
  * Frontend dùng các type này làm contract khi gọi notificationApi.
  */
 
-/** Loại notification (enum notification_type ở DB) */
-export type NotificationType = 'company_invite' | 'job_match' | 'message' | 'system';
+/**
+ * Loại notification (enum notification_type ở DB).
+ *
+ * Tham chiếu backend:
+ *   - `application_new`: gửi cho employer khi có candidate apply → bell + tab ứng tuyển
+ *   - `application_match_ready`: gửi cho candidate khi AI matching worker hoàn tất
+ *   - `application_withdrawn`: gửi cho employer khi candidate rút đơn
+ *
+ * Update khi migration 0025/0026 chạy.
+ */
+export type NotificationType =
+  | 'company_invite'
+  | 'job_match'
+  | 'message'
+  | 'system'
+  | 'application_new'
+  | 'application_match_ready'
+  | 'application_withdrawn';
 
 /** Payload tuỳ loại notification — lưu JSON ở DB */
 export type NotificationPayload = Record<string, unknown>;

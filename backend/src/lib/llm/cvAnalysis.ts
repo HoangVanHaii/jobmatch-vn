@@ -21,7 +21,7 @@ export const cvAnalysisSchema = z.object({
 export type AiAnalysis = z.infer<typeof cvAnalysisSchema>;
 const analysisLlm = createGemini({
   temperature: 0.3,
-  maxOutputTokens: 2048,
+  maxOutputTokens: 8192,
 });
 export interface AiAnalysisData {
   data: AiAnalysis;

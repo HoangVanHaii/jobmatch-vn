@@ -1,309 +1,383 @@
 <script setup lang="ts">
 /**
- * ToastContainer — render hàng đợi toast toàn cục (simple form).
+ * ToastContainer — render toast đơn (single) ở top-center theo BPM pattern.
  *
- * Design v2 — modern SaaS aesthetic:
- *   - Top-right stack, gap-3, mỗi toast rộng tối đa 420px (mobile full-width).
- *   - Glassmorphism: white body 96% + backdrop-blur-md + subtle gradient tint
- *     theo level.
- *   - Left accent bar gradient (3px) + colored top border highlight để phân
- *     biệt level ngay cả khi chỉ liếc qua.
- *   - Icon container: gradient bg + soft glow shadow, kích thước 10×10 (to hơn
- *     v1 9×9) + inner highlight để có cảm giác nổi 3D nhẹ.
- *   - Typography: title 14px bold tight-tracking, message 13px regular + độ
- *     tương phản vừa phải (slate-600 thay vì gray-700 cứng).
- *   - Progress bar: gradient ngang dưới đáy + soft glow + height 2px (to hơn
- *     v1 0.5px) để dễ nhìn.
- *   - Stacking animation: mỗi toast cũ hơn dịch nhẹ sang trái + scale nhỏ
- *     hơn (0.96) khi có toast mới đẩy lên — tạo cảm giác "queue" tự nhiên.
- *   - Action button: pill-style với colored border-bottom hover underline.
+ * Mô hình reference: BPM `D:/metadata/business-process-management-platform`
+ * (`.luuly-glaze` shell + pill Toast.tsx với tone dot + dismiss + condense-up
+ * animation). Anchor `.toast` của BPM là `position: fixed; top: 72px; left: 50%;
+ * translateX(-50%); z-index: 90` — ta đặt z-index 100 để vẫn nằm trên modal
+ * (z-50) và cao hơn ToastHost chat (z-60).
  *
- * Mount 1 lần ở App.vue. Teleport sang body để tránh stacking-context
- * issue với parent có overflow/transform.
- *
- * Accessibility:
- *   - role="status" cho info/success (ít urgent).
- *   - role="alert" cho warning/error (urgent, screen-reader announce ngay).
- *   - aria-live="polite"/"assertive" tương ứng.
- *   - Close button có aria-label="Đóng thông báo".
+ * Design:
+ *   - Single toast: chỉ render entry MỚI NHẤT trong queue (latest). Push entry
+ *     mới → replace ngay (giống BPM Shell state `navToast`). Queue cũ vẫn nằm
+ *     trong store và tự hết sau `duration` — container KHÔNG prune queue để
+ *     tránh mất message trước khi user kịp đọc.
+ *   - Pill glaze: trắng gradient nhẹ + backdrop-blur + rim glow. Tone dot 9×9
+ *     borderRadius 3 với gradient per-tone (jade/blue/amber/red). Dismiss ×
+ *     bên phải, action pill bên dưới message nếu có.
+ *   - Aromor ARIA: `role="status"` (info/success, polite) hoặc
+ *     `role="alert"` (warning/error, assertive) — screen reader announce đúng
+ *     mức độ urgent.
+ *   - Stack scope: chỉ render toast SIMPLE (không có `variant='chat'`). Chat
+ *     realtime do `<ToastHost />` lo (filter `variant === 'chat'` ở file đó) → 2
+ *     component cùng đọc 1 queue nhưng render tầng khác nhau, không hiện 2
+ *     toast trùng.
  */
 import { computed } from 'vue';
-import {
-  CheckCircle2,
-  Info,
-  AlertTriangle,
-  XCircle,
-  X,
-  Sparkles,
-  ArrowRight,
-  type LucideIcon,
-} from 'lucide-vue-next';
+import { X, ArrowRight } from 'lucide-vue-next';
 import { useToastStore, type Toast, type ToastLevel } from '@stores/toast';
 
-const toastStore = useToastStore();
+const store = useToastStore();
 
-/* ============================================================================
- * Style config per level — palette + icon + role.
+/**
+ * Latest non-chat toast. `variant !== 'chat'` filter giống phiên bản cũ để
+ * không trùng với ToastHost (chat realtime).
  *
- * Mỗi level có 6 lớp class:
- *   - body       : container background + ring + shadow chính
- *   - accentBar  : gradient thanh dọc trái
- *   - iconWrap   : gradient bg icon container + ring + text
- *   - iconGlow   : colored soft glow cho icon
- *   - titleText  : màu tiêu đề (gradient text thường nặng → dùng solid đậm)
- *   - bar        : progress bar gradient
- * ==========================================================================*/
+ * WHY LATEST-ONLY: user chọn "Single toast, replace khi có mới" → UI chỉ hiển
+ * thị 1 entry. Queue cũ vẫn có trong store và sẽ tự hết sau timeout, không
+ * can thiệp từ component để tránh mất message trước khi user kịp đọc.
+ */
+const latest = computed<Toast | null>(() => {
+  const list = store.toasts.filter((t) => t.variant !== 'chat');
+  return list.length === 0 ? null : list[list.length - 1];
+});
 
-interface LevelStyle {
-  icon: LucideIcon;
-  /** Decorative icon (vd Sparkles) — optional, hiển thị cạnh title cho success. */
-  decoIcon?: LucideIcon;
-  /** Container background + ring + shadow. */
-  bodyClass: string;
-  /** Thanh accent dọc trái — gradient ngắn 2 màu. */
-  accentBarClass: string;
-  /** Icon wrapper background + ring + text. */
-  iconWrapClass: string;
-  /** Icon wrapper glow shadow (colored). */
-  iconGlowClass: string;
-  /** Title color. */
-  titleClass: string;
-  /** Progress bar gradient. */
-  barClass: string;
-  /** ARIA role — alert vs status. */
+/* ----------------------------------------------------------------------------
+ * Tone config — dot gradient + ARIA role cho mỗi level.
+ *
+ * Gradient theo từng tone map với glaze palette của BPM `luuly.css`:
+ *   - success → `--glaze-jade` (xanh ngọc)
+ *   - info    → glaze-blue   (xanh dương) — BPM không có 'info' tone, dùng blue
+ *   - warning → `--glaze-amber`
+ *   - error   → `--glaze-red`
+ *
+ * Inline gradient cho tone dot để không phụ thuộc CSS variables ở root (project
+ * jobmatch-vn chưa có glaze tokens) — copy đúng màu BPM để giữ nhất quán visual.
+ * -------------------------------------------------------------------------- */
+interface ToneCfg {
+  dotBg: string;
+  /** Text emphasis color cho title + message khi là error (urgent). */
+  textAccent: string;
+  /** ARIA role + live region per tone (xem comment class header). */
   role: 'status' | 'alert';
   ariaLive: 'polite' | 'assertive';
 }
 
-const LEVEL_STYLES: Record<ToastLevel, LevelStyle> = {
+const TONE_CFG: Record<ToastLevel, ToneCfg> = {
   success: {
-    icon: CheckCircle2,
-    decoIcon: Sparkles,
-    bodyClass:
-      'bg-white/95 ring-1 ring-emerald-200/60 shadow-xl shadow-emerald-500/15 backdrop-blur-md',
-    accentBarClass: 'bg-gradient-to-b from-emerald-400 via-emerald-500 to-teal-500',
-    iconWrapClass:
-      'bg-gradient-to-br from-emerald-400 to-teal-500 text-white ring-2 ring-white/80',
-    iconGlowClass: 'shadow-lg shadow-emerald-500/40',
-    titleClass: 'text-emerald-900',
-    barClass: 'bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-500',
+    dotBg: 'linear-gradient(180deg, #3E8F6C 0%, #2E7D5B 100%)', // glaze-jade
+    textAccent: 'text-emerald-900',
     role: 'status',
     ariaLive: 'polite',
   },
   info: {
-    icon: Info,
-    bodyClass:
-      'bg-white/95 ring-1 ring-sky-200/60 shadow-xl shadow-sky-500/15 backdrop-blur-md',
-    accentBarClass: 'bg-gradient-to-b from-sky-400 via-sky-500 to-blue-500',
-    iconWrapClass:
-      'bg-gradient-to-br from-sky-400 to-blue-500 text-white ring-2 ring-white/80',
-    iconGlowClass: 'shadow-lg shadow-sky-500/40',
-    titleClass: 'text-sky-900',
-    barClass: 'bg-gradient-to-r from-sky-400 via-sky-500 to-blue-500',
+    dotBg: 'linear-gradient(180deg, #3D7EA6 0%, #2F6A8F 100%)', // glaze-blue
+    textAccent: 'text-sky-900',
     role: 'status',
     ariaLive: 'polite',
   },
   warning: {
-    icon: AlertTriangle,
-    bodyClass:
-      'bg-white/95 ring-1 ring-amber-200/60 shadow-xl shadow-amber-500/20 backdrop-blur-md',
-    accentBarClass: 'bg-gradient-to-b from-amber-400 via-amber-500 to-orange-500',
-    iconWrapClass:
-      'bg-gradient-to-br from-amber-400 to-orange-500 text-white ring-2 ring-white/80',
-    iconGlowClass: 'shadow-lg shadow-amber-500/40',
-    titleClass: 'text-amber-900',
-    barClass: 'bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500',
+    dotBg: 'linear-gradient(180deg, #D29A2A 0%, #B9861B 100%)', // glaze-amber
+    textAccent: 'text-amber-900',
     role: 'alert',
     ariaLive: 'assertive',
   },
   error: {
-    icon: XCircle,
-    bodyClass:
-      'bg-white/95 ring-1 ring-rose-200/60 shadow-xl shadow-rose-500/20 backdrop-blur-md',
-    accentBarClass: 'bg-gradient-to-b from-rose-400 via-rose-500 to-pink-600',
-    iconWrapClass:
-      'bg-gradient-to-br from-rose-500 to-pink-600 text-white ring-2 ring-white/80',
-    iconGlowClass: 'shadow-lg shadow-rose-500/40',
-    titleClass: 'text-rose-900',
-    barClass: 'bg-gradient-to-r from-rose-400 via-rose-500 to-pink-600',
+    dotBg: 'linear-gradient(180deg, #C24C3E 0%, #B43A2E 100%)', // glaze-red
+    textAccent: 'text-rose-900',
     role: 'alert',
     ariaLive: 'assertive',
   },
 };
 
-/* ============================================================================
- * Computeds
- * ==========================================================================*/
+const onAction = (t: Toast): void => {
+  t.action?.onClick?.();
+  store.dismiss(t.id);
+};
 
-/**
- * ToastContainer chỉ render các toast SIMPLE (success/info/warning/error) —
- * tức là những toast được push qua `toast.success/error/info/warning()`
- * (không có `variant='chat'`).
- *
- * Chat variant (`variant: 'chat'`) do `<ToastHost />` đảm nhiệch riêng để có
- * UI riêng (avatar + click → navigate /chat). Nếu cả 2 cùng render sẽ hiện
- * 2 toast trùng nội dung → user thấy phiền.
- *
- * Filter `variant !== 'chat'` thay vì check `!variant` để future-proof: nếu
- * sau này có variant khác (vd 'invoice', 'system') → chỉ cần ToastHost hoặc
- * component mới filter riêng, ToastContainer không cần đụng.
- */
-const toasts = computed<Toast[]>(() =>
-  toastStore.toasts.filter((t) => t.variant !== 'chat'),
-);
-
-/** Progress bar percent — animated via CSS giảm dần theo duration. */
-const progressStyle = (toast: Toast): Record<string, string> => {
-  if (toast.duration <= 0) return {};
-  return {
-    animation: `toast-progress ${toast.duration}ms linear forwards`,
-  };
+const onDismiss = (t: Toast): void => {
+  store.dismiss(t.id);
 };
 </script>
 
 <template>
-  <!-- Teleport ra body để thoát khỏi parent stacking-context + overflow. -->
+  <!--
+    Anchor: BPM `.toast` dùng fixed top:72px + left:50% + translateX(-50%).
+    Tailwind có sẵn `top-[72px] left-1/2 -translate-x-1/2`.
+    z-100 cao hơn modal z-50 và ToastHost z-60 để không bị che.
+  -->
   <Teleport to="body">
     <div
-      class="pointer-events-none fixed inset-x-0 top-0 z-[100] flex flex-col items-center gap-3 px-3 pt-3 sm:px-4 sm:pt-5 sm:items-end"
+      class="toast-anchor pointer-events-none"
       aria-label="Thông báo"
     >
-      <TransitionGroup
-        tag="div"
-        class="flex w-full max-w-[420px] flex-col items-stretch gap-3 sm:w-[420px]"
-        enter-active-class="transition-all duration-400 ease-[cubic-bezier(0.16,1,0.3,1)]"
-        enter-from-class="opacity-0 translate-x-12 scale-95"
-        enter-to-class="opacity-100 translate-x-0 scale-100"
-        leave-active-class="transition-all duration-200 ease-in"
-        leave-from-class="opacity-100 translate-x-0 scale-100"
-        leave-to-class="opacity-0 translate-x-8 scale-95"
-        move-class="transition-transform duration-300 ease-out"
-      >
+      <!-- Top-right: offset right 16px (cùng gutter với topbar). -->
+      <Transition>
         <div
-          v-for="(t, idx) in toasts"
-          :key="t.id"
-          :role="LEVEL_STYLES[t.level].role"
-          :aria-live="LEVEL_STYLES[t.level].ariaLive"
-          :style="idx > 0 ? { transform: `translateY(0) scale(${1 - idx * 0.02})` } : undefined"
-          class="pointer-events-auto relative overflow-hidden rounded-2xl transition-transform duration-300 ease-out group"
-          :class="LEVEL_STYLES[t.level].bodyClass"
+          v-if="latest"
+          :key="latest.id"
+          class="toast-pill pointer-events-auto"
+          :role="TONE_CFG[latest.level].role"
+          :aria-live="TONE_CFG[latest.level].ariaLive"
+          :data-tone="latest.level"
         >
-          <!-- Top edge highlight (1px gradient) — subtle 3D feel -->
+          <!-- Tone dot: 9×9 borderRadius 3 (BPM Toast.tsx). -->
           <span
             aria-hidden="true"
-            class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent"
+            class="toast-dot shrink-0"
+            :style="{ background: TONE_CFG[latest.level].dotBg }"
           />
 
-          <!-- Left accent bar (3px) — colored theo level, gradient đứng -->
-          <span
-            aria-hidden="true"
-            class="absolute inset-y-0 left-0 w-[3px]"
-            :class="LEVEL_STYLES[t.level].accentBarClass"
-          />
-
-          <div class="flex items-start gap-3 p-4 pl-5 pr-3">
-            <!-- Icon wrapper — gradient bg + soft glow + ring -->
-            <div
-              class="shrink-0 w-10 h-10 rounded-xl inline-flex items-center justify-center relative"
-              :class="[LEVEL_STYLES[t.level].iconWrapClass, LEVEL_STYLES[t.level].iconGlowClass]"
-              aria-hidden="true"
+          <!-- Text block: title (optional) + message + action (optional). -->
+          <div class="toast-body min-w-0 flex-1">
+            <p
+              v-if="latest.title"
+              class="toast-title"
+              :class="TONE_CFG[latest.level].textAccent"
             >
-              <!-- Inner highlight để icon nổi 3D -->
-              <span
-                class="absolute inset-x-1 top-1 h-2 rounded-full bg-white/30 blur-[2px]"
-                aria-hidden="true"
-              />
-              <component :is="LEVEL_STYLES[t.level].icon" class="relative w-5 h-5 drop-shadow-sm" />
-            </div>
+              {{ latest.title }}
+            </p>
+            <p
+              class="toast-message"
+              :class="[
+                latest.title ? 'with-title' : 'standalone',
+                latest.level === 'success' || latest.level === 'info'
+                  ? 'text-slate-800'
+                  : TONE_CFG[latest.level].textAccent,
+              ]"
+            >
+              {{ latest.message }}
+            </p>
 
-            <!-- Content -->
-            <div class="flex-1 min-w-0 pt-0.5">
-              <!-- Title (optional) + deco icon cho success -->
-              <div v-if="t.title" class="flex items-center gap-1.5 mb-0.5">
-                <component
-                  v-if="LEVEL_STYLES[t.level].decoIcon"
-                  :is="LEVEL_STYLES[t.level].decoIcon"
-                  class="w-3.5 h-3.5 shrink-0 opacity-80"
-                  :class="LEVEL_STYLES[t.level].titleClass"
-                  aria-hidden="true"
-                />
-                <p
-                  class="text-[14px] font-bold leading-tight tracking-tight truncate"
-                  :class="LEVEL_STYLES[t.level].titleClass"
-                >
-                  {{ t.title }}
-                </p>
-              </div>
-              <p
-                class="text-[13px] leading-relaxed break-words text-slate-600"
-                :class="t.title ? '' : 'font-medium text-slate-900 text-[13.5px]'"
-              >
-                {{ t.message }}
-              </p>
-
-              <!-- Action button — pill với arrow + hover gradient bg -->
-              <button
-                v-if="t.action"
-                type="button"
-                class="mt-2.5 inline-flex items-center gap-1 h-7 px-2.5 -ml-1 rounded-lg text-[12px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-900/[0.04] hover:bg-slate-900/[0.08] ring-1 ring-slate-900/5 hover:ring-slate-900/10 transition-all duration-150 group/btn"
-                @click="t.action.onClick?.(); toastStore.dismiss(t.id)"
-              >
-                {{ t.action.label }}
-                <ArrowRight class="w-3 h-3 transition-transform duration-200 group-hover/btn:translate-x-0.5" />
-              </button>
-            </div>
-
-            <!-- Close button — subtle, hover xoay nhẹ -->
+            <!-- Action pill: optional. Click → onClick → dismiss. -->
             <button
+              v-if="latest.action"
               type="button"
-              class="shrink-0 -mt-0.5 -mr-1 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-900/[0.06] transition-all duration-150"
-              :aria-label="'Đóng thông báo'"
-              @click="toastStore.dismiss(t.id)"
+              class="toast-action"
+              @click="onAction(latest)"
             >
-              <X class="w-3.5 h-3.5" />
+              {{ latest.action.label }}
+              <ArrowRight class="action-arrow" aria-hidden="true" />
             </button>
           </div>
 
-          <!-- Progress bar (chỉ hiện nếu có duration > 0) — gradient + soft glow -->
-          <div
-            v-if="t.duration > 0"
-            class="absolute inset-x-0 bottom-0 h-[2px] overflow-hidden"
-            aria-hidden="true"
+          <!-- Dismiss × button (BPM Toast.tsx pattern). -->
+          <button
+            type="button"
+            class="toast-dismiss shrink-0"
+            aria-label="Đóng thông báo"
+            @click="onDismiss(latest)"
           >
-            <div
-              class="h-full origin-left shadow-[0_0_8px_currentColor]"
-              :class="LEVEL_STYLES[t.level].barClass"
-              :style="progressStyle(t)"
-            />
-          </div>
+            <X class="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
         </div>
-      </TransitionGroup>
+      </Transition>
     </div>
   </Teleport>
 </template>
 
 <style scoped>
-/**
- * Keyframes cho progress bar — width 100% → 0% trong `duration` ms.
- * `forwards` giữ final state (=0) để không reset về 100 khi animation xong.
+/* ============================================================================
+ * Anchor — BPM `.toast` (luuly.css): fixed top-center, dưới topbar.
+ * z-index 100 (cao hơn modal 50 + ToastHost 60) để không bị che.
+ * =========================================================================*/
+.toast-anchor {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  z-index: 100;
+  max-width: min(92vw, 380px);
+  width: max-content;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ============================================================================
+ * Pill — BPM `.luuly-glaze` rim + shadow + gradient trắng trong suốt + backdrop
+ * blur. Pill shape `border-radius: 999px`. Inline-flex căn giữa theo chiều dọc.
  *
- * Why scoped: chỉ dùng cho progress, không ảnh hưởng global.
- */
-@keyframes toast-progress {
+ * Inner top highlight `inset 0 1px 0 rgba(255,255,255,0.6)` mô phỏng glaze 3D
+ * nhẹ. Right padding nhỏ để dismiss button không chen vào text.
+ * =========================================================================*/
+.toast-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px 8px 10px;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.88) 100%);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 1px 2px rgba(20, 48, 47, 0.05),
+    0 8px 24px rgba(20, 48, 47, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* ============================================================================
+ * Tone dot — 9×9 rounded-square (BPM Toast.tsx). Inset white highlight ở top
+ * để tạo cảm giác khối 3D nhẹ.
+ * =========================================================================*/
+.toast-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+/* ============================================================================
+ * Body (text column) — title + message + action.
+ *
+ * WHY COLUMN (không phải row như BPM Toast): title + message dài cần wrap →
+ * column layout tự nhiên hơn. BPM chỉ có 1 dòng message nên dùng row OK; ở
+ * jobmatch title có thể 2-3 từ + message có thể wrap.
+ * =========================================================================*/
+.toast-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  flex: 1;
+}
+
+.toast-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0;
+  letter-spacing: -0.005em;
+}
+
+.toast-message {
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0;
+  word-break: break-word;
+  color: #5a6763; /* slate-600 — BPM --text-2 */
+}
+/* Khi có title → message nhỏ hơn, secondary feel. */
+.toast-message.with-title {
+  font-size: 12.5px;
+  color: #5a6763;
+  margin-top: 1px;
+}
+/* Message alone (không title) → đậm hơn một chút để dễ scan. */
+.toast-message.standalone {
+  font-weight: 500;
+}
+
+/* ============================================================================
+ * Action pill — BPM không có (chỉ children message). jobmatch-cũ v2 có
+ * `ToastAction` → giữ support, style subtle để không vỡ pill.
+ * =========================================================================*/
+.toast-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #11535b; /* BPM --primary */
+  background: transparent;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.toast-action:hover {
+  background: rgba(17, 83, 91, 0.06);
+}
+.action-arrow {
+  width: 12px;
+  height: 12px;
+  transition: transform 200ms ease;
+}
+.toast-action:hover .action-arrow {
+  transform: translateX(2px);
+}
+
+/* ============================================================================
+ * Dismiss × — 22×22 transparent bg với hover nền nhẹ + ink color.
+ * Lấy cảm hứng từ BPM `.luuly-focusable` (focus-visible outline 2px solid).
+ * =========================================================================*/
+.toast-dismiss {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: #8a9591; /* BPM --text-3 */
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+}
+.toast-dismiss:hover {
+  color: #16201e; /* BPM --text */
+  background: rgba(0, 0, 0, 0.04);
+}
+.toast-dismiss:focus-visible {
+  outline: 2px solid #11535b; /* BPM --focus-ring */
+  outline-offset: 2px;
+}
+
+/* ============================================================================
+ * Animation — BPM `luuly-condense` cho entrance (translateY 8→0, scale 0.97→1,
+ * opacity 0→1) + custom dissolve cho leave (translateY 0→-6, scale 1→0.97,
+ * opacity 1→0).
+ *
+ * `forwards` cho leave giữ final state (=opacity 0) để toast biến mất hẳn.
+ * =========================================================================*/
+.v-enter-active.toast-pill {
+  animation: toast-condense 400ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+.v-leave-active.toast-pill {
+  animation: toast-dissolve 200ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes toast-condense {
   from {
-    width: 100%;
+    transform: translateY(8px) scale(0.97);
+    opacity: 0;
   }
   to {
-    width: 0%;
+    transform: translateY(0) scale(1);
+    opacity: 1;
   }
 }
 
-/**
- * Subtle pulse cho progress bar — nhẹ nhàng để user cảm nhận toast đang
- * đếm ngược (không gây mất tập trung).
- */
-@keyframes toast-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.85; }
+@keyframes toast-dissolve {
+  from {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-6px) scale(0.97);
+    opacity: 0;
+  }
+}
+
+/* Mobile — topbar thường nhỏ hơn desktop, hạ anchor xuống 64px. */
+@media (max-width: 640px) {
+  .toast-anchor {
+    top: 64px;
+  }
+}
+
+/* Reduced motion — tắt animation để tránh giật cho user vestibular sensitive. */
+@media (prefers-reduced-motion: reduce) {
+  .v-enter-active.toast-pill,
+  .v-leave-active.toast-pill {
+    animation: none;
+  }
 }
 </style>
