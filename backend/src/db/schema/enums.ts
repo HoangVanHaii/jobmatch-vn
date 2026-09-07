@@ -16,7 +16,6 @@ export const subscriptionStatusEnum = pgEnum('subscription_status', ['active', '
 export const paymentStatusEnum = pgEnum('payment_status', ['pending', 'paid', 'failed', 'cancelled', 'refunded', 'expired']);
 export const companyStatusEnum = pgEnum('company_status', ['active', 'banned', 'removed']);
 export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'member']);
-export const companyMemberStatusEnum = pgEnum('company_member_status', ['active', 'invited', 'inactive']);
 /**
  * notification_type:
  *   - company_invite: gửi cho user được mời vào company
