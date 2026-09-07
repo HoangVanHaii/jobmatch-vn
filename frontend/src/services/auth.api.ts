@@ -8,6 +8,8 @@ export interface RegisterRequestPayload {
   password: string;
   fullName: string;
   role: 'candidate' | 'employer';
+  // F5 FIX: gửi consent lên BE để validate + lưu audit trail.
+  agreedToTerms: true;
 }
 
 export interface LoginPayload {

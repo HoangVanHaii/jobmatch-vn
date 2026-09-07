@@ -18,10 +18,11 @@
  *  - Form gọn hơn: chỉ Email + Password.
  *  - Branding nhẹ hơn: 1 badge + heading + description + 3 benefits + illustration.
  */
-import { ref } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '@stores/auth';
 import { useOAuth } from '@composables/useOAuth';
+import { extractErrorCode, extractErrorMessage } from '@services/http';
 import OAuthButtons from '@components/auth/OAuthButtons.vue';
 import { Check, Eye, EyeOff, Sparkles } from 'lucide-vue-next';
 
@@ -37,24 +38,68 @@ const error = ref('');
 const errorCode = ref('');
 const loading = ref(false);
 
+// Template refs để focus input đầu tiên bị lỗi (UX nhất quán với RegisterView).
+const emailInputRef = ref<HTMLInputElement | null>(null);
+const passwordInputRef = ref<HTMLInputElement | null>(null);
+
+// Client-side validation để hiển thị message VN trước khi gửi BE.
+// BE trả "Invalid input" EN nếu FE không validate — UX kém.
+const emailValid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value));
+const passwordValid = computed(() => password.value.length > 0);
+
 const onSubmit = async () => {
-  loading.value = true;
+  // Validate trước khi gửi BE — tránh round-trip không cần thiết + hiển thị message VN.
   error.value = '';
   errorCode.value = '';
+  if (!emailValid.value) {
+    error.value = 'Email không hợp lệ. Vui lòng kiểm tra lại (vd: ten@example.com).';
+    await nextTick();
+    emailInputRef.value?.focus();
+    return;
+  }
+  if (!passwordValid.value) {
+    error.value = 'Vui lòng nhập mật khẩu.';
+    await nextTick();
+    passwordInputRef.value?.focus();
+    return;
+  }
+
+  loading.value = true;
   try {
     await auth.login(email.value, password.value);
     await auth.fetchMe();
-    const redirect = route.query.redirect as string;
-    if (redirect) {
-      router.push(redirect);
+    // D2 FIX: sanitize redirect — chỉ cho phép relative path, block external URL
+    // để chặn open redirect attack (vd ?redirect=https://evil-phishing.com).
+    // F1 FIX: route.query.redirect có thể là string | string[] (vd ?redirect=/a&redirect=/b).
+    // Phải handle array case để tránh TypeError.
+    const q = route.query.redirect;
+    const rawRedirect = typeof q === 'string' ? q : Array.isArray(q) ? String(q[0] ?? '') : '';
+    const isSafeRedirect = (url: string): boolean => {
+      if (!url) return false;
+      if (!url.startsWith('/')) return false; // Phải bắt đầu bằng /
+      if (url.startsWith('//')) return false;       // //evil.com → protocol-relative
+      if (url.includes('://')) return false;        // /path@evil.com
+      return true;
+    };
+    const safeRedirect = isSafeRedirect(rawRedirect) ? rawRedirect : null;
+
+    if (safeRedirect) {
+      router.push(safeRedirect);
+    } else if (auth.user?.role === 'admin') {
+      // BUG #4 FIX: admin role không rơi vào candidate workspace.
+      // Hiện router không có /admin route (đã comment out ở router/index.ts),
+      // nên redirect thẳng /forbidden cho user thấy rõ là role không có UI.
+      router.push('/forbidden');
     } else if (auth.user?.role === 'employer') {
       router.push('/employer');
     } else {
       router.push('/candidate');
     }
   } catch (e: any) {
-    error.value = e?.response?.data?.error?.message ?? 'Đăng nhập thất bại';
-    errorCode.value = e?.response?.data?.error?.code ?? '';
+    // F4 FIX: dùng extractErrorMessage/Code helper để đọc đúng HttpError envelope
+    // (BE đã localize). Trước đây đọc axios cũ → user không thấy message VN.
+    error.value = extractErrorMessage(e, 'Đăng nhập thất bại');
+    errorCode.value = extractErrorCode(e);
   } finally {
     loading.value = false;
   }
@@ -62,6 +107,19 @@ const onSubmit = async () => {
 
 const onOAuth = async (provider: 'google' | 'facebook' | 'github') => {
   await loginWith(provider);
+};
+
+/**
+ * Bug 2 FIX: Navigate tới /verify-otp với ?from=login (không truyền email — PII).
+ * - Email lưu vào Pinia (memory, OK cho in-tab flow).
+ * - Source 'login' truyền qua URL ?from=login → F5-safe, không cần sessionStorage.
+ * VerifyOtpView đọc source từ URL query để:
+ *   1. Auto-resend OTP (vì OTP cũ có thể đã expired khi user click "Xác thực ngay")
+ *   2. Hiển thị link "← Quay lại đăng nhập" thay vì đăng ký
+ */
+const goToVerifyOtp = (): void => {
+  auth.setPendingVerifyEmail(email.value, 'login');
+  router.push({ name: 'verify-otp', query: { from: 'login' } });
 };
 </script>
 
@@ -232,6 +290,8 @@ const onOAuth = async (provider: 'google' | 'facebook' | 'github') => {
               </label>
               <input
                 id="login-email"
+                name="email"
+                ref="emailInputRef"
                 v-model="email"
                 type="email"
                 required
@@ -249,6 +309,8 @@ const onOAuth = async (provider: 'google' | 'facebook' | 'github') => {
               <div class="relative mt-1">
                 <input
                   id="login-password"
+                  name="password"
+                  ref="passwordInputRef"
                   v-model="password"
                   :type="showPassword ? 'text' : 'password'"
                   required
@@ -286,14 +348,22 @@ const onOAuth = async (provider: 'google' | 'facebook' | 'github') => {
               {{ error }}
             </p>
 
-            <!-- EMAIL_NOT_VERIFIED: link tới verify-otp -->
+            <!-- EMAIL_NOT_VERIFIED: link tới verify-otp.
+                 KHÔNG truyền email qua URL query (lộ email ra history/referer/log).
+                 Lưu email vào Pinia (verified by VerifyOtpView qua auth.pendingVerifyEmail). -->
             <p v-if="errorCode === 'EMAIL_NOT_VERIFIED'" class="text-sm text-center">
-              <RouterLink
-                :to="{ name: 'verify-otp', query: { email } }"
+              <button
+                type="button"
+                @click="goToVerifyOtp"
                 class="font-semibold text-primary-600 hover:text-primary-700 transition"
               >
                 Xác thực email ngay →
-              </RouterLink>
+              </button>
+            </p>
+
+            <!-- OAUTH_ONLY_ACCOUNT: gợi ý user dùng nút OAuth bên dưới -->
+            <p v-if="errorCode === 'OAUTH_ONLY_ACCOUNT'" class="text-sm text-center text-slate-600">
+              Tài khoản này đăng ký qua mạng xã hội. Vui lòng dùng nút Google/Facebook/GitHub bên dưới.
             </p>
 
             <!-- Submit -->

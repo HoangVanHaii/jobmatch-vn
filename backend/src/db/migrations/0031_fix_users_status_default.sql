@@ -1,0 +1,15 @@
+-- CRITICAL SECURITY FIX: Change default status of new users from 'active' to 'pending'.
+--
+-- Background:
+-- Migration 0000_init.sql created users.status with DEFAULT 'active'.
+-- This means every newly registered user (without explicit status) was active
+-- immediately, bypassing OTP email verification.
+--
+-- Schema file (users.ts) was later updated to declare default('pending'),
+-- but the database column default was NOT migrated.
+--
+-- This migration fixes the DB default to match the schema.
+--
+-- Existing users with status='active' are NOT modified — they already verified
+-- their email or were created via OAuth with verified email.
+ALTER TABLE users ALTER COLUMN status SET DEFAULT 'pending';

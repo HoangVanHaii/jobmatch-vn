@@ -9,6 +9,15 @@ const OTP_TTL_SECONDS = 5 * 60;        // OTP sống 5 phút
 const RESEND_COOLDOWN_SECONDS = 60;    // tối thiểu 60s giữa 2 lần gửi
 const MAX_ATTEMPTS = 5;                // tối đa 5 lần nhập sai / OTP
 
+// D3 FIX: Map purpose sang Tiếng Việt cho subject email. Trước đây subject
+// `Your ${purpose} OTP` toàn tiếng Anh + lộ purpose type → dễ bị đánh dấu spam
+// và attacker biết context flow.
+const purposeLabels: Record<OtpPurpose, string> = {
+    login: 'đăng nhập',
+    register: 'đăng ký tài khoản',
+    reset_password: 'đặt lại mật khẩu',
+};
+
 export const otpService = {
     requestOtp: async (email: string, purpose: OtpPurpose): Promise<void> => {
         // Cooldown gửi mail — chặn resend liên tiếp / email-bomb
@@ -25,12 +34,26 @@ export const otpService = {
         await redis.del(attemptsKey);                          // reset bộ đếm thử sai
         await redis.setex(cooldownKey, RESEND_COOLDOWN_SECONDS, '1');
 
-        await mailer.sendMail({
-            from: process.env.SMTP_FROM || 'noreply@yourapp.com',
-            to: email,
-            subject: `Your ${purpose} OTP`,
-            html: otpTemplate(code, purpose),
-        });
+        // S5 FIX: wrap mailer.sendMail trong try/catch. Nếu SMTP fail (timeout,
+        // network, server down) → OTP đã lưu Redis nhưng user không nhận được mail.
+        // Cleanup OTP + cooldown để user retry ngay không bị stuck 60s.
+        try {
+            await mailer.sendMail({
+                from: process.env.SMTP_FROM || 'noreply@yourapp.com',
+                to: email,
+                subject: `[JobMatch VN] Mã xác thực ${purposeLabels[purpose]} của bạn`,
+                html: otpTemplate(code, purpose),
+            });
+        } catch (mailErr) {
+            // Rollback OTP + cooldown khi gửi mail thất bại
+            await redis.del(key);
+            await redis.del(cooldownKey);
+            throw new AppError(
+                500,
+                'EMAIL_SEND_FAILED',
+                'Không thể gửi email. Vui lòng thử lại sau ít phút.',
+            );
+        }
     },
 
     verifyOtp: async (email: string, purpose: OtpPurpose, otp: string): Promise<void> => {

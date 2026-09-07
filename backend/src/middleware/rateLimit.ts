@@ -19,7 +19,7 @@ export const rateLimiter = rateLimit({
   store: createRedisStore('global'),
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
   max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
-  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests' } },
+  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau ít phút.' } },
 });
 
 export const oauthRateLimiter = rateLimit({
@@ -28,7 +28,7 @@ export const oauthRateLimiter = rateLimit({
   windowMs: 60_000,
   max: 10,
   keyGenerator: (req) => `oauth:${req.ip}`,
-  message: { success: false, error: { code: 'OAUTH_RATE_LIMITED', message: 'Too many OAuth attempts' } },
+  message: { success: false, error: { code: 'OAUTH_RATE_LIMITED', message: 'Quá nhiều lần thử đăng nhập OAuth. Vui lòng thử lại sau 1 phút.' } },
 });
 
 export const otpRateLimiter = rateLimit({
@@ -37,7 +37,24 @@ export const otpRateLimiter = rateLimit({
   windowMs: 60_000,
   max: 5,
   keyGenerator: (req) => `otp:${req.ip}`,
-  message: { success: false, error: { code: 'OTP_RATE_LIMITED', message: 'Too many OTP requests' } },
+  message: { success: false, error: { code: 'OTP_RATE_LIMITED', message: 'Quá nhiều yêu cầu gửi mã OTP. Vui lòng thử lại sau 1 phút.' } },
+});
+
+// S2 FIX: Login rate limit — chặn brute-force password qua IP.
+// 10 attempts / 5 phút / IP. Layer 1 defense (account-level lockout sẽ là layer 2).
+export const loginRateLimiter = rateLimit({
+  ...baseConfig,
+  store: createRedisStore('login'),
+  windowMs: 5 * 60 * 1000, // 5 phút (giảm từ 15 để UX tốt hơn, vẫn chặn brute-force)
+  max: 10,
+  keyGenerator: (req) => `login:${req.ip}`,
+  message: {
+    success: false,
+    error: {
+      code: 'LOGIN_RATE_LIMITED',
+      message: 'Quá nhiều lần đăng nhập từ IP này. Vui lòng thử lại sau 5 phút.',
+    },
+  },
 });
 
 export const adminRateLimiter = rateLimit({
@@ -46,7 +63,7 @@ export const adminRateLimiter = rateLimit({
   windowMs: 60_000,
   max: 20,
   keyGenerator: (req: any) => `admin:${req.user?.userId || req.ip}`,
-  message: { success: false, error: { code: 'ADMIN_RATE_LIMITED', message: 'Too many admin requests' } },
+  message: { success: false, error: { code: 'ADMIN_RATE_LIMITED', message: 'Quá nhiều yêu cầu admin. Vui lòng thử lại sau 1 phút.' } },
 });
 
 export const jobWriteRateLimiter = rateLimit({
@@ -55,7 +72,7 @@ export const jobWriteRateLimiter = rateLimit({
   windowMs: 60_000,
   max: 20,
   keyGenerator: (req) => `job_write:${req.ip}`,
-  message: { success: false, error: { code: 'JOB_WRITE_RATE_LIMITED', message: 'Too many job write requests' } },
+  message: { success: false, error: { code: 'JOB_WRITE_RATE_LIMITED', message: 'Quá nhiều yêu cầu tạo/sửa job. Vui lòng thử lại sau 1 phút.' } },
 });
 
 export const cvAiRateLimiter = rateLimit({
@@ -64,7 +81,7 @@ export const cvAiRateLimiter = rateLimit({
   windowMs: 60_000,
   max: 3,
   keyGenerator: (req: any) => `cv_ai:${req.user?.userId || req.ip}`,
-  message: { success: false, error: { code: 'CV_AI_RATE_LIMITED', message: 'Too many Cv Ai requests' } },
+  message: { success: false, error: { code: 'CV_AI_RATE_LIMITED', message: 'Quá nhiều yêu cầu AI CV. Vui lòng thử lại sau 1 phút.' } },
 });
 export const cvWriteRateLimiter = rateLimit({
   ...baseConfig,
@@ -72,7 +89,7 @@ export const cvWriteRateLimiter = rateLimit({
   windowMs: 60_000,
   max: 20,
   keyGenerator: (req) => `cv_write:${req.user?.userId || req.ip}`,
-  message: { success: false, error: { code: 'CV_WRITE_RATE_LIMITED', message: 'Too many cv write requests' } },
+  message: { success: false, error: { code: 'CV_WRITE_RATE_LIMITED', message: 'Quá nhiều yêu cầu sửa CV. Vui lòng thử lại sau 1 phút.' } },
 });
 
 // Chatbot (JobMatch AI) — 10 lượt/phút/user; chỉ áp cho POST /chatbot/sessions/:id/turn.
