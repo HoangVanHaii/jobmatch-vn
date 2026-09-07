@@ -6,6 +6,11 @@
  * treo (server down, DNS, network unreachable), isRefreshing=true vĩnh viễn,
  * failedQueue không bao giờ drain → mọi 401 concurrent treo theo. Spinner
  * ở OAuthCallback quay mãi không bao giờ navigate đi.
+ *
+ * Error handling: BE trả envelope `{ success, error: { code, message, field? } }`
+ * cho mọi non-2xx. Interceptor unwrap → ném HttpError với `.code` và `.message`
+ * của BE để store/UI dùng trực tiếp (thay vì chỉ thấy default axios string
+ * "Request failed with status code 409").
  */
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
@@ -25,6 +30,47 @@ let failedQueue: Array<{ resolve: (v: string) => void; reject: (e: unknown) => v
  *  mọi request queued sẽ bị reject sau timeout này — tránh memory leak + UI
  *  treo mãi không release. */
 const QUEUED_WAIT_TIMEOUT_MS = 30_000;
+
+/* ============================================================================
+ * Error shape + custom class
+ * ==========================================================================*/
+
+/** Envelope mà BE trả về cho mọi response (kể cả error). */
+export interface ApiResponseEnvelope<T> {
+  success: boolean;
+  data?: T;
+  error?: ApiErrorBody;
+}
+
+export interface ApiErrorBody {
+  code: string;
+  message: string;
+  /** Một số error có thêm field (vd userId đang active ở company khác). */
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Error do axios interceptor wrap lại — chứa thông tin từ BE để store/UI dùng.
+ *
+ *   - `message`: BE trả `error.message` (đã Tiếng Việt, user-friendly).
+ *   - `code`: BE trả `error.code` (vd 'USER_NOT_FOUND', 'ALREADY_PENDING').
+ *   - `statusCode`: HTTP status (401, 404, 409...).
+ *
+ * Store có thể check `e instanceof HttpError` để switch theo `code`.
+ */
+export class HttpError extends Error {
+  public readonly statusCode: number;
+  public readonly code: string;
+  public readonly details?: Record<string, unknown>;
+
+  constructor(statusCode: number, code: string, message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.name = 'HttpError';
+    this.statusCode = statusCode;
+    this.code = code;
+    this.details = details;
+  }
+}
 
 const processQueue = (error: unknown, token: string | null = null): void => {
   failedQueue.forEach(({ resolve, reject }) => {
@@ -48,6 +94,15 @@ const withQueueTimeout = <T>(promise: Promise<T>): Promise<T> => {
   });
 };
 
+/** Build HttpError từ AxiosError — unwrap body BE. Trả null nếu không có body. */
+const buildHttpErrorFromAxios = (error: AxiosError): HttpError | null => {
+  const status = error.response?.status ?? 0;
+  const body = error.response?.data as ApiResponseEnvelope<unknown> | undefined;
+  const beError = body?.error;
+  if (!beError?.message) return null;
+  return new HttpError(status, beError.code, beError.message, beError.details);
+};
+
 // Request interceptor — attach access token
 http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = localStorage.getItem('access_token');
@@ -55,56 +110,63 @@ http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// Response interceptor — auto refresh on 401
+// Response interceptor — auto refresh on 401 + unwrap BE errors
 http.interceptors.response.use(
   (r) => r,
   async (error: AxiosError) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
-    if (error.response?.status !== 401 || original._retry || original.url?.includes('/auth/')) {
-      return Promise.reject(error);
-    }
 
-    if (isRefreshing) {
-      return withQueueTimeout(
-        new Promise<string>((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        }),
-      ).then((token) => {
+    // ─── 401 refresh flow (existing) ────────────────────────────────
+    if (error.response?.status !== 401 || original._retry || original.url?.includes('/auth/')) {
+      // Không refresh: nhảy xuống dưới để unwrap BE error.
+    } else if (isRefreshing) {
+      try {
+        const token = await withQueueTimeout(
+          new Promise<string>((resolve, reject) => {
+            failedQueue.push({ resolve, reject });
+          }),
+        );
         original.headers.set('Authorization', `Bearer ${token}`);
         return http(original);
-      });
+      } catch (queueErr) {
+        return Promise.reject(queueErr);
+      }
+    } else {
+      original._retry = true;
+      isRefreshing = true;
+      try {
+        // Dùng instance `http` (đã có timeout 30s) thay vì raw axios.
+        const { data } = await http.post<{ success: true; data: { accessToken: string; refreshToken: string } }>(
+          '/auth/refresh',
+          { refreshToken: localStorage.getItem('refresh_token') },
+        );
+        localStorage.setItem('access_token', data.data.accessToken);
+        localStorage.setItem('refresh_token', data.data.refreshToken);
+        processQueue(null, data.data.accessToken);
+        original.headers.set('Authorization', `Bearer ${data.data.accessToken}`);
+        return http(original);
+      } catch (refreshErr) {
+        processQueue(refreshErr);
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        const onCallback = window.location.pathname.startsWith('/auth/callback/');
+        if (!onCallback) {
+          window.location.href = '/login';
+        }
+        return Promise.reject(refreshErr);
+      } finally {
+        isRefreshing = false;
+      }
     }
 
-    original._retry = true;
-    isRefreshing = true;
-    try {
-      // Dùng instance `http` (đã có timeout 30s) thay vì raw axios.
-      // Bảo đảm refresh call luôn có timeout ceiling — nếu BE /auth/refresh
-      // treo thì request này timeout sau 30s thay vì treo vĩnh viễn.
-      const { data } = await http.post<{ success: true; data: { accessToken: string; refreshToken: string } }>(
-        '/auth/refresh',
-        { refreshToken: localStorage.getItem('refresh_token') },
-      );
-      localStorage.setItem('access_token', data.data.accessToken);
-      localStorage.setItem('refresh_token', data.data.refreshToken);
-      processQueue(null, data.data.accessToken);
-      original.headers.set('Authorization', `Bearer ${data.data.accessToken}`);
-      return http(original);
-    } catch (err) {
-      processQueue(err);
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
-      // KHÔNG hard-redirect khi đang ở /auth/callback/* — để OAuthCallbackView
-      // xử lý error + show UI. Trước đây unconditional hard-redirect làm
-      // OAuthCallback component bị unmount trước khi catch kịp chạy → user
-      // thấy URL nhảy thẳng về /login mà không hiểu vì sao.
-      const onCallback = window.location.pathname.startsWith('/auth/callback/');
-      if (!onCallback) {
-        window.location.href = '/login';
-      }
-      return Promise.reject(err);
-    } finally {
-      isRefreshing = false;
-    }
+    // ─── Unwrap BE error body → HttpError ────────────────────────────
+    // Mọi non-2xx response đều đi qua đây. Axios default error.message là
+    // "Request failed with status code <X>" — không hữu ích. BE đã trả
+    // { error: { code, message } } trong body — lấy ra dùng.
+    const httpErr = buildHttpErrorFromAxios(error);
+    if (httpErr) return Promise.reject(httpErr);
+
+    // Fallback (không có body) — giữ nguyên axios error để debug.
+    return Promise.reject(error);
   },
 );

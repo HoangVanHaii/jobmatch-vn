@@ -6,17 +6,12 @@
 
 -- =========================================================================
 
--- Wrap để idempotent (skip nếu column đã tồn tại).
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'cvs' AND column_name = 'failure_reason'
-  ) THEN
-    ALTER TABLE cvs ADD COLUMN failure_reason TEXT;
-  END IF;
-END
-$$;
+-- NULL = CV không ở trạng thái failed, hoặc đang pending/parsing/ready.
+-- Khi status='failed' → reason phải được set (worker/changeStatus đảm bảo).
+--
+-- Idempotent: ADD COLUMN IF NOT EXISTS + CREATE INDEX IF NOT EXISTS — native PG.
+ALTER TABLE cvs
+  ADD COLUMN IF NOT EXISTS failure_reason TEXT;
 
 -- Index để debug: liệt kê các CV fail theo reason (admin/report).
 CREATE INDEX IF NOT EXISTS idx_cvs_failure_reason

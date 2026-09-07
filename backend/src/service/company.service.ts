@@ -2,8 +2,8 @@
  * Company service — business logic cho CRUD + lifecycle status
  */
 import { db } from '../config/database';
-import { companies, jobs } from '../db/schema';
-import { eq, and, ilike, desc, count } from 'drizzle-orm';
+import { companies, companyMembers, jobs, notifications } from '../db/schema';
+import { eq, and, ne, ilike, desc, count } from 'drizzle-orm';
 import type { Company, CompanyStatus } from '../interface/company';
 import { AppError } from '../middleware/errorHandler';
 import type {
@@ -12,6 +12,10 @@ import type {
   ListCompaniesQuery,
 } from '../interface/company';
 import { companyMemberService } from './companyMember.service';
+import { notificationService } from './notification.service';
+
+/** Type cho 1 row notification — dùng emit sau commit (socket không rollback được). */
+type NotificationRow = typeof notifications.$inferSelect;
 
 /**
  * Tạo slug thân thiện URL + hỗ trợ tiếng Việt có dấu.
@@ -118,22 +122,28 @@ export const companyService = {
   /** Tạo công ty mới — slug tự sinh, status mặc định 'active', createdBy từ user đăng nhập.
    *  Đồng thời insert user tạo thành owner (role=owner, status=active) trong company_members
    *  trong cùng 1 transaction (atomic: insert company fail → không insert member).
+   *
+   *  Ngoài ra: nếu user đang có pending invite ở company khác, tự động cancel
+   *  các invite đó (status: pending → auto_cancelled) — vì user vừa trở thành active
+   *  ở company mới, các invite kia không thể accept được nữa. Để tránh để user
+   *  thấy "stuck" pending invite mãi.
+   *  Đồng thời notify các owner đã mời biết invite bị cancel.
    */
   create: async (input: CreateCompanyInput, userId: string): Promise<Company> => {
     const existing = await companyMemberService.findMembershipByUserId(userId);
     if (existing) {
       throw new AppError(409, 'ALREADY_IN_COMPANY', 'Bạn đã thuộc một công ty khác, không thể tạo công ty mới');
     }
-    
+
     const slug = await uniqueSlug(input.name);
-    return db.transaction(async (tx) => {
+    const emittedNotifs: NotificationRow[] = [];
+    const result = await db.transaction(async (tx) => {
       const [company] = await tx
         .insert(companies)
         .values({
           name: input.name,
           slug,
           logoUrl: input.logoUrl,
-          coverUrl: input.coverUrl,
           description: input.description,
           industry: input.industry,
           sizeRange: input.sizeRange,
@@ -145,9 +155,55 @@ export const companyService = {
         })
         .returning();
       // Tự thêm user tạo làm owner active (cùng tx → atomic với company)
-        await companyMemberService.addOwner(tx, company.id, userId);
+      await companyMemberService.addOwner(tx, company.id, userId);
+
+      // Auto-cancel pending invites cũ ở company khác (nếu có) + notify
+      // inviter của mỗi invite bị cancel.
+      const cancelledRows = await tx
+        .update(companyMembers)
+        .set({
+          status: 'auto_cancelled',
+          respondedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(companyMembers.userId, userId),
+          eq(companyMembers.status, 'pending'),
+          ne(companyMembers.companyId, company.id),
+        ))
+        .returning();
+
+      for (const row of cancelledRows) {
+        if (!row.invitedBy) continue; // invite không có inviter thì skip
+        const [notif] = await tx
+          .insert(notifications)
+          .values({
+            userId: row.invitedBy,
+            type: 'system',
+            title: `Lời mời của bạn đã bị huỷ — user đã tạo công ty riêng`,
+            payload: {
+              kind: 'invite_auto_cancelled_on_create_company',
+              // companyId = company bị ảnh hưởng (cancelled invite thuộc company nào)
+              // → FE listener dùng để match với currentCompanyId và reload list.
+              companyId: row.companyId,
+              cancelledUserId: userId,
+              cancelledCompanyId: row.companyId,
+              reason: 'invited_user_created_their_own_company',
+            },
+          })
+          .returning();
+        if (notif) emittedNotifs.push(notif);
+      }
+
       return company;
     });
+
+    // Emit socket sau khi tx commit thành công.
+    for (const notif of emittedNotifs) {
+      notificationService.emit(notif);
+    }
+
+    return result;
   },
 
   /** Cập nhật (slug giữ nguyên để không gãy link cũ) */

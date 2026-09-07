@@ -7,7 +7,6 @@ export const companies = pgTable('companies', {
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   logoUrl: text('logo_url'),
-  coverUrl: text('cover_url'),
   description: text('description'),
   industry: text('industry'),
   sizeRange: text('size_range'),
