@@ -121,7 +121,18 @@ export const notificationService = {
         const last = items[items.length - 1];
         const nextCursor = hasMore && last ? encodeCursor(last.createdAt, last.id) : null;
 
-        return { items, nextCursor };
+        // Tổng chưa đọc — luôn query với điều kiện gốc (userId + readAt IS NULL),
+        // ĐỘC LẬP với filter `unread` trong query. FE cần con số này cho bell badge
+        // bất kể người dùng có filter unread=true hay không.
+        //
+        // 1 query thêm vào list, tốn ~1ms với row count < 1M. Có thể tối ưu bằng
+        // window function hoặc tăng cache sau nếu cần.
+        const [{ count: totalUnread }] = await db
+            .select({ count: sql<number>`COUNT(*)::int` })
+            .from(notifications)
+            .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+
+        return { items, nextCursor, totalUnread: totalUnread ?? 0 };
     },
 
     markRead: async (id: string, userId: string) => {

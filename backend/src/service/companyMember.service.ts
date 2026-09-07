@@ -71,16 +71,21 @@ type NotificationRow = typeof notifications.$inferSelect;
 // (Các legacy helpers được đặt bên trong companyMemberService ở cuối file.)
 
 /**
- * Tìm user qua email (case-insensitive). Trả null nếu chưa đăng ký.
- * Helper dùng cho invite endpoint — FE gửi email thay vì UUID.
+ * Tìm user qua email (case-insensitive). Trả cả role + status để caller check
+ * được tính "invitable" (employer/admin + active) mà không tốn thêm roundtrip.
+ *
+ * Trả null nếu chưa đăng ký. Helper dùng cho invite endpoint — FE gửi email
+ * thay vì UUID.
  */
-const findUserIdByEmail = async (email: string): Promise<string | null> => {
+const findInvitableUserByEmail = async (
+  email: string,
+): Promise<{ id: string; role: string; status: string } | null> => {
   const [row] = await db
-    .select({ id: users.id })
+    .select({ id: users.id, role: users.role, status: users.status })
     .from(users)
     .where(sql`lower(${users.email}) = lower(${email})`)
     .limit(1);
-  return row?.id ?? null;
+  return row ?? null;
 };
 
 /**
@@ -200,7 +205,7 @@ const emitNotification = ({ notif, fallbackMsg }: NotifyArgs): void => {
   }
 };
 
-/** Tạo notification 'company_invite' cho user được mời. */
+/** Tạo notification 'company' (kind='company_invite_sent') cho user được mời. */
 const buildInviteNotification = async (
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   invitedUserId: string,
@@ -211,9 +216,10 @@ const buildInviteNotification = async (
 ): Promise<NotificationRow> => {
   return notificationService.createInTx(tx, {
     userId: invitedUserId,
-    type: 'company_invite',
+    type: 'company',
     title: `Lời mời tham gia ${companyName}`,
     payload: {
+      kind: 'company_invite_sent',
       companyId,
       companyName,
       role,
@@ -222,14 +228,26 @@ const buildInviteNotification = async (
   });
 };
 
-/** Tạo notification 'system' cho owner về kết quả accept/decline/remove/transfer. */
-const buildSystemNotification = async (
+/**
+ * Tạo notification 'company' (kind discriminator) cho các sự kiện nội bộ:
+ * accept/decline/auto-cancel/remove/leave/transfer.
+ *
+ * Sau refactor 0032: mọi sự kiện liên quan company-member lifecycle đều đi qua
+ * đây với type='company'. 'system' giữ trong enum cho payment/quota tương lai.
+ *
+ * `company_invite_auto_cancelled` tách riêng `company_invite_declined` (Bug 2):
+ * trước đây owner nhận title "User X đã từ chối" khi user thực ra đã accept ở
+ * công ty khác → misleading. Hai tình huống khác nhau về ngữ nghĩa nên
+ * tách kind để FE dispatch đúng.
+ */
+const buildCompanyNotification = async (
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   recipientUserId: string,
   title: string,
   kind:
     | 'company_invite_accepted'
     | 'company_invite_declined'
+    | 'company_invite_auto_cancelled'
     | 'removed_from_company'
     | 'invite_cancelled'
     | 'company_member_left'
@@ -240,7 +258,7 @@ const buildSystemNotification = async (
 ): Promise<NotificationRow> => {
   return notificationService.createInTx(tx, {
     userId: recipientUserId,
-    type: 'system',
+    type: 'company',
     title,
     payload: { kind, ...payload },
   });
@@ -270,15 +288,16 @@ export const companyMemberService = {
     invitedBy: string,
     role: CompanyMemberRole = 'member',
   ): Promise<CompanyMember> => {
-    // 1. Resolve email → userId
-    const invitedUserId = await findUserIdByEmail(email);
-    if (!invitedUserId) {
+    // 1. Resolve email → { id, role, status }
+    const invitedUser = await findInvitableUserByEmail(email);
+    if (!invitedUser) {
       throw new AppError(
         404,
         EC.USER_NOT_FOUND,
         'Email chưa đăng ký tài khoản trên JobMatch.',
       );
     }
+    const invitedUserId = invitedUser.id;
 
     // 2. Self-invite guard
     if (invitedUserId === invitedBy) {
@@ -286,6 +305,37 @@ export const companyMemberService = {
         400,
         EC.CANNOT_INVITE_SELF,
         'Không thể tự mời chính mình.',
+      );
+    }
+
+    // 2.4. Invitable guard — chỉ employer + admin + status='active' mới join công ty.
+    //
+    // Company là khái niệm của phía nhà tuyển dụng. Invite candidate về mặt
+    // business là vô nghĩa, và tệ hơn — tạo notification "Lời mời tham gia
+    // công ty X" gửi cho user không có vai trò quản lý công ty, làm rối
+    // chuông + tăng nguy cơ candidate accept nhầm rồi chiếm slot member.
+    //
+    // Check fail-fast ở đây (trước otherActive) để:
+    //   - Tránh mất công query 2.5
+    //   - Tránh emit notification mồi rồi mới báo lỗi (UX khó chịu)
+    //
+    // Admin: cho phép (admin cũng có thể là owner công ty nếu business cho).
+    // Status: 'pending' (chưa verify email) thì không cho — user chưa vào
+    // được app thì accept lời mời cũng vô nghĩa. 'suspended'/'banned' thì
+    // rõ ràng chặn.
+    const INVITABLE_ROLES = new Set(['employer', 'admin']);
+    if (!INVITABLE_ROLES.has(invitedUser.role)) {
+      throw new AppError(
+        400,
+        EC.USER_NOT_EMPLOYER,
+        'Chỉ có thể mời tài khoản nhà tuyển dụng.',
+      );
+    }
+    if (invitedUser.status !== 'active') {
+      throw new AppError(
+        400,
+        EC.USER_NOT_ACTIVE,
+        'Tài khoản chưa kích hoạt hoặc đang bị tạm khoá.',
       );
     }
 
@@ -486,16 +536,22 @@ export const companyMemberService = {
       // 3. Notify owner — emit sau commit
       if (updated.invitedBy) {
         const [inviter] = await tx
-          .select({ email: users.email })
+          .select({ fullName: userProfiles.fullName, email: users.email })
           .from(users)
+          .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
           .where(eq(users.id, updated.invitedBy))
           .limit(1);
-        emitAfterCommit = await buildSystemNotification(
+        // Lookup tên công ty để title hiển thị rõ — trước đây hardcode 'công ty'
+        // (bug dở) → user nhìn bell không biết decline công ty nào.
+        const company = await getCompanySummary(updated.companyId);
+        const declinerName = inviter?.fullName ?? inviter?.email ?? 'User';
+        const companyName = company?.name ?? 'công ty';
+        emitAfterCommit = await buildCompanyNotification(
           tx,
           updated.invitedBy,
-          `${inviter?.email ?? 'User'} đã từ chối lời mời vào ${updated.companyId === updated.companyId ? 'công ty' : ''}`,
+          `${declinerName} đã từ chối lời mời vào ${companyName}`,
           'company_invite_declined',
-          { companyId: updated.companyId, declinedBy: userId },
+          { companyId: updated.companyId, companyName, declinedBy: userId },
         );
       }
 
@@ -605,7 +661,7 @@ export const companyMemberService = {
           .from(users)
           .where(eq(users.id, accepted.invitedBy))
           .limit(1);
-        ownerNotif = await buildSystemNotification(
+        ownerNotif = await buildCompanyNotification(
           tx,
           accepted.invitedBy,
           `${inviter?.email ?? 'User'} đã chấp nhận lời mời vào công ty`,
@@ -618,16 +674,18 @@ export const companyMemberService = {
         );
       }
 
-      // e. Notify owners bị auto_cancelled
+      // e. Notify owners bị auto_cancelled — dùng kind riêng 'company_invite_auto_cancelled'
+      // (KHÔNG 'company_invite_declined' — user thực ra đã accept ở công ty khác
+      // chứ không decline. Phân biệt 2 kind giúp FE dispatch đúng + title rõ.)
       if (autoCancelled.length > 0) {
         for (const ac of autoCancelled) {
           if (ac.invitedBy) {
             autoCancelNotifs.push(
-              await buildSystemNotification(
+              await buildCompanyNotification(
                 tx,
                 ac.invitedBy,
                 `Lời mời của bạn đã bị huỷ — user đã chấp nhận lời mời của công ty khác`,
-                'company_invite_declined',
+                'company_invite_auto_cancelled',
                 {
                   companyId: ac.companyId,
                   reason: 'auto_cancelled',
@@ -738,7 +796,7 @@ export const companyMemberService = {
       //    CHỈ notify user này — không spam các member khác (họ sẽ reload khi
       //    có action tương ứng — vd mở lại trang hoặc nhận notification khác).
       //
-      //    Lưu ý: outer `kind` của buildSystemNotification là kind cuối cùng
+      //    Lưu ý: outer `kind` của buildCompanyNotification là kind cuối cùng
       //    lưu trong notification.payload.kind. KHÔNG truyền `kind` trong payload
       //    để tránh bị spread đè (trước đây có bug — outer 'company_member_removed'
       //    bị inner 'removed_from_company' đè → FE không match listener).
@@ -750,7 +808,7 @@ export const companyMemberService = {
         ? `Bạn đã bị xoá khỏi ${company?.name ?? 'công ty'}`
         : `Lời mời tham gia ${company?.name ?? 'công ty'} đã bị huỷ`;
       emittedNotifs.push(
-        await buildSystemNotification(
+        await buildCompanyNotification(
           tx,
           targetUserId,
           notifTitle,
@@ -860,7 +918,7 @@ export const companyMemberService = {
 
       if (ownerRow && ownerRow.userId !== userId) {
         emittedNotifs.push(
-          await buildSystemNotification(
+          await buildCompanyNotification(
             tx,
             ownerRow.userId,
             `Một thành viên đã rời công ty của bạn`,
@@ -1018,7 +1076,7 @@ export const companyMemberService = {
 
       // 4a. newOwner
       emittedNotifs.push(
-        await buildSystemNotification(
+        await buildCompanyNotification(
           tx,
           newOwnerUserId,
           `Bạn đã trở thành owner của ${companyName}`,
@@ -1033,7 +1091,7 @@ export const companyMemberService = {
 
       // 4b. previousOwner
       emittedNotifs.push(
-        await buildSystemNotification(
+        await buildCompanyNotification(
           tx,
           currentOwnerUserId,
           `Bạn đã chuyển quyền sở hữu ${companyName} cho ${newOwnerName}`,
@@ -1053,7 +1111,7 @@ export const companyMemberService = {
         if (recipientId === currentOwnerUserId) continue;
         if (recipientId === newOwnerUserId) continue;
         emittedNotifs.push(
-          await buildSystemNotification(
+          await buildCompanyNotification(
             tx,
             recipientId,
             `Quyền sở hữu ${companyName} đã được chuyển`,
