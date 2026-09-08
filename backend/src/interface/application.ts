@@ -32,7 +32,11 @@ export interface ApplicationMatchReasoning {
 
 export interface CreateApplicationInput {
   jobId: string;
-  cvId?: string;
+  /**
+   * CV dùng để apply. BẮT BUỘC từ migration 0033 — "1 CV - 1 job" thay cho
+   * "1 candidate - 1 job". Candidate có thể apply cùng job với nhiều CV.
+   */
+  cvId: string;
   coverLetter?: string;
 }
 
@@ -89,6 +93,8 @@ export interface CandidateApplicationRow {
   coverLetter: string | null;
   /** CV title từ snapshot (`applications.cv->>'title'`). */
   cvTitle: string | null;
+  /** FK sang `cvs.id` — null nếu CV đã bị xoá (CASCADE xoá application). */
+  cvId: string | null;
   /** CV file URL từ snapshot — nếu null → FE không hiện nút tải. */
   cvUrl: string | null;
   appliedAt: Date;

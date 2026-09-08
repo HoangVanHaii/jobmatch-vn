@@ -388,11 +388,14 @@ watch(
 const closePanel = (): void => emit('update:open', false);
 
 const goToJob = (): void => {
+  // Ưu tiên slug (SEO-friendly); fallback id cho job cũ.
+  const slug = detail.value?.jobSlug ?? props.application?.jobSlug;
   const id = props.application?.jobId;
-  if (!id) return;
+  const path = slug ?? id;
+  if (!path) return;
   closePanel();
   void import('@/router').then(({ router }) => {
-    void router.push({ name: 'candidate-job-detail', params: { id } });
+    void router.push({ name: 'candidate-job-detail', params: { slug: path } });
   });
 };
 
@@ -407,18 +410,18 @@ const cancelWithdraw = (): void => {
 
 /**
  * Tạo conversation với employer đăng job (peer = jobs.postedBy) rồi nhảy
- * sang trang chat. Pass `jobId` để tránh NULL-duplicate caveat ở DB unique
- * constraint (xem memory conversations-unique-constraint-caveat.md).
+ * sang trang chat.
+ *
+ * Migration 0034: unique 2-user, không cần jobId. Nếu đã có conv với
+ * employer này (từ job khác) → BE trả về cùng conversation.
  */
 const contactEmployer = async (): Promise<void> => {
   const postedBy = detail.value?.jobPostedBy;
-  const jobId = detail.value?.jobId;
   if (!postedBy || contacting.value) return;
   contacting.value = true;
   try {
     const conversationId = await chatStore.createOrGet({
       peerUserId: postedBy,
-      jobId: jobId ?? undefined,
     });
     closePanel();
     void router.push({ name: 'chat', params: { id: conversationId } });
@@ -806,7 +809,7 @@ const formatDateTime = (iso: string | null): string => {
       <button
         v-if="detail.jobPostedBy"
         type="button"
-        class="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-[13px] font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
+        class="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-[13px] font-semibold text-white bg-gray-900 hover:bg-gray-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
         :disabled="contacting"
         @click="contactEmployer"
       >

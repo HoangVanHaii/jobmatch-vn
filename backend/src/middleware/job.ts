@@ -25,6 +25,17 @@ export const jobIdParamsSchema = z.object({
   id: z.string().uuid(),
 });
 
+// Slug params — URL-friendly identifier dùng cho route `/jobs/by-slug/:slug`.
+// Ràng buộc: chỉ chấp nhận `[a-z0-9-]`, độ dài 3-120. Không nhận UUID ở đây
+// để tránh nhầm lẫn giữa 2 endpoint.
+export const jobSlugParamsSchema = z.object({
+  slug: z
+    .string()
+    .min(3)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/, 'slug không hợp lệ'),
+});
+
 
 export const jobListQuerySchema = z.object({
   search: z.string().min(1).optional(),
@@ -160,3 +171,18 @@ export const jobGenerateSchema = z.object({
 });
 
 export type JobGenerateBody = z.infer<typeof jobGenerateSchema>;
+
+/**
+ * Body POST /jobs/:id/feedbacks — rating + comment của candidate sau apply.
+ *
+ * Service tự validate thêm:
+ *   - candidate đã apply job (NOT_APPLIED)
+ *   - rating 1-5 (zod enforce trước)
+ *   - 1 candidate / 1 job / 1 feedback (upsert)
+ */
+export const jobFeedbackBodySchema = z.object({
+  rating: z.coerce.number().int().min(1).max(5),
+  comment: z.string().min(1).max(2000).optional().nullable(),
+});
+
+export type JobFeedbackBody = z.infer<typeof jobFeedbackBodySchema>;

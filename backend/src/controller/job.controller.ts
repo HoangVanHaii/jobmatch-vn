@@ -5,8 +5,11 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import { jobService } from '../service/job.service';
+import { jobFeedbackService } from '../service/jobFeedback.service';
+import { applicationService } from '../service/application.service';
 import { companyMemberService } from '../service/companyMember.service';
 import { JobListQuery, JobSemanticSearchQuery } from '../middleware/job';
+import { AppError } from '../middleware/errorHandler';
 
 export const jobController = {
   listIndustries: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -108,6 +111,36 @@ export const jobController = {
     } catch (err) { next(err); }
   },
 
+  /**
+   * GET /jobs/by-slug/:slug — Job detail bằng slug (SEO-friendly URL).
+   * Mirror getById nhưng nhận `slug` thay vì UUID.
+   */
+  getBySlug: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await jobService.getBySlug(req.params.slug as string);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * GET /jobs/by-slug/:slug/application-status — status application của
+   * candidate hiện tại cho job này. Endpoint riêng để giữ `by-slug` public
+   * (không chứa PII applicant), candidate chỉ mất 1 round-trip song song.
+   *
+   * Auth: candidateOnly. Trả `status: null` nếu chưa apply.
+   */
+  getMyApplicationStatus: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      const slug = req.params.slug as string;
+      // Resolve jobId từ slug (1 query nhẹ — không full join).
+      const job = await jobService.getIdBySlug(slug);
+      if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
+      const data = await applicationService.getStatusForCandidate(userId, job.id);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
   create: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = req.user!.userId;
@@ -196,6 +229,38 @@ export const jobController = {
         success: true,
         message: 'Export is processing. You will be notified upon completion.',
       });
+    } catch (err) { next(err); }
+  },
+
+  listFeedbacks: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const jobId = req.params.id as string;
+      const viewerId = req.user?.userId;
+      const result = await jobFeedbackService.listForJob(jobId, viewerId);
+      res.json({ success: true, ...result });
+    } catch (err) { next(err); }
+  },
+
+  createFeedback: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      const jobId = req.params.id as string;
+      const { rating, comment } = req.body as { rating: number; comment?: string | null };
+      const feedback = await jobFeedbackService.upsert(jobId, userId, rating, comment ?? null);
+      res.status(200).json({ success: true, data: feedback });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * GET /jobs/:id/feedbacks/me — feedback của chính candidate đang request.
+   * Trả null nếu chưa rate.
+   */
+  getMyFeedback: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      const jobId = req.params.id as string;
+      const feedback = await jobFeedbackService.getMine(jobId, userId);
+      res.json({ success: true, data: feedback });
     } catch (err) { next(err); }
   },
 } as const;

@@ -10,7 +10,6 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { users } from './users';
-import { jobs } from './jobs';
 
 
 export const conversations = pgTable(
@@ -19,7 +18,10 @@ export const conversations = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     userA: uuid('user_a').notNull().references(() => users.id),
     userB: uuid('user_b').notNull().references(() => users.id),
-    jobId: uuid('job_id').references(() => jobs.id),
+    /**
+     * Last message timestamp — sort sidebar DESC + dùng cho cursor filter.
+     * NULL cho conv vừa tạo, chưa có message.
+     */
     lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
     lastMessagePreview: text('last_message_preview'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -28,13 +30,12 @@ export const conversations = pgTable(
     // Luôn query "WHERE user_a = me OR user_b = me" + sort last_message_at desc.
     userAIdx: index('idx_conversations_user_a').on(t.userA, t.lastMessageAt),
     userBIdx: index('idx_conversations_user_b').on(t.userB, t.lastMessageAt),
-    // Lookup theo job.
-    jobIdx: index('idx_conversations_job').on(t.jobId),
-    // 1 cặp user (đã chuẩn hoá) + cùng job = 1 conversation duy nhất.
-    // jobId = NULL vẫn áp dụng nhờ nullsNotDistinct (pg 15+).
-    pairJobUnique: uniqueIndex('uq_conversations_pair_job')
-      .on(t.userA, t.userB, t.jobId)
-      .with({ nullsNotDistinct: true }),
+    /**
+     * Unique 2 user, không kèm job_id — migration 0034 đổi từ
+     * (user_a, user_b, job_id) sang (user_a, user_b). 2 user chỉ có 1
+     * conversation duy nhất, bất kể job.
+     */
+    pairUnique: uniqueIndex('uq_conversations_pair').on(t.userA, t.userB),
     // user_a ≠ user_b; service luôn sort nhưng DB thêm check để chắc.
     distinctUsers: check('ck_conversations_distinct_users', sql`${t.userA} <> ${t.userB}`),
   }),

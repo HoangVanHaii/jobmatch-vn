@@ -1,8 +1,8 @@
 import { Server as IOServer, Socket } from 'socket.io';
 import { logger } from '../config/logger';
 import { chatService } from '../service/chat.service';
-import { notificationService } from '../service/notification.service';
 import { MessagePayload, ReadPayload } from '../interface/chat';
+import { broadcastMessageReceived, notifyPeerIfNotInRoom } from './chatBroadcast';
 
 export const chatHandler = (io: IOServer, socket: Socket): void => {
   // Join conversation room
@@ -15,7 +15,7 @@ export const chatHandler = (io: IOServer, socket: Socket): void => {
       if (!isMember) return socket.emit('chat:error', { code: 'NOT_MEMBER' });
       socket.join(`conversation:${conversationId}`);
       logger.debug({ conversationId, userId }, 'Joined conversation');
-      
+
     } catch (error) {
       logger.error({ error }, 'chat:join failed');
       socket.emit('chat:error', { code: 'INTERNAL' });
@@ -23,7 +23,7 @@ export const chatHandler = (io: IOServer, socket: Socket): void => {
     return;
   });
 
-  // Send message
+  // Send message — broadcast qua shared helper (cùng logic với REST controller).
   socket.on('chat:message', async (data: MessagePayload) => {
     const userId = (socket as any).user?.userId;
     if (!data?.conversationId || !data?.content?.trim()) {
@@ -34,43 +34,19 @@ export const chatHandler = (io: IOServer, socket: Socket): void => {
       return socket.emit('chat:error', { code: 'CONTENT_TOO_LONG' });
     }
     try {
-      const conv = await chatService.getById(data.conversationId);
-      const isMember = conv.userA === userId || conv.userB === userId
-      if (!isMember) return socket.emit('chat:error', { code: 'NOT_MEMBER' });
-      const peerId = conv.userA === userId ? conv.userB : conv.userA
-      console.log(peerId);
-      const message = await chatService.saveMessage(data, userId);
+      const { conv } = await chatService.assertMemberAndGetConv(data.conversationId, userId);
+      const message = await chatService.saveMessage({ ...data, content }, userId);
 
-      io.to(`conversation:${data.conversationId}`).emit('chat:message', {
-        id: message.id,
-        conversationId: data.conversationId,
-        senderId: userId,
-        content: data.content,
-        createdAt: message.createdAt,
-        tempId: data.tempId
-      });
-
-      io.to(`user:${peerId}`).emit('chat:new', {
-        conversationId: data.conversationId,
-        lastMessage: {
-          id: message.id,
-          senderId: userId,
-          content,
-          createdAt: message.createdAt,
-        },
-      });
-      // 8. notification nếu peer không trong room
-      const inRoom = (await io.in(`conversation:${data.conversationId}`).fetchSockets())
-        .some(s => (s as any).user?.userId === peerId);
-      if (!inRoom) {
-        await notificationService.create({
-          userId: peerId,
-          type: 'message',
-          title: 'Tin nhắn mới',
-          payload: { conversationId: data.conversationId, messageId: message.id },
-        });
-      }
+      const { peerId } = broadcastMessageReceived(io, conv, message, userId, data.tempId);
+      await notifyPeerIfNotInRoom(io, data.conversationId, peerId, message);
     } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (code === 'CONVERSATION_NOT_FOUND') {
+        return socket.emit('chat:error', { code: 'NOT_FOUND' });
+      }
+      if (code === 'NOT_MEMBER') {
+        return socket.emit('chat:error', { code: 'NOT_MEMBER' });
+      }
       logger.error({
         message: (error as any).message,
         code: (error as any).code,

@@ -21,7 +21,14 @@ const bootstrap = async (): Promise<void> => {
 
   const app = createApp();
   const server = http.createServer(app);
-  setupSocket(server);
+  const io = setupSocket(server);
+  /**
+   * Expose `io` qua `app.get('io')` để controller REST có thể broadcast
+   * realtime (vd `POST /conversations/:id/messages` chạy mini composer).
+   * Trước đây chỉ socket handler mới emit được; giờ REST path cùng share
+   * helper `broadcastMessageReceived` từ `src/socket/chatBroadcast.ts`.
+   */
+  app.set('io', io);
 
   server.listen(PORT, () => {
     logger.info({ port: PORT, env: process.env.NODE_ENV }, `JobMatch VN API listening on http://localhost:${PORT}`);
