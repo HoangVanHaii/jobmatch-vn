@@ -61,7 +61,9 @@ export const adminRateLimiter = rateLimit({
   ...baseConfig,
   store: createRedisStore('admin'),
   windowMs: 60_000,
-  max: 20,
+  // Tăng từ 20 → 40 req/phút/user vì admin page có nhiều action
+  // (filter, search debounce, status change → refetch + counts).
+  max: 40,
   keyGenerator: (req: any) => `admin:${req.user?.userId || req.ip}`,
   message: { success: false, error: { code: 'ADMIN_RATE_LIMITED', message: 'Quá nhiều yêu cầu admin. Vui lòng thử lại sau 1 phút.' } },
 });
