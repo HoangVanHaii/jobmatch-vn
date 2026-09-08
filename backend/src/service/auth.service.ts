@@ -294,7 +294,7 @@ export const authService = {
         q?: string;
         role?: string;
         status?: string;
-        sort?: 'newest' | 'oldest' | 'name-asc' | 'name-desc' | 'recently-active';
+        sort?: 'newest' | 'oldest' | 'name-asc' | 'name-desc' | 'recently-active' | 'email';
     }): Promise<{ data: User[]; total: number }> => {
         // Luôn loại trừ user đã xoá mềm — admin chỉ quản lý active records.
         const conditions: SQL[] = [isNull(users.deletedAt)];
