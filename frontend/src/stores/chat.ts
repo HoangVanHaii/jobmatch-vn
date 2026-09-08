@@ -115,10 +115,23 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * Set active conversation và load messages. Nếu đã có trong cache, dùng cache.
    * Reset messages cursor mỗi lần đổi conversation.
+   *
+   * Cache miss flow: thường gặp khi user deep-link tới /chat/:id (notification
+   * click, refresh, mở tab mới) — sidebar chưa fetch xong khi setActive chạy
+   * → findConversation trả undefined → activeConversation rỗng → header
+   * hiển thị "Người dùng". Fix: nếu cache trống + findConversation miss →
+   * fetch sidebar trước, rồi retry.
    */
   const setActive = async (conversationId: string): Promise<void> => {
     activeId.value = conversationId;
-    activeConversation.value = findConversation(conversationId) ?? null;
+
+    let conv = findConversation(conversationId);
+    if (!conv && conversations.value.length === 0) {
+      // Cache trống (deep-link) → fetch sidebar trước.
+      await fetchConversations(true);
+      conv = findConversation(conversationId);
+    }
+    activeConversation.value = conv ?? null;
 
     // Reset messages + reset unread count locally
     messages.value = [];
@@ -183,10 +196,20 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * Xử lý chat:new — cập nhật sidebar + (nếu không phải active) tăng unread.
    * Đẩy conversation lên đầu.
+   *
+   * Payload có thể kèm `attachments` (ảnh) — dùng cho sidebar preview nếu
+   * content rỗng (chỉ gửi ảnh, không có text). Nếu content rỗng nhưng có
+   * ảnh → preview hiển thị "📷 Ảnh" cho dễ nhận biết.
    */
   const handleChatNew = (payload: {
     conversationId: string;
-    lastMessage: { id: string; senderId: string; content: string; createdAt: string };
+    lastMessage: {
+      id: string;
+      senderId: string;
+      content: string;
+      createdAt: string;
+      attachments?: ChatMessage['attachments'];
+    };
   }): void => {
     const idx = conversations.value.findIndex((c) => c.id === payload.conversationId);
     const isActive = payload.conversationId === activeId.value;
@@ -198,19 +221,37 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     const prev = conversations.value[idx];
+    // Nếu content rỗng (chỉ gửi ảnh) → preview placeholder
+    const preview = payload.lastMessage.content?.trim()
+      ? payload.lastMessage.content.slice(0, 200)
+      : payload.lastMessage.attachments?.length
+        ? '📷 Ảnh'
+        : '';
     const next: ConversationWithPeer = {
       ...prev,
       lastMessageAt: payload.lastMessage.createdAt,
-      lastMessagePreview: payload.lastMessage.content.slice(0, 200),
+      lastMessagePreview: preview,
       unreadCount: isActive ? 0 : prev.unreadCount + 1,
     };
 
     upsertConversation(next);
     sortByLastMessage();
 
-    // Nếu conversation vừa nhận tin là active → append luôn
+    // Nếu conversation vừa nhận tin là active → append hoặc reconcile.
+    //
+    // Lưu ý về dedup: server phát CẢ HAI event `chat:message` (echo về conv
+    // room) VÀ `chat:new` (broadcast về user-personal room) cho cùng 1 message
+    // mình vừa gửi. Socket không đảm bảo thứ tự. Nếu `chat:new` tới TRƯỚC
+    // `chat:message`, appendMessage thẳng sẽ tạo duplicate (vì id khác
+    // tempId của optimistic) — sau đó echo `chat:message` reconcile sẽ replace
+    // optimistic nhưng KHÔNG xoá entry từ chat:new → 2 message cùng real-id.
+    //
+    // Cách fix: nếu có optimistic gần nhất (last message trong array từ
+    // current user) → coi như bản echo của chat:new, replace luôn thay vì
+    // append. Match theo senderId + createdAt gần (server insert ngay khi nhận
+    // → chênh lệch < 5s là đủ).
     if (isActive && activeId.value) {
-      const newMsg: ChatMessage = {
+      const realMsg: ChatMessage = {
         id: payload.lastMessage.id,
         conversationId: payload.conversationId,
         senderId: payload.lastMessage.senderId,
@@ -218,8 +259,25 @@ export const useChatStore = defineStore('chat', () => {
         readAt: null,
         createdAt: payload.lastMessage.createdAt,
         metadata: null,
+        attachments: payload.lastMessage.attachments,
       };
-      appendMessage(newMsg);
+
+      const last = messages.value[messages.value.length - 1];
+      const me = realMsg.senderId; // current user vì gửi từ client này
+      const recent = last
+        && last.senderId === me
+        && typeof last.tempId === 'string'
+        && Math.abs(new Date(realMsg.createdAt).getTime() - new Date(last.createdAt).getTime()) < 5000;
+
+      if (recent && last) {
+        // Replace optimistic bằng real msg, giữ tempId để trace.
+        const next = [...messages.value];
+        next[next.length - 1] = { ...realMsg, tempId: last.tempId } as ChatMessage;
+        messages.value = next;
+      } else {
+        // Tin từ peer hoặc không có optimistic match → append bình thường.
+        appendMessage(realMsg);
+      }
     }
   };
 
@@ -261,6 +319,38 @@ export const useChatStore = defineStore('chat', () => {
     messagesError.value = null;
   };
 
+  /**
+   * Xoá conversation khỏi sidebar của current user (per-user soft delete).
+   *
+   * Flow:
+   *   1. Gọi DELETE /conversations/:id (idempotent — BE UPSERT).
+   *   2. Remove khỏi cache local (sidebar update ngay).
+   *   3. Nếu đây là active conversation → clear activeId + messages + reset
+   *      URL về `/chat` (no active) để user không bị stuck ở màn hình trống.
+   *
+   * Peer KHÔNG bị ảnh hưởng (BE filter theo user_id). Họ vẫn giữ conv + tin
+   * nhắn trong sidebar của họ.
+   */
+  const deleteConversation = async (conversationId: string): Promise<void> => {
+    try {
+      await chatApi.deleteConversation(conversationId);
+    } catch (e) {
+      // Vẫn remove local để user không kẹt; throw để caller toasts error nếu muốn.
+      conversations.value = conversations.value.filter((c) => c.id !== conversationId);
+      throw e;
+    }
+
+    conversations.value = conversations.value.filter((c) => c.id !== conversationId);
+
+    // Nếu đang xem conv vừa xoá → reset về sidebar view (no active).
+    if (activeId.value === conversationId) {
+      activeId.value = null;
+      activeConversation.value = null;
+      messages.value = [];
+      messagesCursor.value = null;
+    }
+  };
+
   return {
     // state
     conversations, conversationsCursor, loadingList, listError,
@@ -276,6 +366,7 @@ export const useChatStore = defineStore('chat', () => {
     appendMessage, reconcileMessage,
     handleChatNew,
     createOrGet,
+    deleteConversation,
     reset,
   };
 });

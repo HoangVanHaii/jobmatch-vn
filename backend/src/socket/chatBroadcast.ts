@@ -17,7 +17,7 @@
 import { Server as IOServer } from 'socket.io';
 import { notificationService } from '../service/notification.service';
 import { logger } from '../config/logger';
-import type { Message } from '../interface/chat';
+import type { ClientAttachmentMeta, Message } from '../interface/chat';
 
 interface ChatMessageBroadcastPayload {
   id: string;
@@ -27,6 +27,11 @@ interface ChatMessageBroadcastPayload {
   createdAt: string;
   /** Optional — chỉ set khi caller gửi qua socket emit (echo về client). */
   tempId?: string;
+  /**
+   * Attachments đính kèm (vd. ảnh). Empty/missing = message chỉ có text.
+   * FE render inline ảnh trong bubble dựa vào đây.
+   */
+  attachments?: ClientAttachmentMeta[];
 }
 
 interface ChatNewBroadcastPayload {
@@ -36,6 +41,7 @@ interface ChatNewBroadcastPayload {
     senderId: string;
     content: string;
     createdAt: string;
+    attachments?: ClientAttachmentMeta[];
   };
 }
 
@@ -45,6 +51,8 @@ interface ChatNewBroadcastPayload {
  *   2. Peer personal-room `user:${peerId}` — để sidebar/notification update.
  *
  * KHÔNG dùng `socket.to(...)` ở đây vì caller không phải socket — chỉ có `io`.
+ *
+ * `attachments` optional — phase 1 là ảnh paste từ clipboard / upload.
  */
 export const broadcastMessageReceived = (
   io: IOServer,
@@ -52,6 +60,7 @@ export const broadcastMessageReceived = (
   message: Message,
   senderId: string,
   tempId?: string,
+  attachments: ClientAttachmentMeta[] = [],
 ): { peerId: string } => {
   const peerId = conv.userA === senderId ? conv.userB : conv.userA;
 
@@ -69,6 +78,7 @@ export const broadcastMessageReceived = (
     content,
     createdAt: createdAtIso,
     tempId,
+    attachments: attachments.length > 0 ? attachments : undefined,
   };
   io.to(`conversation:${conv.id}`).emit('chat:message', msgPayload);
 
@@ -79,6 +89,7 @@ export const broadcastMessageReceived = (
       senderId,
       content,
       createdAt: createdAtIso,
+      attachments: attachments.length > 0 ? attachments : undefined,
     },
   };
   io.to(`user:${senderId}`).emit('chat:new', newPayload);
