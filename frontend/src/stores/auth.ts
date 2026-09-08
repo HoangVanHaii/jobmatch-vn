@@ -40,6 +40,16 @@ export interface User {
    * password vừa Google). Settings UI liệt kê row cho từng provider đã link.
    */
   linkedProviders?: LinkedProvider[];
+  /** Timestamp tạo tài khoản — dùng cho "Ngày tham gia" + metric "Mới trong 30 ngày". */
+  createdAt?: Date | string | null;
+  /** Timestamp cập nhật cuối — dùng cho "Hoạt động gần nhất". */
+  updatedAt?: Date | string | null;
+  /**
+   * Timestamp xoá mềm. BE lưu field riêng `deleted_at` (không phải status enum).
+   * Nếu != null thì user đã bị soft delete — status vẫn giữ giá trị cũ.
+   * FE filter loại user đã xoá khỏi admin list.
+   */
+  deletedAt?: Date | string | null;
 }
 
 /* ============================================================================

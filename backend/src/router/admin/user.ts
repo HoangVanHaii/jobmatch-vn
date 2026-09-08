@@ -10,6 +10,7 @@ adminUserRouter.use(adminRateLimiter);
 
 adminUserRouter.get("/email", adminUserController.getUserByEmail);
 adminUserRouter.get("/", adminUserController.listUsers);
+adminUserRouter.get("/counts", adminUserController.countUsers);
 adminUserRouter.get("/:userId", adminUserController.getUserById);
 adminUserRouter.patch("/:userId/status", adminUserController.changeUserStatus);
 adminUserRouter.delete("/:userId", adminUserController.softDeleteUser);

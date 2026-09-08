@@ -1,9 +1,9 @@
 import crypto from 'crypto';
 import { db } from '../config/database';
 import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
-import { eq, desc, and, sql, inArray } from 'drizzle-orm';
+import { eq, desc, asc, and, sql, inArray, type SQL } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
-import { Job, JobListItem, ExportApplicationsJobData, JobDetailPayload } from '@/interface/job';
+import { Job, JobListItem, ExportApplicationsJobData, JobStatus, JobDetailPayload } from '@/interface/job';
 import {
   JobListQuery,
   JobCreateBody,
@@ -17,6 +17,18 @@ import { searchSimilarJobs, SemanticSearchResult } from '../lib/llm/jobEmbedding
 import { usageLogService } from './usageLog.service';
 import { jobFeedbackService } from './jobFeedback.service';
 import { tryCatch } from 'bullmq';
+
+/**
+ * Map sort param → Drizzle ORDER BY clause.
+ * Tie-break luôn bằng `createdAt DESC` để order ổn định khi count bằng nhau
+ * (vd nhiều job cùng viewsCount=0).
+ */
+const SORT_MAP: Record<'newest' | 'oldest' | 'views' | 'applies', SQL> = {
+  newest:  desc(jobs.createdAt),
+  oldest:  asc(jobs.createdAt),
+  views:   desc(jobs.viewsCount),
+  applies: desc(jobs.appliesCount),
+};
 
 const slugify = (s: string): string => {
   const base = s
@@ -132,15 +144,8 @@ export const jobService = {
         .from(jobs)
         .leftJoin(companies, eq(jobs.companyId, companies.id))
         .where(and(...conditions))
-        // Order theo createdAt chứ không phải publishedAt:
-        //  - Public /jobs (filter status='live') → job live có publishedAt != null
-        //    nhưng createdAt gần publishedAt nên vẫn đúng "mới nhất lên đầu".
-        //  - Employer /jobs/company (không filter status) → job draft / ai_scanning /
-        //    ai_flagged / expired / closed có publishedAt = NULL, sẽ bị NULLS LAST
-        //    và đẩy job MỚI TẠO xuống cuối danh sách — sai UX. createdAt luôn
-        //    NOT NULL nên sort ổn định cho cả 2 use case.
-        // Index sẵn: idx_jobs_status_created (status, createdAt) → match WHERE status='live'.
-        .orderBy(desc(jobs.createdAt))
+        // Order theo filter.sort (Zod default = 'newest'). Tie-break createdAt DESC.
+        .orderBy(SORT_MAP[filters.sort ?? 'newest'], desc(jobs.createdAt))
         .limit(filters.limit)
         .offset((filters.page - 1) * filters.limit),
 
@@ -539,6 +544,123 @@ generateDraft: async (
         ),
     );
     return rows;
+  },
+
+  /* ==========================================================================
+   * ADMIN METHODS — KHÔNG check ownership, KHÔNG filter status mặc định.
+   * Dùng cho /admin/jobs page.
+   * ========================================================================== */
+
+  /**
+   * List TẤT CẢ jobs (mọi status) cho admin — bỏ filter status='live' mặc định
+   * của /jobs public, kết hợp được tất cả filter.
+   */
+  listAll: async (filters: JobListQuery): Promise<{ data: JobListItem[]; total: number }> => {
+    const conditions: SQL[] = [];
+
+    if (filters.status && filters.status.length > 0) {
+      conditions.push(inArray(jobs.status, filters.status));
+    }
+    if (filters.jobLevel) {
+      conditions.push(eq(jobs.jobLevel, filters.jobLevel));
+    }
+    if (filters.jobType) {
+      conditions.push(eq(jobs.jobType, filters.jobType));
+    }
+    if (filters.search) {
+      conditions.push(sql`${jobs.searchTsv} @@ plainto_tsquery('simple', ${filters.search})`);
+    }
+    if (filters.industry) {
+      conditions.push(eq(jobs.industry, filters.industry));
+    }
+    if (filters.locationCity) {
+      conditions.push(sql`${jobs.location}->>'city' = ${filters.locationCity}`);
+    }
+    if (filters.remoteOk !== undefined) {
+      conditions.push(eq(jobs.remoteOk, filters.remoteOk));
+    }
+
+    // Sort theo filter.sort (Zod đã default = 'newest'). Tie-break createdAt DESC.
+    const sortClause = SORT_MAP[filters.sort ?? 'newest'];
+
+    const [{ count: total }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(jobs)
+      .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+    const rows = await db
+      .select({
+        id: jobs.id,
+        title: jobs.title,
+        slug: jobs.slug,
+        companyId: jobs.companyId,
+        companyName: companies.name,
+        companyLogoUrl: companies.logoUrl,
+        jobLevel: jobs.jobLevel,
+        jobType: jobs.jobType,
+        industry: jobs.industry,
+        salaryMin: jobs.salaryMin,
+        salaryMax: jobs.salaryMax,
+        salaryCurrency: jobs.salaryCurrency,
+        salaryVisible: jobs.salaryVisible,
+        location: jobs.location,
+        remoteOk: jobs.remoteOk,
+        deadline: jobs.deadline,
+        status: jobs.status,
+        viewsCount: jobs.viewsCount,
+        appliesCount: jobs.appliesCount,
+        publishedAt: jobs.publishedAt,
+        createdAt: jobs.createdAt,
+      })
+      .from(jobs)
+      .leftJoin(companies, eq(jobs.companyId, companies.id))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(sortClause, desc(jobs.createdAt))
+      .limit(filters.limit)
+      .offset((filters.page - 1) * filters.limit);
+
+    return { data: rows as JobListItem[], total };
+  },
+
+  /**
+   * Đếm jobs theo status + tổng applicants — cho Admin summary row.
+   * totalApplicants dùng cho hero stat (toàn bộ job, không phụ thuộc filter/page).
+   */
+  countByStatus: async (): Promise<{
+    total: number;
+    totalApplicants: number;
+    byStatus: Record<string, number>;
+  }> => {
+    const [rows, [{ totalApplicants }]] = await Promise.all([
+      db
+        .select({ status: jobs.status, count: sql<number>`count(*)::int` })
+        .from(jobs)
+        .groupBy(jobs.status),
+      db
+        .select({
+          totalApplicants: sql<number>`coalesce(sum(${jobs.appliesCount}), 0)::int`,
+        })
+        .from(jobs),
+    ]);
+
+    const byStatus: Record<string, number> = {
+      draft: 0, pending: 0, ai_scanning: 0, ai_flagged: 0,
+      live: 0, expired: 0, closed: 0,
+    };
+    let total = 0;
+    for (const r of rows) {
+      byStatus[r.status] = r.count;
+      total += r.count;
+    }
+    return { total, totalApplicants, byStatus };
+  },
+
+  /**
+   * Admin thay đổi status Job — bypass ownership, có thể đổi bất kỳ status nào
+   * (kể cả live → closed để đóng job ngay).
+   */
+  changeStatusAdmin: async (jobId: string, status: JobStatus): Promise<void> => {
+    await db.update(jobs).set({ status, updatedAt: new Date() }).where(eq(jobs.id, jobId));
   },
 } as const;
 

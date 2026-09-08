@@ -3,6 +3,14 @@ import { z } from 'zod';
 const jobLevelEnum = z.enum(['intern', 'fresher', 'junior', 'mid', 'senior', 'lead', 'manager']);
 const jobTypeEnum  = z.enum(['full-time', 'part-time', 'contract', 'internship', 'freelance']);
 const jobStatusEnum = z.enum(['draft', 'pending', 'ai_scanning', 'ai_flagged', 'live', 'expired', 'closed']);
+/**
+ * Sort options cho danh sách job.
+ *  - newest: mới nhất (createdAt DESC) — mặc định
+ *  - oldest: cũ nhất (createdAt ASC)
+ *  - views:  lượt xem nhiều nhất (viewsCount DESC, tie-break createdAt DESC)
+ *  - applies: lượt nộp nhiều nhất (appliesCount DESC, tie-break createdAt DESC)
+ */
+const jobSortEnum = z.enum(['newest', 'oldest', 'views', 'applies']);
 const skillsSchema = z.array(z.string().min(1).max(100)).max(50);
 
 const locationSchema = z.object({
@@ -67,6 +75,11 @@ export const jobListQuerySchema = z.object({
 
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
+  /**
+   * Thứ tự sắp xếp. Mặc định 'newest' (createdAt DESC) nếu không truyền.
+   * Áp dụng cho cả /jobs public, /jobs/company và /admin/jobs.
+   */
+  sort: jobSortEnum.optional().default('newest'),
 });
 
 export const jobSearchQuerySchema = z.object({
