@@ -86,10 +86,9 @@ const onSubmit = async () => {
     if (safeRedirect) {
       router.push(safeRedirect);
     } else if (auth.user?.role === 'admin') {
-      // BUG #4 FIX: admin role không rơi vào candidate workspace.
-      // Hiện router không có /admin route (đã comment out ở router/index.ts),
-      // nên redirect thẳng /forbidden cho user thấy rõ là role không có UI.
-      router.push('/forbidden');
+      // Admin role → AdminLayout (Dashboard) — fix từ "redirect /forbidden"
+      // (cũ vì /admin route chưa tồn tại) sang dùng route mới.
+      router.push('/admin');
     } else if (auth.user?.role === 'employer') {
       router.push('/employer');
     } else {

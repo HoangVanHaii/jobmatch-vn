@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt';
 import { db } from '../config/database';
 import { users, userProfiles } from '../db/schema';
-import { and, eq, isNull, desc, ne, ilike } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { Profile, User } from '@/interface/user';
 
@@ -288,7 +288,54 @@ export const authService = {
     softDeleteAccount: async (userId: string): Promise<void> => {
         await db.update(users).set({ deletedAt: new Date() }).where(eq(users.id, userId));
     },
-    listUsers: async (offset: number, limit: number): Promise<User[]> => {
+    listUsers: async (params: {
+        offset: number;
+        limit: number;
+        q?: string;
+        role?: string;
+        status?: string;
+        sort?: 'newest' | 'oldest' | 'name-asc' | 'name-desc' | 'recently-active';
+    }): Promise<{ data: User[]; total: number }> => {
+        // Luôn loại trừ user đã xoá mềm — admin chỉ quản lý active records.
+        const conditions: SQL[] = [isNull(users.deletedAt)];
+
+        // Search theo email HOẶC fullName (leftJoin userProfiles đã có sẵn).
+        // Dùng ilike = case-insensitive LIKE (Postgres). Không bỏ dấu tiếng Việt
+        // — admin muốn search "nguyen" match "Nguyễn" cần extension unaccent.
+        if (params.q && params.q.trim()) {
+            const like = `%${params.q.trim()}%`;
+            conditions.push(
+                or(ilike(users.email, like), ilike(userProfiles.fullName, like))!,
+            );
+        }
+
+        if (params.role) {
+            conditions.push(eq(users.role, params.role as 'candidate' | 'employer' | 'admin'));
+        }
+
+        if (params.status) {
+            conditions.push(
+                eq(users.status, params.status as 'active' | 'suspended' | 'pending' | 'banned'),
+            );
+        }
+
+        // Sort
+        let orderBy;
+        switch (params.sort) {
+            case 'oldest': orderBy = asc(users.createdAt); break;
+            case 'email': orderBy = asc(users.email); break;
+            case 'newest':
+            default: orderBy = desc(users.createdAt); break;
+        }
+
+        // Count total (cùng filter) để FE tính số trang chính xác.
+        const [{ count: total }] = await db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(users)
+            .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+            .where(and(...conditions));
+
+        // Lấy rows cho trang hiện tại.
         const rows = await db
             .select({
                 id: users.id,
@@ -303,11 +350,104 @@ export const authService = {
             })
             .from(users)
             .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
-            .orderBy(desc(users.createdAt))
-            .offset(offset)
-            .limit(limit);
+            .where(and(...conditions))
+            .orderBy(orderBy)
+            .offset(params.offset)
+            .limit(params.limit);
 
-        return rows as User[];
+        return { data: rows as User[], total };
+    },
+
+    /**
+     * Đếm users theo filter (q, role, status) — KHÔNG phân trang.
+     * Trả về:
+     *   - total      : tổng record match filter
+     *   - byRole     : { candidate, employer, admin } — đếm theo role (filter bỏ role)
+     *   - byStatus   : { active, suspended, pending, banned } — đếm theo status (filter bỏ status)
+     *
+     * Mục đích: dùng cho Admin UI hiển thị summary + tab count chính xác dù đang
+     * ở trang nào, sort gì, hay pagination nào.
+     */
+    countUsers: async (params: {
+        q?: string;
+        role?: string;
+        status?: string;
+    }): Promise<{
+        total: number;
+        byRole: Record<'candidate' | 'employer' | 'admin', number>;
+        byStatus: Record<'active' | 'suspended' | 'pending' | 'banned', number>;
+    }> => {
+        // Helper: build base conditions (q + exclude deleted).
+        // byRole query: exclude role filter (đếm all roles)
+        // byStatus query: exclude status filter (đếm all statuses)
+        const baseConditions = (exclude?: 'role' | 'status'): SQL[] => {
+            const conds: SQL[] = [isNull(users.deletedAt)];
+            if (params.q && params.q.trim()) {
+                const like = `%${params.q.trim()}%`;
+                conds.push(or(ilike(users.email, like), ilike(userProfiles.fullName, like))!);
+            }
+            if (exclude !== 'role' && params.role) {
+                conds.push(eq(users.role, params.role as 'candidate' | 'employer' | 'admin'));
+            }
+            if (exclude !== 'status' && params.status) {
+                conds.push(
+                    eq(users.status, params.status as 'active' | 'suspended' | 'pending' | 'banned'),
+                );
+            }
+            return conds;
+        };
+
+        // Total — cùng filter với list
+        const [{ count: total }] = await db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(users)
+            .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+            .where(and(...baseConditions()));
+
+        // byRole — đếm theo từng role, filter bỏ role
+        const byRoleRows = await db
+            .select({ role: users.role, count: sql<number>`count(*)::int` })
+            .from(users)
+            .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+            .where(and(...baseConditions('role')))
+            .groupBy(users.role);
+
+        // byStatus — đếm theo từng status, filter bỏ status
+        const byStatusRows = await db
+            .select({ status: users.status, count: sql<number>`count(*)::int` })
+            .from(users)
+            .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+            .where(and(...baseConditions('status')))
+            .groupBy(users.status);
+
+        // Khởi tạo đủ 4 key mỗi loại với default 0.
+        const byRole: Record<'candidate' | 'employer' | 'admin', number> = {
+            candidate: 0,
+            employer: 0,
+            admin: 0,
+        };
+        for (const row of byRoleRows) {
+            if (row.role === 'candidate' || row.role === 'employer' || row.role === 'admin') {
+                byRole[row.role] = row.count;
+            }
+        }
+
+        const byStatus: Record<'active' | 'suspended' | 'pending' | 'banned', number> = {
+            active: 0,
+            suspended: 0,
+            pending: 0,
+            banned: 0,
+        };
+        for (const row of byStatusRows) {
+            if (
+                row.status === 'active' || row.status === 'suspended' ||
+                row.status === 'pending' || row.status === 'banned'
+            ) {
+                byStatus[row.status] = row.count;
+            }
+        }
+
+        return { total, byRole, byStatus };
     },
     changeUserStatus: async (userId: string, status: 'active' | 'suspended' | 'pending' | 'banned'): Promise<void> => {
         await db.update(users).set({ status }).where(eq(users.id, userId));
