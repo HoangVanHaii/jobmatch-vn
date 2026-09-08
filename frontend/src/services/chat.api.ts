@@ -21,7 +21,9 @@ import type {
   CreateConversationInput,
   ListConversationsQuery,
   ListMessagesQuery,
+  ListAttachmentsParams,
   MessageListResult,
+  AttachmentListResult,
   SendMessageInput,
   ChatMessage,
 } from '@/types/chat';
@@ -44,7 +46,22 @@ export const chatApi = {
   listMessages: (conversationId: string, params?: ListMessagesQuery) =>
     http.get<ApiResponse<MessageListResult>>(`/messages/conversations/${conversationId}/messages`, { params }),
 
+  /**
+   * GET /conversations/:id/attachments — tất cả ảnh + file trong conv
+   * (load all, không paginate). Filter optional theo `kind` ('image' | 'file').
+   * Dùng cho side panel "Ảnh & File" — group by date ở FE.
+   */
+  listAttachments: (conversationId: string, params?: ListAttachmentsParams) =>
+    http.get<ApiResponse<AttachmentListResult>>(`/messages/conversations/${conversationId}/attachments`, { params }),
+
   /** POST /conversations/:id/messages — REST fallback cho socket */
   sendMessage: (conversationId: string, data: SendMessageInput) =>
     http.post<ApiResponse<ChatMessage>>(`/messages/conversations/${conversationId}/messages`, data),
+
+  /**
+   * DELETE /conversations/:id — per-user soft delete (xoá khỏi sidebar của mình).
+   * Peer KHÔNG bị ảnh hưởng. Idempotent — gọi nhiều lần vẫn 200 OK.
+   */
+  deleteConversation: (conversationId: string) =>
+    http.delete<ApiResponse<{ id: string }>>(`/messages/conversations/${conversationId}`),
 };

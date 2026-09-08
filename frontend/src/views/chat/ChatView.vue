@@ -7,7 +7,8 @@ import { useChat } from '@composables/useChat';
 import ConversationList from '@components/chat/ConversationList.vue';
 import MessageList from '@components/chat/MessageList.vue';
 import MessageInput from '@components/chat/MessageInput.vue';
-import { ArrowLeft, MessageCircle } from 'lucide-vue-next';
+import ChatMediaPanel from '@components/chat/ChatMediaPanel.vue';
+import { ArrowLeft, MessageCircle, FolderOpen } from 'lucide-vue-next';
 
 const route = useRoute();
 const router = useRouter();
@@ -47,6 +48,9 @@ const setInitialMobileView = (): void => {
 };
 
 const showSidebar = computed(() => isDesktop.value || isMobileSidebar.value);
+
+/** State mở/đóng side panel "Ảnh & File" — click icon FolderOpen trên header. */
+const showMediaPanel = ref(false);
 
 onMounted(async () => {
   const peer = route.query.peer;
@@ -88,8 +92,8 @@ const onSelectPeer = async (peer: { id: string; fullName: string | null; avatarU
   }
 };
 
-const onSend = (content: string): void => {
-  chatHook?.send(content);
+const onSend = (payload: { content: string; attachments: import('@/types/chat').ChatAttachmentDraft[] }): void => {
+  chatHook?.send(payload.content, payload.attachments);
 };
 
 const onTyping = (val: boolean): void => {
@@ -171,6 +175,20 @@ const onBackToSidebar = (): void => {
                 {{ store.activeConversation?.peer.role === 'employer' ? 'Nhà tuyển dụng' : 'Ứng viên' }}
               </p>
             </div>
+            <!--
+              Media & Files — mở side panel xem toàn bộ ảnh + file đã chia sẻ
+              trong conversation. FolderOpen icon thay cho Settings gear (no-op
+              cũ). Panel tự fetch + group by date.
+            -->
+            <button
+              type="button"
+              aria-label="Xem ảnh và file"
+              title="Ảnh & File"
+              class="shrink-0 w-9 h-9 rounded-full inline-flex items-center justify-center text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition"
+              @click="showMediaPanel = true"
+            >
+              <FolderOpen class="w-4 h-4" />
+            </button>
           </header>
 
           <!-- Messages -->
@@ -183,6 +201,7 @@ const onBackToSidebar = (): void => {
             :has-more="!!store.messagesCursor"
             :loading="store.loadingMessages"
             :peer-typing="chatHook.peerTyping.value"
+            :scroll-key="activeId"
             @load-more="onLoadMore"
           />
 
@@ -191,6 +210,18 @@ const onBackToSidebar = (): void => {
         </template>
       </main>
     </div>
+
+    <!--
+      Side panel "Ảnh & File" — Teleport lên body (đã làm trong component),
+      nên đặt ở đâu trong template cũng OK. Đặt ngoài <main> để không bị
+      ảnh hưởng bởi layout flex của main.
+    -->
+    <ChatMediaPanel
+      v-if="activeId"
+      v-model:open="showMediaPanel"
+      :conversation-id="activeId"
+      :current-user-id="auth.user?.id ?? ''"
+    />
   </div>
 </template>
 

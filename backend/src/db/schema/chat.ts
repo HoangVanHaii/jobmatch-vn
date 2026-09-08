@@ -5,8 +5,10 @@ import {
   timestamp,
   jsonb,
   index,
+  integer,
   uniqueIndex,
   check,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { users } from './users';
@@ -61,6 +63,75 @@ export const chatMessages = pgTable(
     // Lookup "tin nhắn chưa đọc của peer trong conv".
     unreadIdx: index('idx_chat_messages_unread').on(t.conversationId, t.readAt),
     senderIdx: index('idx_chat_messages_sender').on(t.senderId, t.createdAt),
+  }),
+);
+
+/**
+ * chat_attachments — file/ảnh đính kèm message. Migration 0035 thêm bảng
+ * này để hỗ trợ gửi ảnh trong chat (paste từ clipboard, upload file picker).
+ *
+ * Quyết định thiết kế:
+ *   - Bảng riêng thay vì nhét JSON vào `chat_messages.metadata` — cho phép
+ *     sau này mở rộng thêm preview/thumbnail/moderation mà không phá schema
+ *     message. Cũng match pattern của Telegram/WhatsApp.
+ *   - ON DELETE CASCADE theo message_id → xoá message thì attachments đi
+ *     theo, tránh orphan rows khi admin moderation.
+ *   - `width`/`height` optional — chỉ set cho image. Service đo bằng
+ *     `image-size` lib khi upload (chưa làm — phase 2; phase 1 để null).
+ *   - `kind` enum ('image'|'file') để FE render đúng (ảnh inline vs file
+ *     download link). Phase 1 chỉ 'image' nhưng column sẵn sàng cho tương lai.
+ */
+export const chatAttachments = pgTable(
+  'chat_attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => chatMessages.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    /** S3/MinIO key (vd `uploads/{userId}/chat/2025-09/{uuid}-{name}.jpg`) — dùng để DELETE. */
+    key: text('key').notNull(),
+    mime: text('mime').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    /**
+     * Tên file gốc (cho Content-Disposition + hiển thị ở client).
+     * Phase 1 (image) optional; phase 2 (file) FE sẽ gửi kèm.
+     */
+    name: text('name'),
+    width: integer('width'),
+    height: integer('height'),
+    /** Phase 1 chỉ 'image'. Phase 2 mở rộng 'file' (PDF/DOCX/...). */
+    kind: text('kind').notNull().default('image'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    msgIdx: index('idx_chat_attachments_message').on(t.messageId),
+  }),
+);
+
+/**
+ * conversation_deletions — per-user soft delete cho conversation.
+ *
+ * Mỗi user có thể "xoá khỏi sidebar của mình" mà KHÔNG ảnh hưởng tới peer.
+ * Composite PK (user_id, conversation_id) → idempotent UPSERT, không cần
+ * explicit unique index. Xem migration 0037 để biết lý do tách bảng riêng.
+ */
+export const conversationDeletions = pgTable(
+  'conversation_deletions',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.conversationId] }),
+    userIdx: index('idx_conversation_deletions_user').on(t.userId),
   }),
 );
 

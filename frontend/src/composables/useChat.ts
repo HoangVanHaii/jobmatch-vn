@@ -190,21 +190,35 @@ export const useChat = (conversationId: () => string) => {
 
   // ----- Public actions -----
 
-  /** Gửi message qua socket. Thêm UUID tạm để reconcile. */
-  const send = (content: string): void => {
+  /**
+   * Gửi message qua socket. Thêm UUID tạm để reconcile.
+   *
+   * `attachments` optional — danh sách meta đã upload qua `POST /uploads/image`
+   * (FE tự xử lý upload trước khi gọi hàm này). Phase 1: image. Hỗ trợ
+   * gửi ảnh-only (content rỗng) — chat:new payload sẽ có `content: ''` +
+   * `attachments: [...]`, sidebar hiển thị "📷 Ảnh".
+   */
+  const send = (
+    content: string,
+    attachments?: ChatMessagePayload['attachments'],
+  ): void => {
     const id = conversationId();
     if (!id) return;
     const trimmed = content.trim();
-    if (!trimmed) return;
+    // Cho phép gửi ảnh-only — content rỗng OK nếu có attachments.
+    if (!trimmed && !(attachments && attachments.length > 0)) return;
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const payload: ChatMessagePayload = {
       conversationId: id,
       content: trimmed,
       tempId,
+      attachments,
     };
     getSocket().emit('chat:message', payload);
     // Optimistic: append ngay với tempId, sẽ được reconcile khi server echo.
     // PHẢI set `tempId` (không chỉ `id`) để reconcileMessage tìm được.
+    // Gắn attachments để user thấy ảnh ngay (server echo sẽ reconcile ID,
+    // nhưng ảnh đã hiển thị từ URL local → reconcile không nhấp nháy).
     store.appendMessage({
       id: tempId,
       conversationId: id,
@@ -214,6 +228,14 @@ export const useChat = (conversationId: () => string) => {
       createdAt: new Date().toISOString(),
       metadata: null,
       tempId,
+      attachments: attachments?.map((a) => ({
+        url: a.url,
+        mime: a.mime,
+        sizeBytes: a.sizeBytes,
+        width: a.width,
+        height: a.height,
+        kind: a.kind ?? 'image',
+      })),
     });
   };
 

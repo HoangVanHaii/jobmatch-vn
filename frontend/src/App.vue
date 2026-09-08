@@ -190,6 +190,6 @@ useSocket(
    *  Cả 2 đọc cùng queue trong stores/toast.ts — ToastHost đọc `items` (alias
    *  của `toasts`), ToastContainer đọc `toasts`. Dedupe theo `id` để socket
    *  emit duplicate không push 2 lần. -->
-  <ToastContainer />
-  <ToastHost />
+  <ToastContainer v-if="route.name !== 'chat' && route.name !== 'e-chat'"/>
+  <ToastHost v-if="route.name !== 'chat' && route.name !== 'e-chat'" />
 </template>
