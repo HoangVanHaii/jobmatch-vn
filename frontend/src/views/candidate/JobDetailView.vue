@@ -13,6 +13,7 @@ import {
   Eye,
   FileText,
   Globe2,
+  ImagePlus,
   Loader2,
   MapPin,
   MessageCircle,
@@ -24,6 +25,7 @@ import {
   BookmarkCheck,
   Share2,
   Check,
+  X,
 } from 'lucide-vue-next';
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
@@ -36,6 +38,8 @@ import { chatApi } from '@services/chat.api';
 import { useToastStore } from '@stores/toast';
 import { useSavedJobStore } from '@stores/savedJob';
 import { useAuthStore } from '@stores/auth';
+import { uploadApi, formatFileSize } from '@services/upload.api';
+import { fileIconInfo } from '@utils/fileIcon';
 import type { Socket } from 'socket.io-client';
 import { getSocket } from '@services/socket';
 import ApplyJob from '@components/job/ApplyJob.vue';
@@ -94,15 +98,100 @@ const toggleChat = (): void => {
  *
  * Lỗi 401/403 → http interceptor đã handle refresh token / redirect login.
  */
+/**
+ * Pending file/ảnh paste/upload trong mini composer — giữ id local + previewUrl
+ * + tên gốc để hiển thị file card cho non-image.
+ *
+ * Khi user bấm send → upload song song qua `uploadChatAttachment` (route
+ * theo MIME), attach vào message.
+ */
+interface MiniAttachment {
+  id: string;
+  previewUrl: string | null;
+  file: File;
+  kind: 'image' | 'file';
+}
+const chatAttachments = ref<MiniAttachment[]>([]);
+const uploadingImage = ref(false);
+const miniFileInputEl = ref<HTMLInputElement | null>(null);
+
+/**
+ * Paste handler — bắt MỌI file từ clipboard (image + application), ngăn
+ * default để tránh paste blob vào textarea. Nếu clipboard chỉ có text
+ * → để mặc định (paste text).
+ */
+const onMiniPaste = (e: ClipboardEvent): void => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  const files: File[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === 'file') {
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  if (files.length === 0) return;
+  e.preventDefault();
+  for (const file of files) {
+    const id = `mini-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const isImage = file.type.startsWith('image/');
+    chatAttachments.value = [
+      ...chatAttachments.value,
+      {
+        id,
+        previewUrl: isImage ? URL.createObjectURL(file) : null,
+        file,
+        kind: isImage ? 'image' : 'file',
+      },
+    ];
+  }
+};
+
+const removeMiniAttachment = (id: string): void => {
+  const target = chatAttachments.value.find((a) => a.id === id);
+  if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+  chatAttachments.value = chatAttachments.value.filter((a) => a.id !== id);
+};
+
+/**
+ * Click icon upload file cho mini composer — desktop chủ yếu (mobile dùng
+ * paste từ clipboard là đủ). Trigger input[type=file] ẩn.
+ */
+const onMiniPickFile = (): void => {
+  miniFileInputEl.value?.click();
+};
+const onMiniFileInputChange = (e: Event): void => {
+  const target = e.target as HTMLInputElement;
+  const files = target.files;
+  if (!files || files.length === 0) return;
+  for (const file of Array.from(files)) {
+    const id = `mini-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const isImage = file.type.startsWith('image/');
+    chatAttachments.value = [
+      ...chatAttachments.value,
+      {
+        id,
+        previewUrl: isImage ? URL.createObjectURL(file) : null,
+        file,
+        kind: isImage ? 'image' : 'file',
+      },
+    ];
+  }
+  target.value = '';
+};
+
 const sendChat = async (): Promise<void> => {
   const j = job.value;
   if (!j) return;
   const content = chatDraft.value.trim();
-  if (!content || chatSending.value) return;
+  const hasContent = content.length > 0;
+  const hasAttachments = chatAttachments.value.length > 0;
+  if ((!hasContent && !hasAttachments) || chatSending.value || uploadingImage.value) return;
   if (!j.postedBy) {
     toast.push({
       variant: 'error',
-      title: 'Không thể gửi tin nhắn',
+      title: 'Không gửi được tin nhắn',
       body: 'Job này chưa có thông tin nhà tuyển dụng.',
     });
     return;
@@ -110,16 +199,35 @@ const sendChat = async (): Promise<void> => {
 
   chatSending.value = true;
   try {
-    // Step 1: tạo hoặc lấy conversation (idempotent — nếu có rồi trả về id cũ).
-    // Migration 0034: 2-user unique → chỉ cần peerUserId. Nếu candidate đã
-    // chat với recruiter này từ job khác → BE trả về cùng conversation.
     const convRes = await chatApi.createOrGet({
       peerUserId: j.postedBy,
     });
     const conversationId = convRes.data.data.id;
 
-    // Step 2: push message.
-    await chatApi.sendMessage(conversationId, { content });
+    let attachments: import('@/types/chat').ChatAttachmentDraft[] | undefined;
+    if (hasAttachments) {
+      uploadingImage.value = true;
+      try {
+        const uploaded = await Promise.all(
+          chatAttachments.value.map(async (a) => {
+            const result = await uploadApi.uploadChatAttachment(a.file);
+            return {
+              url: result.url,
+              key: result.key,
+              mime: result.mime,
+              sizeBytes: result.size,
+              name: result.name,
+              kind: result.kind,
+            };
+          }),
+        );
+        attachments = uploaded;
+      } finally {
+        uploadingImage.value = false;
+      }
+    }
+
+    await chatApi.sendMessage(conversationId, { content, attachments });
 
     toast.push({
       variant: 'success',
@@ -127,6 +235,10 @@ const sendChat = async (): Promise<void> => {
       body: 'Nhà tuyển dụng sẽ nhận được thông báo.',
     });
     chatDraft.value = '';
+    for (const a of chatAttachments.value) {
+      if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+    }
+    chatAttachments.value = [];
     chatOpen.value = false;
   } catch (err: unknown) {
     const code =
@@ -147,11 +259,6 @@ const sendChat = async (): Promise<void> => {
   }
 };
 
-/**
- * Socket client handle — share với AppliedJobsView qua singleton ở
- * @services/socket. Khai báo ở top-level để onUnmounted cleanup an toàn
- * (không bị bind vào closure của handler nào).
- */
 let socket: Socket | null = null;
 
 const jobSlug = computed<string>(() => String(route.params.slug ?? ''));
@@ -1129,30 +1236,94 @@ const cancelEditFeedback = (): void => {
                   Mini chat composer — hiện dưới action row khi user click
                   chat icon. Không phải full chat panel (chỉ 1 ô input + gửi);
                   user mở /messages để xem full history.
+
+                  Phase 1 attachments: thumbnail preview + nút upload ảnh
+                  (ImagePlus) bên cạnh textarea. Paste từ clipboard cũng
+                  được (handler gắn trên textarea).
                 -->
                 <div
                   v-if="chatOpen"
                   class="mt-3 pt-3 border-t border-gray-100"
                 >
-                  <div class="flex items-start gap-2">
+                  <!-- Preview cho file/ảnh pending upload: ảnh → thumbnail, file → card -->
+                  <div v-if="chatAttachments.length > 0" class="flex flex-wrap gap-1.5 mb-2">
+                    <div
+                      v-for="att in chatAttachments"
+                      :key="att.id"
+                      class="relative rounded-md overflow-hidden border border-gray-200 group"
+                      :class="att.kind === 'image' ? 'h-12 w-12' : 'h-12 min-w-[160px] max-w-[200px] px-2 py-1 bg-gray-50'"
+                    >
+                      <template v-if="att.kind === 'image' && att.previewUrl">
+                        <img
+                          :src="att.previewUrl"
+                          :alt="att.file.name"
+                          class="h-full w-full object-cover"
+                        />
+                      </template>
+                      <template v-else>
+                        <div class="flex items-center gap-1.5 h-full min-w-0">
+                          <component
+                            :is="fileIconInfo(att.file.type, att.file.name).icon"
+                            class="w-3.5 h-3.5 shrink-0"
+                            :class="fileIconInfo(att.file.type, att.file.name).color"
+                          />
+                          <span class="text-[10px] font-medium text-gray-800 truncate flex-1 min-w-0">
+                            {{ att.file.name }}
+                          </span>
+                          <span class="text-[9px] text-gray-500 shrink-0">
+                            {{ formatFileSize(att.file.size) }}
+                          </span>
+                        </div>
+                      </template>
+                      <button
+                        type="button"
+                        aria-label="Xoá file"
+                        title="Xoá"
+                        class="absolute top-0.5 right-0.5 h-4 w-4 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+                        @click="removeMiniAttachment(att.id)"
+                      >
+                        <X class="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-1.5">
+                    <button
+                      type="button"
+                      :disabled="chatSending || uploadingImage"
+                      aria-label="Đính kèm file"
+                      title="Đính kèm file (ảnh/PDF/DOCX/...) hoặc paste từ clipboard"
+                      class="shrink-0 w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      @click="onMiniPickFile"
+                    >
+                      <ImagePlus class="w-3.5 h-3.5" />
+                    </button>
+                    <input
+                      ref="miniFileInputEl"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv,application/zip"
+                      multiple
+                      class="hidden"
+                      @change="onMiniFileInputChange"
+                    />
                     <textarea
                       v-model="chatDraft"
-                      :disabled="chatSending"
+                      :disabled="chatSending || uploadingImage"
                       :maxlength="500"
                       rows="2"
-                      placeholder="Nhắn nhanh cho nhà tuyển dụng..."
+                      placeholder="Nhắn nhanh cho nhà tuyển dụng... (có thể paste ảnh)"
                       class="flex-1 text-xs border border-gray-300 rounded-lg px-2.5 py-2 focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none resize-none disabled:opacity-50 disabled:bg-gray-50"
                       @keydown.enter.exact.prevent="sendChat"
+                      @paste="onMiniPaste"
                     />
                     <button
                       type="button"
                       aria-label="Gửi tin nhắn"
                       title="Gửi (Enter)"
                       class="shrink-0 inline-flex items-center justify-center gap-1 px-2.5 py-2 text-xs font-semibold rounded-lg bg-primary-600 hover:bg-primary-700 text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
-                      :disabled="chatSending || !chatDraft.trim()"
+                      :disabled="chatSending || uploadingImage || (!chatDraft.trim() && chatAttachments.length === 0)"
                       @click="sendChat"
                     >
-                      <Loader2 v-if="chatSending" class="w-3.5 h-3.5 animate-spin" />
+                      <Loader2 v-if="chatSending || uploadingImage" class="w-3.5 h-3.5 animate-spin" />
                       <Send v-else class="w-3.5 h-3.5" />
                       Gửi
                     </button>

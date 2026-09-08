@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { useChatStore } from '@stores/chat';
+import { useToastStore } from '@stores/toast';
 import { userApi } from '@services/user.api';
 import type { UserSearchResult } from '@services/user.api';
 import ConversationItem from './ConversationItem.vue';
+import ConfirmModal from '@components/common/ConfirmModal.vue';
 import { Search, Loader2, MessageCircle, UserPlus, Briefcase } from 'lucide-vue-next';
 import { useDebounceFn } from '@vueuse/core';
 
@@ -17,6 +20,8 @@ const emit = defineEmits<{
 }>();
 
 const store = useChatStore();
+const toast = useToastStore();
+const router = useRouter();
 const search = ref('');
 
 onMounted(async () => {
@@ -118,11 +123,70 @@ const roleLabel = (role: UserSearchResult['role']): string => {
   if (role === 'admin') return 'Quản trị viên';
   return 'Ứng viên';
 };
+
+// =========================================================================
+// Xoá conversation (per-user soft delete)
+// =========================================================================
+
+/** ID conv đang chờ xác nhận xoá. null = modal đóng. */
+const deleteTargetId = ref<string | null>(null);
+/** Loading state khi đang gọi API xoá. */
+const deleting = ref(false);
+/** Tên peer hiển thị trong confirm modal. */
+const deleteTargetName = computed((): string => {
+  const id = deleteTargetId.value;
+  if (!id) return '';
+  return store.conversations.find((c) => c.id === id)?.peer.fullName ?? 'cuộc hội thoại này';
+});
+
+/** ConversationItem emit 'delete' khi user click icon trash (hover). */
+const onRequestDelete = (id: string): void => {
+  deleteTargetId.value = id;
+};
+
+const cancelDelete = (): void => {
+  if (deleting.value) return;
+  deleteTargetId.value = null;
+};
+
+const confirmDelete = async (): Promise<void> => {
+  const id = deleteTargetId.value;
+  if (!id || deleting.value) return;
+  const wasActive = props.activeId === id;
+  deleting.value = true;
+  try {
+    await store.deleteConversation(id);
+    toast.push({
+      variant: 'success',
+      title: 'Đã xoá hội thoại',
+      body: wasActive
+        ? 'Hội thoại đã được xoá khỏi danh sách của bạn. Người kia vẫn giữ lịch sử.'
+        : 'Hội thoại đã được xoá khỏi danh sách của bạn.',
+    });
+    deleteTargetId.value = null;
+    // Nếu đang mở conv vừa xoá → quay về `/chat` (no active) để tránh
+    // màn hình trống / 404 khi reload. Thử route 'chat' (candidate), fallback
+    // 'e-chat' (employer) nếu route name không tồn tại trong router hiện tại.
+    if (wasActive) {
+      router.replace({ name: 'chat' }).catch(() => {
+        router.replace({ name: 'e-chat' }).catch(() => undefined);
+      });
+    }
+  } catch (e) {
+    toast.push({
+      variant: 'error',
+      title: 'Xoá hội thoại thất bại',
+      body: e instanceof Error ? e.message : 'Vui lòng thử lại',
+    });
+  } finally {
+    deleting.value = false;
+  }
+};
 </script>
 
 <template>
   <aside
-    class="flex h-full min-h-0 w-full flex-col border-r border-gray-200 bg-white md:w-80 lg:w-96 scrollbar-visible"
+    class="flex h-full min-h-0 w-full flex-col border-r border-gray-200 bg-white md:w-72 lg:w-80 scrollbar-visible"
   >
     <!-- Header -->
     <header class="px-4 py-2 border-b border-gray-100">
@@ -244,6 +308,7 @@ const roleLabel = (role: UserSearchResult['role']): string => {
             :conversation="c"
             :active="c.id === activeId"
             @click="onSelect"
+            @delete="onRequestDelete"
           />
           <button
             v-if="store.conversationsCursor"
@@ -256,5 +321,18 @@ const roleLabel = (role: UserSearchResult['role']): string => {
         </div>
       </template>
     </div>
+
+    <!-- ============ Confirm xoá conversation ============ -->
+    <ConfirmModal
+      :open="deleteTargetId !== null"
+      title="Xoá hội thoại này?"
+      :message="`Hội thoại với ${deleteTargetName} sẽ bị xoá khỏi danh sách của bạn. Người kia vẫn giữ lịch sử và có thể nhắn tiếp; nếu cần, bạn có thể bắt đầu lại bằng cách tìm họ trong ô tìm kiếm.`"
+      confirm-text="Xoá"
+      cancel-text="Huỷ"
+      variant="danger"
+      :loading="deleting"
+      @cancel="cancelDelete"
+      @confirm="confirmDelete"
+    />
   </aside>
 </template>

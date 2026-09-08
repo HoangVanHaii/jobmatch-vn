@@ -68,6 +68,30 @@ export interface ChatMessage {
    * - Server không bao giờ set field này — chỉ echo lại `tempId` qua socket.
    */
   tempId?: string;
+  /**
+   * Attachments đính kèm (ảnh phase 1). Optional — message text-only sẽ
+   * undefined hoặc array rỗng. FE render inline ảnh trong bubble dựa vào
+   * đây. Shape match với BE `ClientAttachmentMeta` (strip `key`).
+   */
+  attachments?: ChatAttachment[];
+}
+
+/**
+ * 1 attachment (ảnh/file) của message. Shape khớp với BE
+ * `ClientAttachmentMeta` — không có `key` (BE-only).
+ *
+ * `name` là tên file gốc (cho Content-Disposition + hiển thị); BE trả về
+ * qua buildContentDisposition → parse ở upload.service. Phase 1 (ảnh) có
+ * thể không set `name` (fallback filename từ URL).
+ */
+export interface ChatAttachment {
+  url: string;
+  mime: string;
+  sizeBytes: number;
+  name?: string | null;
+  width?: number | null;
+  height?: number | null;
+  kind?: 'image' | 'file';
 }
 
 /** Response GET /conversations/:id/messages */
@@ -83,10 +107,55 @@ export interface ListMessagesQuery {
   limit?: number;
 }
 
+// ---- GET /conversations/:id/attachments -------------------------------------
+
+/**
+ * Attachment + context (messageId, senderId, createdAt) cho side panel
+ * "Ảnh & File". `createdAt` copy từ message cha để FE group by date hiển thị
+ * header "Hôm nay / Hôm qua / dd/mm/yyyy".
+ */
+export interface ChatAttachmentWithContext extends ChatAttachment {
+  messageId: string;
+  senderId: string;
+  createdAt: string;
+}
+
+/** Query GET /conversations/:id/attachments */
+export interface ListAttachmentsParams {
+  kind?: 'image' | 'file';
+}
+
+/** Response GET /conversations/:id/attachments */
+export interface AttachmentListResult {
+  items: ChatAttachmentWithContext[];
+}
+
 /** Body POST /conversations/:id/messages */
 export interface SendMessageInput {
   content: string;
   tempId?: string;
+  /**
+   * Attachments đính kèm — phải upload trước qua `POST /uploads/image`
+   * (folder='chat') rồi truyền `url` + `key` + `mime` + `sizeBytes` ở đây.
+   * Phase 1: chỉ image. Service validate mime prefix `image/`.
+   */
+  attachments?: ChatAttachment[];
+}
+
+/**
+ * Attachment shape khi upload qua `POST /uploads/image` — response trả về
+ * `UploadResult` (xem services/upload.api.ts). Khi gửi kèm message, FE
+ * map `size → sizeBytes` để khớp BE shape.
+ */
+export interface ChatAttachmentDraft {
+  url: string;
+  key: string;
+  mime: string;
+  sizeBytes: number;
+  name?: string | null;
+  width?: number | null;
+  height?: number | null;
+  kind?: 'image' | 'file';
 }
 
 // =========================================================================
@@ -98,6 +167,7 @@ export interface ChatMessagePayload {
   conversationId: string;
   content: string;
   tempId?: string;
+  attachments?: ChatAttachmentDraft[];
 }
 
 /** Server broadcast `chat:message` về client */
@@ -113,6 +183,7 @@ export interface ChatNewPayload {
     senderId: string;
     content: string;
     createdAt: string;
+    attachments?: ChatAttachment[];
   };
 }
 
