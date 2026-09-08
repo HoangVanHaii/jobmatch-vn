@@ -2,6 +2,55 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+ * Admin design tokens — chia sẻ giữa AdminSidebar (dark) và các admin pages
+ * (light). Tập trung tại đây thay vì để mỗi component tự định nghĩa.
+ *
+ * Dark tokens dùng cho AdminSidebar (nền tối). Light tokens dùng cho page
+ * content (nền sáng). Accent chung (indigo) để liên kết 2 vùng về mặt tone.
+ * ==========================================================================*/
+:root {
+  /* === Shared accent (dùng cho cả dark và light) === */
+  --admin-accent: #6366f1;          /* indigo-500 — base */
+  --admin-accent-strong: #4f46e5;   /* indigo-600 — text/hover trên nền sáng */
+  --admin-accent-soft: #eef2ff;     /* indigo-50 — bg hover/active trên sáng */
+
+  /* === Light theme (page content) === */
+  --admin-page-bg: #F7F8FC;          /* nền page — rất nhẹ, hơi cool */
+  --admin-surface: #ffffff;          /* card/table — trắng tinh */
+  --admin-surface-hover: #f8fafc;   /* row hover — gần trắng */
+  --admin-surface-sunken: #f1f5f9;  /* table header — chìm hơn 1 chút so với card */
+  --admin-text: #0f172a;            /* slate-900 — primary, contrast cao */
+  --admin-text-muted: #475569;      /* slate-600 — secondary (WCAG AA: 7.6:1) */
+  --admin-text-subtle: #64748b;     /* slate-500 — tertiary (WCAG AA: 5.7:1) */
+  --admin-border-subtle: #e2e8f0;   /* slate-200 — border mặc định */
+  --admin-border: #cbd5e1;          /* slate-300 — border input */
+
+  /* === Dark theme (sidebar) === */
+  --admin-bg: #14161c;              /* nền sidebar */
+  --admin-bg-soft: #1b1e26;         /* hover row */
+  --admin-border-dark: #262a35;     /* viền dark */
+  --admin-text-dark: #c3c7d1;       /* text chính dark */
+  --admin-text-dark-bright: #f2f3f5;/* text nổi bật dark */
+  --admin-text-dark-muted: #5b6070; /* label nhóm dark */
+  --admin-text-dark-sub: #8a8f9c;   /* text phụ dark */
+  --admin-accent-text: #a5b4fc;     /* indigo-300 — text active dark */
+  --admin-accent-bg: rgba(99, 102, 241, 0.14);
+  --admin-accent-border: rgba(99, 102, 241, 0.35);
+  --admin-danger: #f04438;
+  --admin-danger-light: #f87171;
+  --admin-danger-soft: rgba(240, 68, 56, 0.10);
+  --admin-warn: #fbbf24;
+  --admin-warn-soft: rgba(251, 191, 36, 0.15);
+
+  /* === Shared shadow + radius === */
+  --admin-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --admin-shadow-md: 0 2px 4px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --admin-radius-sm: 6px;   /* small (input, button) */
+  --admin-radius-md: 8px;   /* medium (dropdown, card nhỏ) */
+  --admin-radius-lg: 12px;  /* large (table card) */
+}
+
 @layer base {
   html {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -23,6 +72,47 @@
   }
   .card {
     @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6;
+  }
+
+  /* ==========================================================================
+   * Admin page utility classes — dùng tokens ở trên để đảm bảo cùng tone
+   * với AdminSidebar (dark) mặc dù page là light theme.
+   * ========================================================================== */
+  .admin-page {
+    @apply min-h-screen;
+    background-color: var(--admin-page-bg);
+    color: var(--admin-text);
+  }
+  .admin-surface {
+    background-color: var(--admin-surface);
+    border: 1px solid var(--admin-border-subtle);
+  }
+  .admin-text-muted {
+    color: var(--admin-text-muted);
+  }
+  .admin-accent {
+    color: var(--admin-accent-strong);
+  }
+
+  /* ==========================================================================
+   * Table grid — CHUNG column definition cho header + body rows.
+   * Header và mọi row đều dùng class `.table-grid` → KHÔNG THỂ lệch nhau.
+   * Column widths cố định (trừ col 1 flexible) → content row thay đổi
+   * KHÔNG làm dịch chuyển header hay các cột khác.
+   *
+   * - minmax(280px, 1fr)  : Người dùng (flexible, có thể co giãn, name/email truncate)
+   * - 150px                  : Vai trò (badge truncate nếu dài)
+   * - 180px                  : Trạng thái (badge có dot + text)
+   * - 150px                  : Ngày tham gia
+   * - 180px                  : Hoạt động gần nhất
+   * - 70px                   : Thao tác (nút ⋯)
+   * ========================================================================== */
+  .table-grid {
+    display: grid;
+    /* % cố định → không bị content ảnh hưởng. Tổng 100% để fill full width.
+       Tỷ lệ đảm bảo cột "Người dùng" không chiếm quá nhiều, các cột còn lại
+       đủ chỗ hiển thị badge + date. */
+    grid-template-columns: 32% 12% 14% 12% 20% 10%;
   }
 }
 
@@ -63,6 +153,16 @@ html,
 body {
   scrollbar-width: thin;
   scrollbar-color: rgba(203, 213, 225, 0.7) transparent;
+  /**
+   * Dành sẵn chỗ cho vertical scrollbar (~15-17px) kể cả khi content chưa
+   * vượt viewport. Tránh layout shift: page có 26 jobs thì scrollbar xuất
+   * hiện, page có 5 jobs thì scrollbar ẩn → nếu không có stable, chiều rộng
+   * khả dụng thay đổi 15-17px → toàn bộ giao diện "giật" sang phải.
+   *
+   * Hỗ trợ: Chrome 94+, Firefox 97+, Safari 16+ (rất phổ biến 2026).
+   * Fallback: browser bỏ qua thuộc tính lạ → vẫn hoạt động bình thường.
+   */
+  scrollbar-gutter: stable;
 }
 html::-webkit-scrollbar,
 body::-webkit-scrollbar {
