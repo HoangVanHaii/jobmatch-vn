@@ -28,9 +28,6 @@ export const cvMatchWorker = new Worker(
       jobId: string;
     };
 
-    // -----------------------------------------------------------------------
-    // 1. Load application + job
-    // -----------------------------------------------------------------------
     const [app] = await db
       .select({
         id: applications.id,

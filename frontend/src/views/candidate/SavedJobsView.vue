@@ -1,22 +1,4 @@
 <script setup lang="ts">
-/**
- * SavedJobsView — trang "Việc làm đã lưu" tại `/candidate/saved-jobs`.
- *
- * Pattern y hệt JobsView:
- *   - Header phẳng
- *   - 3 dropdown filter (Địa điểm? — không, vì backend `SavedJobListQuery` chỉ
- *     hỗ trợ jobLevel/jobType/remoteOk/industry. Industry là text input.)
- *   - Grid 1/2/3 cols + pagination y hệt MyResumesView
- *   - Empty state + 2 nhánh (no saved / filter trả 0)
- *
- * Khác biệt so với JobsView:
- *   - KHÔNG có search bar full-text (backend không hỗ trợ).
- *   - Có industry input (text) thay cho search.
- *   - Card hiển thị thêm "Đã lưu {{ savedLabel }}" (dayjs relative).
- *   - Save button mặc định ON (luôn hiện BookmarkCheck), click → unsave API
- *     + remove khỏi list (optimistic với rollback nếu fail).
- *   - Khi list trống → hiện CTA "Khám phá việc làm" → /candidate/viec-lam.
- */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useRouter } from 'vue-router';

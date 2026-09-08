@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 export const createApplicationBodySchema = z.object({
   jobId: z.string().uuid('jobId must be a valid UUID'),
-  cvId: z.string().uuid('cvId must be a valid UUID').optional(),
+  cvId: z.string().uuid('cvId must be a valid UUID'),
   coverLetter: z.string().trim().max(5000).optional(),
 });
 

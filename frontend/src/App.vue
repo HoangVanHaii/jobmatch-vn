@@ -48,6 +48,15 @@ const route = useRoute();
 const router = useRouter();
 
 /**
+ * Tên route chat theo role — dùng cho guard "đang ở trang chat thì bỏ qua toast"
+ * trong listener `chat:new` bên dưới + reuse cho `goToChat`. Trước đây gate
+ * dùng `route.path.startsWith('/chat')` không khớp vì các route thật là
+ * `/candidate/chat/:id?` (name `chat`) và `/employer/chat/:id?` (name `e-chat`),
+ * path KHÔNG bắt đầu bằng `/chat` → guard lọt, toast spam.
+ */
+const chatRouteName = auth.user?.role === 'candidate' ? 'chat' : 'e-chat';
+
+/**
  * Global `chat:new` listener — đăng ký ở App.vue nên luôn sống cùng app.
  * useSocket auto-cleanup khi App unmount (chỉ xảy ra khi logout/refresh).
  */
@@ -55,9 +64,11 @@ useSocket('chat:new', (payload: ChatNewPayload) => {
   // 1. Update sidebar cache (unread + sort) — chạy ở mọi trang.
   chat.handleChatNew(payload);
 
-  // 2. Toast CHỈ khi user KHÔNG ở /chat namespace — tránh spam trên trang
-  //    chat (sidebar update đã là indicator đủ rõ).
-  const onChatPage = route.path.startsWith('/chat');
+  // 2. Toast CHỈ khi user KHÔNG ở trang chat — tránh spam khi sidebar đã là
+  //    indicator đủ rõ. So sánh `route.name` thay vì `path.startsWith('/chat')`
+  //    vì 2 route thật là `/candidate/chat/:id?` (name `chat`) và
+  //    `/employer/chat/:id?` (name `e-chat`) — path KHÔNG bắt đầu `/chat`.
+  const onChatPage = route.name === chatRouteName;
   if (onChatPage) return;
 
   // Look up peer info từ chat store — nếu conversation chưa có trong cache
@@ -65,8 +76,7 @@ useSocket('chat:new', (payload: ChatNewPayload) => {
   // title generic.
   const peer = chat.conversations.find((c) => c.id === payload.conversationId)?.peer;
 
-  // Tự navigate về /chat theo role (giống ChatView.onSelect).
-  const chatRouteName = auth.user?.role === 'candidate' ? 'chat' : 'e-chat';
+  // Tự navigate về chat theo role (giống ChatView.onSelect).
   const goToChat = (): void => {
     void router.push({ name: chatRouteName, params: { id: payload.conversationId } });
   };

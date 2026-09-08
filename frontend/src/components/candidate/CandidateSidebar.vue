@@ -184,7 +184,7 @@ const groups: MenuGroup[] = [
         label: 'Việc làm',
         icon: Briefcase,
         to: '/candidate/viec-lam',
-        activeOn: ['/candidate/viec-lam', '/candidate/viec-lam/:id'],
+        activeOn: ['/candidate/viec-lam', '/candidate/viec-lam/:slug'],
       },
       {
         label: 'Việc làm đã lưu',

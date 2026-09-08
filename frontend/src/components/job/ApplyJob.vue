@@ -13,10 +13,15 @@
  *      `application:match-ready` để hiển thị điểm sau (xem AppliedJobsView).
  *
  * Edge cases đã handle:
- *   - 409 ALREADY_APPLIED → toast warning "đã apply job này".
+ *   - 409 ALREADY_APPLIED → toast warning "đã apply job này bằng CV này rồi".
  *   - 400 JOB_NOT_APPLYABLE / JOB_EXPIRED → toast error.
+ *   - 400 CV_ID_REQUIRED → user chưa chọn CV (Zod guard ở backend).
  *   - 404 CV_NOT_FOUND / 403 CV_FORBIDDEN → CV có thể bị xoá giữa chừng → refresh list.
  *   - Submit success → emit 'applied' để parent có thể update UI (vd disable button).
+ *
+ * Migration 0033: cvId BẮT BUỘC. Ràng buộc "1 CV - 1 job" → 1 candidate có thể
+ * apply cùng job bằng nhiều CV. Modal chỉ cho phép chọn CV (radio), không có
+ * option "nộp không kèm CV" như trước. Submit disabled khi chưa pick CV.
  */
 import { ref, watch, computed } from 'vue';
 import { Loader2, FileText, X, Sparkles, AlertCircle } from 'lucide-vue-next';
@@ -29,6 +34,12 @@ import type { Cv } from '@/types/cv';
 const props = defineProps<{
   job: { id: string; title: string };
   open: boolean;
+  /**
+   * Danh sách CV id đã ứng tuyển job này (từ `applicationList` của parent).
+   * Mỗi CV chỉ apply được 1 lần/job → backend chặn duplicate qua unique
+   * (cv_id, job_id). Modal disable radio tương ứng + hiển thị hint "Đã nộp".
+   */
+  appliedCvIds?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -41,17 +52,44 @@ const toast = useToastStore();
 // -----------------------------------------------------------------------
 // Form state
 // -----------------------------------------------------------------------
-const cvId = ref<string>(''); // rỗng = apply không kèm CV
+const cvId = ref<string>(''); // rỗng = chưa chọn (submit bị disabled)
 const coverLetter = ref('');
 const submitting = ref(false);
 const generating = ref(false);
+/**
+ * Ngôn ngữ cover letter AI sinh ra. 'vi' = mặc định cho hầu hết nhà tuyển dụng
+ * Việt Nam; 'en' cho công ty nước ngoài / job description tiếng Anh. User có thể
+ * đổi bằng pill toggle ngay cạnh nút "AI sinh thư xin việc". Đổi ngôn ngữ KHÔNG
+ * tự re-gen (user phải bấm AI lại) để tránh overwrite text họ đang sửa.
+ */
+const letterLanguage = ref<'vi' | 'en'>('vi');
 
 // CV list
 const cvList = ref<Cv[]>([]);
 const loadingCvs = ref(false);
 
 const selectedCv = computed(() => cvList.value.find((c) => c.id === cvId.value) ?? null);
-const canSubmit = computed(() => !submitting.value);
+const canSubmit = computed(() => !submitting.value && cvId.value !== '');
+
+/** CV đã ứng tuyển job này (set lookup O(1)). */
+const appliedCvSet = computed(() => new Set(props.appliedCvIds ?? []));
+
+/** CV khả dụng = CV ready chưa từng apply job này. */
+const availableCvs = computed(() =>
+  cvList.value.filter((c) => !appliedCvSet.value.has(c.id)),
+);
+
+/**
+ * Nếu CV đang chọn bị đánh dấu đã apply (vd apply thành công xong user mở lại
+ * modal) → clear selection để tránh submit trùng.
+ */
+watch(
+  [cvId, appliedCvSet],
+  ([id, set]) => {
+    if (id && set.has(id)) cvId.value = '';
+  },
+  { immediate: true },
+);
 
 // -----------------------------------------------------------------------
 // Fetch CV khi mở modal
@@ -97,14 +135,21 @@ const fetchCvs = async (): Promise<void> => {
 // AI generate cover letter
 // -----------------------------------------------------------------------
 const generateCover = async (): Promise<void> => {
+  if (!cvId.value) {
+    toast.push({
+      variant: 'info',
+      title: 'Chọn CV trước',
+      body: 'Vui lòng chọn CV để AI viết thư xin việc phù hợp.',
+    });
+    return;
+  }
   generating.value = true;
   try {
-    // BE sẽ tự resolve CV của candidate từ session.
-    // Truyền job title làm context để LLM viết liên quan.
-    const { data } = await aiApi.generateCoverLetter(
-      { jobTitle: props.job.title, jobId: props.job.id } as Record<string, unknown>,
-      '',
-    );
+    const { data } = await aiApi.generateCoverLetter({
+      jobId: props.job.id,
+      cvId: cvId.value,
+      language: letterLanguage.value,
+    });
     coverLetter.value = String(data.data?.content ?? '');
   } catch (err) {
     toast.push({
@@ -126,7 +171,7 @@ const submit = async (): Promise<void> => {
   try {
     const { data } = await applicationApi.create({
       jobId: props.job.id,
-      cvId: cvId.value || undefined,
+      cvId: cvId.value,
       coverLetter: coverLetter.value.trim() || undefined,
     });
     toast.push({
@@ -197,7 +242,7 @@ const close = (): void => {
         <!-- CV picker -->
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1.5">
-            CV của bạn <span class="text-gray-400 font-normal">(không bắt buộc)</span>
+            CV của bạn <span class="text-red-500 font-normal">*</span>
           </label>
 
           <div v-if="loadingCvs" class="flex items-center justify-center py-6 text-sm text-gray-500">
@@ -207,13 +252,20 @@ const close = (): void => {
           <div v-else-if="cvList.length === 0" class="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
             <AlertCircle class="w-4 h-4 mt-0.5 shrink-0" />
             <div>
-              Bạn chưa có CV nào. Có thể <a href="/candidate/my-resumes" class="font-semibold underline">tạo CV ngay</a> hoặc nộp hồ sơ không kèm CV.
+              Bạn chưa có CV nào. Vui lòng <a href="/candidate/my-resumes" class="font-semibold underline">tạo CV trước</a> rồi quay lại ứng tuyển.
+            </div>
+          </div>
+
+          <div v-else-if="availableCvs.length === 0" class="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+            <AlertCircle class="w-4 h-4 mt-0.5 shrink-0" />
+            <div>
+              Bạn đã ứng tuyển job này bằng tất cả {{ cvList.length }} CV. Mỗi CV chỉ dùng được 1 lần cho 1 job.
             </div>
           </div>
 
           <div v-else class="space-y-2">
             <label
-              v-for="cv in cvList"
+              v-for="cv in availableCvs"
               :key="cv.id"
               class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition"
               :class="cvId === cv.id ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'"
@@ -247,39 +299,91 @@ const close = (): void => {
               </div>
             </label>
 
-            <button
-              v-if="cvId"
-              type="button"
-              class="text-xs text-gray-500 hover:text-gray-700 underline"
-              @click="cvId = ''"
-            >
-              Bỏ chọn CV (nộp không kèm CV)
-            </button>
+            <!--
+              CV đã apply job này — hiển thị mờ để user biết tồn tại, disabled
+              để không chọn lại (DB unique chặn duplicate).
+            -->
+            <template v-if="cvList.some((c) => appliedCvSet.has(c.id))">
+              <p class="text-[11px] text-gray-400 uppercase tracking-wide pt-2">
+                Đã ứng tuyển bằng CV này
+              </p>
+              <div
+                v-for="cv in cvList.filter((c) => appliedCvSet.has(c.id))"
+                :key="`applied-${cv.id}`"
+                class="flex items-center gap-3 p-3 rounded-lg border border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed"
+              >
+                <FileText class="w-4 h-4 text-gray-400 shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm font-medium text-gray-500 truncate">
+                      {{ cv.title ?? '(Chưa đặt tên)' }}
+                    </span>
+                    <span class="inline-flex items-center rounded-full bg-gray-200 text-gray-600 px-1.5 py-0.5 text-[10px] font-semibold">
+                      Đã nộp
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
 
         <!-- Cover letter -->
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1.5">
-            Thư xin việc <span class="text-gray-400 font-normal">(không bắt buộc, tối đa 5000 ký tự)</span>
-          </label>
-          <button
-            type="button"
-            class="mb-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-primary-700 hover:text-primary-800 disabled:opacity-50"
-            :disabled="generating"
-            @click="generateCover"
-          >
-            <Loader2 v-if="generating" class="w-3.5 h-3.5 animate-spin" />
-            <Sparkles v-else class="w-3.5 h-3.5" />
-            {{ generating ? 'AI đang viết...' : '✨ AI sinh thư xin việc' }}
-          </button>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-sm font-medium text-gray-700">
+              Thư xin việc <span class="text-gray-400 font-normal">(không bắt buộc, tối đa 5000 ký tự)</span>
+            </label>
+            <!--
+              Language toggle: pill group VI / EN. Đổi sẽ KHÔNG tự re-gen
+              (user phải bấm nút AI) để tránh overwrite text đang sửa. State
+              persist trong session modal — không lưu localStorage vì user
+              chọn theo job cụ thể.
+            -->
+            <div class="inline-flex rounded-md border border-gray-200 overflow-hidden" role="group" aria-label="Ngôn ngữ thư xin việc">
+              <button
+                type="button"
+                class="px-2.5 py-1 text-[11px] font-semibold transition"
+                :class="letterLanguage === 'vi' ? 'bg-primary-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'"
+                :aria-pressed="letterLanguage === 'vi'"
+                @click="letterLanguage = 'vi'"
+              >
+                VI
+              </button>
+              <button
+                type="button"
+                class="px-2.5 py-1 text-[11px] font-semibold transition border-l border-gray-200"
+                :class="letterLanguage === 'en' ? 'bg-primary-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'"
+                :aria-pressed="letterLanguage === 'en'"
+                @click="letterLanguage = 'en'"
+              >
+                EN
+              </button>
+            </div>
+          </div>
+          <div class="mb-1.5 flex items-center gap-2">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 text-xs font-medium text-primary-700 hover:text-primary-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="generating || !cvId"
+              :title="!cvId ? 'Chọn CV trước để AI cá nhân hoá thư xin việc' : `Sẽ viết bằng ${letterLanguage === 'vi' ? 'tiếng Việt' : 'tiếng Anh'}`"
+              @click="generateCover"
+            >
+              <Loader2 v-if="generating" class="w-3.5 h-3.5 animate-spin" />
+              <Sparkles v-else class="w-3.5 h-3.5" />
+              {{ generating ? 'AI đang viết...' : '✨ AI sinh thư xin việc' }}
+            </button>
+            <span class="text-[11px] text-gray-400">
+              Sẽ viết bằng <span class="font-semibold">{{ letterLanguage === 'vi' ? 'tiếng Việt' : 'tiếng Anh' }}</span>
+            </span>
+          </div>
           <textarea
             v-model="coverLetter"
             :maxlength="5000"
             :disabled="generating"
             class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none resize-none disabled:opacity-50"
             rows="5"
-            placeholder="Viết ngắn gọn về điểm mạnh của bạn cho vị trí này..."
+            :placeholder="letterLanguage === 'vi' ? 'Viết ngắn gọn về điểm mạnh của bạn cho vị trí này...' : 'Briefly describe why you are a strong fit for this role...'"
           />
           <p class="mt-1 text-xs text-gray-400 text-right">{{ coverLetter.length }} / 5000</p>
         </div>

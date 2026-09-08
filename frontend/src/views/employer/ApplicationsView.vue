@@ -1,19 +1,4 @@
 <script setup lang="ts">
-/**
- * ApplicationsView — trang quản lý đơn ứng tuyển cho employer tại
- * `/employer/applications`.
- *
- * Design: list đơn + popup (modal) chi tiết khi click row.
- *   - List: card với avatar chữ cái đầu, candidate name, job title, status,
- *     match %, ngày nộp.
- *   - Popup: header gradient + AI ring, candidate info, timeline, status grid,
- *     contact, CV preview (iframe nếu có cvUrl).
- *
- * Realtime:
- *   - `notification:new` filter type=application_new → refresh list.
- *   - `application:match-ready` → update row + close popup nếu đang mở row đó
- *     để re-fetch detail.
- */
 import {
   computed,
   nextTick,
