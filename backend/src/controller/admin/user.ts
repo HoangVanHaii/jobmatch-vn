@@ -11,7 +11,7 @@ export const adminUserController = {
       const q = (req.query.q as string | undefined)?.trim() || undefined;
       const role = (req.query.role as string | undefined) || undefined;
       const status = (req.query.status as string | undefined) || undefined;
-      const sort = (req.query.sort as 'newest' | 'oldest' | 'name-asc' | 'name-desc' | 'recently-active' | undefined) || 'newest';
+      const sort = (req.query.sort as 'newest' | 'oldest' | 'name-asc' | 'name-desc' | 'recently-active' | 'email' | undefined) || 'newest';
 
       const { data, total } = await authService.listUsers({ offset, limit, q, role, status, sort });
       res.status(200).json({
