@@ -26,18 +26,33 @@ export const chatHandler = (io: IOServer, socket: Socket): void => {
   // Send message — broadcast qua shared helper (cùng logic với REST controller).
   socket.on('chat:message', async (data: MessagePayload) => {
     const userId = (socket as any).user?.userId;
-    if (!data?.conversationId || !data?.content?.trim()) {
-      return socket.emit('chat:error', { code: 'INVALID_PAYLOAD', message: 'Thiếu conversationId hoặc content' });
+    if (!data?.conversationId) {
+      return socket.emit('chat:error', { code: 'INVALID_PAYLOAD', message: 'Thiếu conversationId' });
     }
-    const content = data.content.trim();
+    // Cho phép gửi file-only: content rỗng OK nếu có attachments.
+    const content = (data.content ?? '').trim();
+    const hasAttachments = Array.isArray(data.attachments) && data.attachments.length > 0;
+    if (!content && !hasAttachments) {
+      return socket.emit('chat:error', { code: 'INVALID_PAYLOAD', message: 'Thiếu content hoặc attachments' });
+    }
     if (content.length > 5000) {
       return socket.emit('chat:error', { code: 'CONTENT_TOO_LONG' });
     }
     try {
       const { conv } = await chatService.assertMemberAndGetConv(data.conversationId, userId);
-      const message = await chatService.saveMessage({ ...data, content }, userId);
+      const { message, attachments } = await chatService.saveMessage(
+        { ...data, content },
+        userId,
+      );
 
-      const { peerId } = broadcastMessageReceived(io, conv, message, userId, data.tempId);
+      const { peerId } = broadcastMessageReceived(
+        io,
+        conv,
+        message,
+        userId,
+        data.tempId,
+        attachments,
+      );
       await notifyPeerIfNotInRoom(io, data.conversationId, peerId, message);
     } catch (error) {
       const code = (error as { code?: string })?.code;
