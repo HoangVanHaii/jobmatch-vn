@@ -326,7 +326,7 @@ export const authService = {
     searchUsers: async (currentUserId: string, q: string, limit: number): Promise<UserSearchResult[]> => {
         const rows = await db
             .select({
-                id: users.id,
+                id: users.id, 
                 fullName: userProfiles.fullName,
                 avatarUrl: userProfiles.avatarUrl,
                 role: users.role,
