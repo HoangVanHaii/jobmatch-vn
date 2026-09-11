@@ -36,6 +36,23 @@ import { http } from '@/services/http';
 import { useToastStore } from '@stores/toast';
 import type { Cv } from '@/types/cv';
 
+/**
+ * Throttle state ở MODULE-LEVEL (không phải closure) để share giữa tất cả
+ * `useCvDownload()` instances.
+ *
+ * Lý do: composable được gọi ở 2 nơi (CvPreview modal + MyResumesView kebab
+ * menu). Mỗi component instance tạo composable riêng → nếu `lastActionAt`
+ * ở closure, mỗi instance có timer riêng → user bypass throttle bằng cách
+ * đổi qua lại giữa modal và menu. Lift lên module-level → tất cả instance
+ * share cùng state → throttle thực sự chống spam xuyên component.
+ *
+ * Trade-off: state persist qua route change trong cùng SPA session (cùng
+ * JS module instance). Acceptable cho mục đích chống spam. Reset khi user
+ * reload page hoặc logout (window object recreated).
+ */
+const MIN_DOWNLOAD_INTERVAL_MS = 2_000;
+let lastActionAt = 0;
+
 export function useCvDownload() {
   const toast = useToastStore();
   const downloading = ref(false);
@@ -90,6 +107,42 @@ export function useCvDownload() {
   };
 
   /**
+   * Throttle chung cho 3 actions download/open file — dùng 1 biến `lastActionAt`
+   * chia sẻ (không phải 3 biến riêng) để user không thể né throttle bằng cách
+   * đổi qua lại giữa handleDownload và handleOpenOriginal.
+   *
+   * Lý do cần throttle ở FE dù BE đã có rate limit:
+   *   - `cvDownloadRateLimiter` chỉ chặn BE endpoint `/download-pdf` (direct CV).
+   *   - Upload CV download (FE fetch thẳng MinIO) bypass BE hoàn toàn.
+   *   - `handleOpenOriginal` (window.open) không qua bất kỳ middleware nào.
+   *
+   * Throttle window 2s: đủ chặn spam bấm nút liên tục, không ảnh hưởng UX
+   * bình thường (user hiếm khi tải/open CV <2s/lần trong flow thật).
+   *
+   * Trả về `true` nếu BỊ throttle (đã hiện toast) → caller return ngay.
+   * Trả về `false` nếu OK → caller tiếp tục logic.
+   *
+   * Lưu ý: KHÔNG phụ thuộc vào `downloading.value` (chỉ chặn concurrent).
+   * User có thể spam tuần tự nhanh → `downloading.value` toggle true/false
+   * trong từng tick, không chặn được. Throttle mới giải quyết case này.
+   *
+   * Module-level state: `useCvDownload()` được gọi ở 2 nơi (modal preview ở
+   * CvPreview.vue + kebab menu ở MyResumesView.vue), mỗi component tạo
+   * composable instance riêng. Nếu `lastActionAt` là closure variable, mỗi
+   * instance có state riêng → user có thể spam bằng cách đổi qua lại giữa
+   * modal và menu. Lift lên module-level để MỌI instance share cùng state.
+   */
+  const checkThrottle = (): boolean => {
+    const now = Date.now();
+    if (now - lastActionAt < MIN_DOWNLOAD_INTERVAL_MS) {
+      toast.warning('Bạn vừa thao tác. Vui lòng đợi vài giây.');
+      return true;
+    }
+    lastActionAt = now;
+    return false;
+  };
+
+  /**
    * Smart download:
    *   - Direct CV → gọi BE Playwright endpoint, nhận PDF blob, anchor download.
    *   - Upload CV → fetch fileUrl thành blob qua raw `fetch()` (KHÔNG dùng
@@ -103,6 +156,11 @@ export function useCvDownload() {
    */
   const handleDownload = async (cv: Cv | null | undefined): Promise<void> => {
     if (!cv || downloading.value) return;
+    // Throttle check đặt SAU guard `downloading.value` để:
+    //   - Nếu đang có download khác chạy → skip throttle, return luôn
+    //     (không spam toast warning liên tục trong khi request đang xử lý).
+    //   - Nếu rảnh → check throttle 2s, OK thì set `downloading.value = true`.
+    if (checkThrottle()) return;
     downloading.value = true;
     try {
       if (cv.source === 'direct') {
@@ -137,8 +195,22 @@ export function useCvDownload() {
       } else {
         toast.warning('CV này chưa có file để tải.');
       }
-    } catch {
-      toast.error('Tải CV thất bại. Vui lòng thử lại.');
+    } catch (err) {
+      // Phân biệt AbortError (timeout 30s hoặc abort) với lỗi tải thật.
+      // Trước fix: timeout abort → AbortError → catch → toast.error "Tải CV
+      // thất bại. Vui lòng thử lại." — gây hiểu lầm vì file thực ra đang
+      // được tải (hoặc đã tải xong nhưng timeout fire quá sớm). Pattern
+      // tương tự đã làm đúng ở useDocxRenderer.
+      if ((err as Error)?.name === 'AbortError') {
+        // Timeout 30s. Hiện warning thân thiện (KHÔNG dùng error đỏ — user
+        // không làm gì sai, chỉ là file/mạng chậm). Có thể silent nếu user
+        // tự bấm cancel, nhưng composable không track cancel UI → cứ warning.
+        toast.warning(
+          'Quá thời gian chờ tải CV (30s). Vui lòng thử lại khi mạng ổn hơn.',
+        );
+      } else {
+        toast.error('Tải CV thất bại. Vui lòng thử lại.');
+      }
     } finally {
       downloading.value = false;
     }
@@ -148,6 +220,9 @@ export function useCvDownload() {
   const handleOpenOriginal = (cv: Cv | null | undefined): void => {
     const url = cv?.fileUrl;
     if (!url) return;
+    // Throttle chung (cùng `lastActionAt` với handleDownload) — chặn spam
+    // mở tab liên tục qua đổi qua lại giữa 2 actions.
+    if (checkThrottle()) return;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 

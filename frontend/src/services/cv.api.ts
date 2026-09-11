@@ -13,6 +13,7 @@
  *   GET  /cvs/:cvId/render-data     public, slim row cho render (HMAC token)
  */
 import { http } from './http';
+import type { AxiosRequestConfig } from 'axios';
 import type {
   CreateDirectCvInput,
   CreateUploadCvInput,
@@ -21,6 +22,7 @@ import type {
   CvSource,
   ListCvQuery,
   ListCvResponse,
+  UpdateDirectCvInput,
 } from '@/types/cv';
 
 export interface ApiResponse<T> {
@@ -46,13 +48,25 @@ export const cvApi = {
   list: (params?: ListCvQuery) =>
     http.get<ApiResponse<ListCvResponse>>('/cvs', { params }),
 
-  /** GET /cvs/:cvId — full row. */
-  getDetail: (cvId: string) =>
-    http.get<ApiResponse<CvDetail>>(`/cvs/${cvId}`),
+  /** GET /cvs/:cvId — full row. Optional `signal` để cancel qua AbortController
+   *  khi user nav giữa các edit URLs hoặc unmount giữa lúc fetch. */
+  getDetail: (cvId: string, config?: AxiosRequestConfig) =>
+    http.get<ApiResponse<CvDetail>>(`/cvs/${encodeURIComponent(cvId)}`, config),
 
   /** POST /cvs/direct — tạo CV từ form web (title + templateId bắt buộc). */
   create: (data: CreateDirectCvInput) =>
     http.post<ApiResponse<Cv>>('/cvs/direct', data),
+
+  /**
+   * PATCH /cvs/:cvId — cập nhật CV direct. BE chỉ accept khi source='direct'.
+   * Set status='analyzing' + enqueue worker (re-score). Trả full Cv row.
+   *
+   * Khác với create: response trả về CV với status='analyzing' — FE cần show
+   * loading overlay tương tự như triggerAnalysis (xem MyResumesView status
+   * logic).
+   */
+  update: (cvId: string, data: UpdateDirectCvInput) =>
+    http.patch<ApiResponse<Cv>>(`/cvs/${encodeURIComponent(cvId)}`, data),
 
   /** PATCH /cvs/:cvId/primary — set primary (transaction reset các CV khác). */
   setPrimary: (cvId: string) =>
@@ -83,10 +97,12 @@ export const cvApi = {
    * @param token - Optional HMAC signed token (Playwright print page). Nếu
    *   không truyền → request vẫn hợp lệ cho endpoint public, nhưng BE sẽ
    *   reject với 401 vì không có token (route yêu cầu token bắt buộc).
+   * @param config - Optional AxiosRequestConfig (vd `{ signal }` để cancel
+   *   qua AbortController khi user đổi CV nhanh hoặc component unmount).
    */
-  getRenderData: (cvId: string, token?: string) =>
+  getRenderData: (cvId: string, token?: string, config?: AxiosRequestConfig) =>
     http.get<ApiResponse<CvRenderRow>>(
       `/cvs/${encodeURIComponent(cvId)}/render-data`,
-      { params: token ? { token } : {} },
+      { ...(token ? { params: { token } } : {}), ...config },
     ),
 };

@@ -81,7 +81,9 @@ export const cvAiRateLimiter = rateLimit({
   ...baseConfig,
   store: createRedisStore('cv_ai'),
   windowMs: 60_000,
-  max: 3,
+  // Override qua env khi chạy E2E (vd: CV_AI_RATE_LIMIT_MAX=1000).
+  // Mặc định 3 req/phút/user để chặn abuse trong production.
+  max: parseInt(process.env.CV_AI_RATE_LIMIT_MAX || '3', 10),
   keyGenerator: (req: any) => `cv_ai:${req.user?.userId || req.ip}`,
   message: { success: false, error: { code: 'CV_AI_RATE_LIMITED', message: 'Quá nhiều yêu cầu AI CV. Vui lòng thử lại sau 1 phút.' } },
 });
@@ -89,9 +91,39 @@ export const cvWriteRateLimiter = rateLimit({
   ...baseConfig,
   store: createRedisStore('cv_write'),
   windowMs: 60_000,
-  max: 20,
+  // Override qua env khi chạy E2E (vd: CV_WRITE_RATE_LIMIT_MAX=1000).
+  // Mặc định 20 req/phút/user để chặn spam edit UI.
+  max: parseInt(process.env.CV_WRITE_RATE_LIMIT_MAX || '20', 10),
   keyGenerator: (req) => `cv_write:${req.user?.userId || req.ip}`,
   message: { success: false, error: { code: 'CV_WRITE_RATE_LIMITED', message: 'Quá nhiều yêu cầu sửa CV. Vui lòng thử lại sau 1 phút.' } },
+});
+
+/**
+ * CV download-pdf (Playwright render) — 5 lần/phút/user.
+ *
+ * Lý do riêng (khác `cvWriteRateLimiter`):
+ *   - Endpoint này gọi Playwright + Chromium để render vector PDF.
+ *     Mỗi request chiếm 1 instance từ pool (~5-30s CPU/RAM).
+ *   - `cvWriteRateLimiter` (20/phút) cho phép 20 lần render/phút → dễ
+ *     exhaust Chromium pool (semaphore 2 hiện tại) → block user khác.
+ *   - 5/phút/user là đủ dùng thực tế: user hiếm khi tải CV của mình
+ *     >5 lần/phút; nếu cần export nhiều → UI có thể gom batch.
+ *
+ * Lý do key theo user (không IP):
+ *   - User đã authenticate → dùng `userId` chính xác hơn IP (NAT/shared IP).
+ *   - Fallback IP chỉ khi thiếu userId (edge case, defense in depth).
+ *
+ * Lưu ý: rate limit này chỉ bảo vệ endpoint BE `/download-pdf`.
+ * Upload CV download (FE fetch thẳng MinIO) bypass hoàn toàn → cần
+ * throttle ở FE layer ([useCvDownload.ts](../../frontend/src/composables/useCvDownload.ts)).
+ */
+export const cvDownloadRateLimiter = rateLimit({
+  ...baseConfig,
+  store: createRedisStore('cv_download'),
+  windowMs: 60_000,
+  max: 5,
+  keyGenerator: (req: any) => `cv_download:${req.user?.userId || req.ip}`,
+  message: { success: false, error: { code: 'CV_DOWNLOAD_RATE_LIMITED', message: 'Bạn tải CV quá nhiều. Vui lòng thử lại sau 1 phút.' } },
 });
 
 // Chatbot (JobMatch AI) — 10 lượt/phút/user; chỉ áp cho POST /chatbot/sessions/:id/turn.

@@ -70,6 +70,7 @@ export const skillStatusEnum = pgEnum('skill_status', ['active', 'deleted']);
 export const cvStatusEnum = pgEnum('cv_status', [
   'pending',
   'parsing',
+  'analyzing',
   'ready',
   'failed',
   'deleted',

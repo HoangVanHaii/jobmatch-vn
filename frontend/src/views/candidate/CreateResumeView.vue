@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   Plus,
@@ -28,7 +28,13 @@ import { useUploadStore } from '@stores/upload';
 import { useToastStore } from '@stores/toast';
 import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue';
 import type { Skill } from '@/types/skills';
-import type { CvRenderData, CreateDirectCvInput, CvSource } from '@/types/cv';
+import type {
+  Cv,
+  CvRenderData,
+  CreateDirectCvInput,
+  CvSource,
+  UpdateDirectCvInput,
+} from '@/types/cv';
 
 /* ============================================================================
  * Form interfaces (direct mode) — giữ nguyên từ bản cũ, không đổi shape.
@@ -92,6 +98,36 @@ const uploadQuotaTooltip = computed<string>(() =>
 /** Error từ cv store — message BE đã được dịch qua cvStore.setError. */
 const cvStoreError = computed<string | null>(() => cvStore.error);
 
+/* ============================================================================
+ * Dual-mode: 'create' | 'edit'
+ *
+ * Detect qua `route.params.cvId` (props: true trong router config).
+ *   - create: /candidate/resumes/new (cvId không có)
+ *   - edit:   /candidate/resumes/:cvId/edit (cvId có)
+ *
+ * Edit mode KHÔNG hỗ trợ upload — chỉ direct (BE chỉ accept source='direct'
+ * qua PATCH /cvs/:cvId, xem cv.service.ts update()). Force mode='direct'.
+ *
+ * Edit mode có những khác biệt:
+ *   - Page header: "Chỉnh sửa CV" thay vì "Tạo CV mới"
+ *   - Ẩn mode toggle (không cho đổi qua upload khi đang edit)
+ *   - Wizard stepper vẫn giữ đầy đủ để user sửa bất kỳ step nào
+ *   - Submit: cvStore.update(cvId, payload) thay vì cvStore.create(payload)
+ *   - BE set status='analyzing' + enqueue worker → sau khi save, list sẽ
+ *     hiện "đang phân tích lại". User quay về MyResumesView thấy loading
+ *     overlay tới khi worker chấm xong.
+ * ==========================================================================*/
+const cvIdParam = computed<string | null>(() => {
+  const raw = route.params.cvId;
+  return typeof raw === 'string' && raw.length > 0 ? raw : null;
+});
+const isEditMode = computed<boolean>(() => cvIdParam.value !== null);
+
+/** CV đang edit (loaded từ API). Null cho tới khi fetch xong hoặc nếu lỗi. */
+const editingCv = ref<Cv | null>(null);
+/** Lỗi khi load CV (CV không tồn tại / không phải direct / network). */
+const loadError = ref<string | null>(null);
+
 onMounted(() => {
   void planStore.fetchMyUsage();
 });
@@ -99,13 +135,194 @@ onMounted(() => {
 /* ============================================================================
  * Mode — 'direct' | 'upload'
  * Mặc định lấy từ query param `?mode=upload` (deep-link từ MyResumesView).
+ *
+ * Edit mode FORCE về 'direct' (BE chỉ accept source='direct' qua PATCH).
+ * Upload toggle ẩn khi edit (template kiểm tra `mode === 'direct' || !isEditMode`).
  * ==========================================================================*/
 type CreateMode = CvSource;
-const initialMode: CreateMode = route.query.mode === 'upload' ? 'upload' : 'direct';
+const initialMode: CreateMode =
+  cvIdParam.value !== null
+    ? 'direct'
+    : route.query.mode === 'upload'
+    ? 'upload'
+    : 'direct';
 const mode = ref<CreateMode>(initialMode);
 
 /* ============================================================================
- * Direct-mode state
+ * Edit-mode load + prefill
+ *
+ * Khi edit: GET /cvs/:cvId → map parsedData → form refs. Nếu CV là upload
+ * (BE 400 INVALID_SOURCE) → show error, không cho edit. Nếu CV không tồn
+ * tại → show "CV không tồn tại", link back to list.
+ *
+ * Prefill KHÔNG bao gồm `templateId` vào form refs (templateId là root row,
+ * không nằm trong parsedData). Nhưng BE PATCH hiện không nhận templateId,
+ * nên nếu user đổi template khi edit → KHÔNG lưu. Hiện tại chấp nhận giới
+ * hạn này (xem cv.service.ts update() — chỉ set title + parsedData).
+ *
+ * Reuse bug fix — Vue Router REUSE component instance khi cùng route name,
+ * chỉ khác params. Pattern cũ (onMounted + watch immediate:false) KHÔNG fire
+ * khi user nav /A/edit → /B/edit. Fix: watch(immediate: true) + reset form
+ * khi cvId đổi, không chỉ fill lần đầu.
+ *
+ * Abort guard — mirror useCvRenderData pattern:
+ *   - AbortController per fetch → abort request cũ trước khi tạo mới (race
+ *     fix khi user click nhanh A → B).
+ *   - isComponentMounted + onUnmounted → response trả về SAU unmount không
+ *     set state trên component đã destroy (tránh Vue warning).
+ * ==========================================================================*/
+const isLoadingCv = ref(false);
+
+/** Race + leak state — KHÔNG exposed ra ngoài. */
+let activeController: AbortController | null = null;
+let isComponentMounted = true;
+onUnmounted(() => {
+  isComponentMounted = false;
+  activeController?.abort();
+});
+
+const prefillFromCv = (cv: Cv): void => {
+  const data = (cv.parsedData ?? {}) as Record<string, unknown>;
+  // personal
+  personal.value = {
+    fullName: stringField(data, 'name'),
+    position: titleFor(data, cv),
+    email: stringField(data, 'email'),
+    phone: stringField(data, 'phone'),
+    facebook: stringField(data, 'facebook'),
+    linkedin: stringField(data, 'linkedin'),
+    portfolio: stringField(data, 'portfolio'),
+    github: stringField(data, 'github'),
+    avatarUrl: stringField(data, 'avatarUrl'),
+  };
+  templateId.value = cv.templateId ?? 1;
+  summary.value = stringField(data, 'summary');
+  // education
+  const edu = (data.education as Education[] | undefined) ?? [];
+  educations.value = edu.length
+    ? edu.map((e) => ({
+        school: e.school ?? '',
+        major: e.major ?? '',
+        startYear: e.startYear !== undefined && e.startYear !== null ? String(e.startYear) : '',
+        endYear: e.endYear !== undefined && e.endYear !== null ? String(e.endYear) : '',
+        description: e.description ?? '',
+      }))
+    : [{ school: '', major: '', startYear: '', endYear: '', description: '' }];
+  // experience
+  const exp = (data.experience as Experience[] | undefined) ?? [];
+  experiences.value = exp.length
+    ? exp.map((e) => ({
+        company: e.company ?? '',
+        position: e.position ?? '',
+        startDate: e.startDate ?? '',
+        endDate: e.endDate ?? '',
+        description: e.description ?? '',
+      }))
+    : [{ company: '', position: '', startDate: '', endDate: '', description: '' }];
+  // skills — đọc CẢ 2 shape để tương thích data cũ (string[]) và mới ({name, level}[]).
+  // Data cũ: BE lưu string[], level hiện mặc định 3 — chấp nhận mất level cho CV
+  // cũ (không có nguồn để recover). Data mới: level 1-5 được giữ nguyên.
+  const rawSkills = data.skills as Array<string | { name?: string; level?: number }> | undefined;
+  skills.value = (rawSkills ?? []).map((s) => {
+    if (typeof s === 'string') return { name: s, level: 3 };
+    return { name: s.name ?? '', level: clampLevel(s.level) };
+  });
+  // projects — đọc role/time (BE lưu từ form). CV cũ thiếu → rỗng (form có default row trống).
+  const proj = (data.projects as Project[] | undefined) ?? [];
+  projects.value = proj.length
+    ? proj.map((p) => ({
+        name: p.name ?? '',
+        role: p.role ?? '',
+        time: p.time ?? '',
+        description: p.description ?? '',
+        link: p.link ?? '',
+      }))
+    : [{ name: '', role: '', time: '', description: '', link: '' }];
+  // certifications
+  const cert = (data.certifications as Certificate[] | undefined) ?? [];
+  certificates.value = cert.length
+    ? cert.map((c) => ({
+        name: c.name ?? '',
+        issuer: c.issuer ?? '',
+        date: c.date ?? '',
+      }))
+    : [{ name: '', issuer: '', date: '' }];
+};
+
+/** Clamp skill level 1-5 (defensive — DB có thể có giá trị ngoài range do migration). */
+const clampLevel = (lvl: number | undefined): number => {
+  if (typeof lvl !== 'number' || Number.isNaN(lvl)) return 3;
+  return Math.max(1, Math.min(5, Math.round(lvl)));
+};
+
+const stringField = (data: Record<string, unknown>, key: string): string => {
+  const v = data[key];
+  return typeof v === 'string' ? v : '';
+};
+
+/** Lấy title ưu tiên parsedData.title (user-typed), fallback root cv.title. */
+const titleFor = (data: Record<string, unknown>, cv: Cv): string =>
+  stringField(data, 'title') || cv.title || '';
+
+const loadCvForEdit = async (cvId: string): Promise<void> => {
+  // Abort request cũ (nếu có) — race fix khi user nav nhanh A → B.
+  activeController?.abort();
+  const ctrl = new AbortController();
+  activeController = ctrl;
+
+  // Guard unmount ngay đầu hàm — phòng edge case route change xảy ra giữa
+  // lúc đang resolve trước khi vào try.
+  if (!isComponentMounted) return;
+  isLoadingCv.value = true;
+  loadError.value = null;
+  try {
+    const cv = await cvStore.fetchDetail(cvId, { signal: ctrl.signal });
+    // Guard unmount + abort SAU await — response có thể về sau unmount/abort.
+    if (!isComponentMounted || ctrl.signal.aborted) return;
+    if (!cv) {
+      loadError.value = cvStoreError.value ?? 'Không tải được CV. Vui lòng thử lại.';
+      return;
+    }
+    if (cv.source !== 'direct') {
+      loadError.value =
+        'CV upload từ file không thể chỉnh sửa trực tiếp. Vui lòng upload lại.';
+      return;
+    }
+    editingCv.value = cv;
+    prefillFromCv(cv);
+  } catch (e) {
+    // Filter cancel — axios throw CanceledError khi abort. KHÔNG set error state.
+    const errAny = e as { name?: string; code?: string };
+    if (
+      errAny?.name === 'AbortError' ||
+      errAny?.name === 'CanceledError' ||
+      errAny?.code === 'ERR_CANCELED'
+    ) {
+      return;
+    }
+    if (!isComponentMounted || ctrl.signal.aborted) return;
+    loadError.value = cvStoreError.value ?? 'Không tải được CV. Vui lòng thử lại.';
+  } finally {
+    // Chỉ clear loading nếu đây vẫn là request active — tránh flash loading=false
+    // giữa 2 request liên tiếp (request mới sẽ set loading=true ngay).
+    if (activeController === ctrl && isComponentMounted) {
+      isLoadingCv.value = false;
+    }
+  }
+};
+
+/* ============================================================================
+ * Direct-mode form state — PHẢI khai báo TRƯỚC resetFormToInitial + watch.
+ *
+ * Vue `<script setup>` chạy synchronously. `watch(..., { immediate: true })`
+ * invoke callback ngay khi register → nếu callback reference 1 ref chưa
+ * declared → Temporal Dead Zone (TDZ) → ReferenceError "Cannot access 'X'
+ * before initialization" → component crash + trang trắng.
+ *
+ * Bằng chứng: trước fix, `personal`/`skills`/etc. nằm SAU watch ở line 374+,
+ * watch fire ở line 358 → `resetFormToInitial()` gọi `personal.value = ...`
+ * → ReferenceError. Reorder toàn bộ state lên đây để watch fire SAU khi
+ * tất cả ref ready.
  * ==========================================================================*/
 
 const personal = ref({
@@ -137,21 +354,96 @@ const projects = ref<Project[]>([
 ]);
 const certificates = ref<Certificate[]>([{ name: '', issuer: '', date: '' }]);
 
+/** Reset form refs về initial state (dùng khi cvId đổi để tránh dính data cũ). */
+const resetFormToInitial = (): void => {
+  personal.value = {
+    fullName: '',
+    position: '',
+    email: '',
+    phone: '',
+    facebook: '',
+    linkedin: '',
+    portfolio: '',
+    github: '',
+    avatarUrl: '',
+  };
+  templateId.value = 1;
+  summary.value = '';
+  educations.value = [
+    { school: '', major: '', startYear: '', endYear: '', description: '' },
+  ];
+  experiences.value = [
+    { company: '', position: '', startDate: '', endDate: '', description: '' },
+  ];
+  skills.value = [];
+  projects.value = [
+    { name: '', role: '', time: '', description: '', link: '' },
+  ];
+  certificates.value = [{ name: '', issuer: '', date: '' }];
+  editingCv.value = null;
+  loadError.value = null;
+};
+
+/**
+ * Watch cvIdParam — fire khi route param thay đổi (cover BOTH initial mount
+ * và nav giữa các edit URLs).
+ *
+ * Ví dụ user flow gây bug cũ:
+ *   - Đang ở /resumes/A/edit → click "Sửa" CV-B từ menu khác (giả sử có UX)
+ *   - hoặc programmatic router.push → /resumes/B/edit
+ *   → Vue Router REUSE component instance, chỉ params thay đổi.
+ *   onMounted KHÔNG fire lại → form giữ data CV-A.
+ *
+ * immediate: true → chạy lần đầu với cvIdParam ban đầu → cover initial mount.
+ * Reset form trước khi load CV mới → tránh hiện data cũ trong lúc fetch.
+ *
+ * ⚠️ PHẢI đặt watch NÀY SAU khi tất cả form refs đã khai báo. immediate: true
+ * fire callback synchronously trong setup() — nếu `personal`/`skills`/etc.
+ * chưa declare, `resetFormToInitial()` throw ReferenceError "Cannot access
+ * 'personal' before initialization" (TDZ) → Vue crash + blank page.
+ *
+ * Lỗi này KHÔNG hiện ở create mode vì watch callback chỉ làm gì khi `id` truthy
+ * (create mode id === null). Nhưng edit mode (id truthy) crash ngay lần render
+ * đầu. Fix = đặt watch ở đây, SAU các refs declarations.
+ */
+watch(
+  cvIdParam,
+  (id) => {
+    if (id) {
+      // Reset form trước khi load CV mới — tránh dính data cũ nếu request
+      // fail/timeout. isLoadingCv=true sẽ hiện spinner ngay.
+      resetFormToInitial();
+      void loadCvForEdit(id);
+    }
+  },
+  { immediate: true },
+);
+
 /* ============================================================================
  * Upload-mode state
  * Backend: POST /uploads/file (multipart, field `file`, ≤10MB, PDF/DOCX/image)
  * ==========================================================================*/
 
+/**
+ * MIME types được chấp nhận cho CV upload.
+ *
+ * Chỉ cho phép PDF + DOC/DOCX. ẢNH (JPG/PNG) đã bị chặn vì:
+ *   - AI parse kém chất lượng trên ảnh (OCR thiếu context, layout bể).
+ *   - User dễ nhầm screenshot/ảnh ngẫu nhiên với CV → status='failed' +
+ *     reason='not_a_cv' sau khi parse → UX xấu.
+ *   - Lưu lượng + storage cho ảnh lớn (≤10MB) mà parse fail.
+ *
+ * CvThumbnail.vue vẫn có branch `isImage` để render legacy image CV (nếu
+ * DB còn data cũ từ trước khi restrict), nhưng flow upload mới không thể
+ * đưa ảnh vào.
+ */
 const ACCEPTED_MIME = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/msword',
-  'image/jpeg',
-  'image/png',
 ];
 
 const uploadFile = ref<File | null>(null);
-const uploadPreviewUrl = ref<string | null>(null);
 const uploaded = ref<{ url: string; key: string; mime: string; size: number } | null>(null);
 const isDragging = ref(false);
 const uploadInput = ref<HTMLInputElement | null>(null);
@@ -161,7 +453,7 @@ const openFilePicker = (): void => {
 
 const handleSelectFile = (file: File) => {
   if (!ACCEPTED_MIME.includes(file.type)) {
-    toast.error('Định dạng không hỗ trợ. Chỉ chấp nhận PDF, DOCX, JPG, PNG.', {
+    toast.error('Định dạng không hỗ trợ. Chỉ chấp nhận PDF, DOC hoặc DOCX.', {
       title: 'File không hợp lệ',
     });
     return;
@@ -173,9 +465,6 @@ const handleSelectFile = (file: File) => {
     return;
   }
   uploadFile.value = file;
-  // Tạo preview URL cho ảnh; PDF thì để trống (modal dùng iframe blob).
-  if (uploadPreviewUrl.value) URL.revokeObjectURL(uploadPreviewUrl.value);
-  uploadPreviewUrl.value = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
   uploaded.value = null; // reset nếu đổi file
 };
 
@@ -193,9 +482,7 @@ const handleDrop = (e: DragEvent) => {
 };
 
 const removeUploadFile = () => {
-  if (uploadPreviewUrl.value) URL.revokeObjectURL(uploadPreviewUrl.value);
   uploadFile.value = null;
-  uploadPreviewUrl.value = null;
   uploaded.value = null;
 };
 
@@ -398,14 +685,27 @@ const cvData = computed<CvRenderData>(() => ({
  * ==========================================================================*/
 
 const buildDirectPayload = (): CreateDirectCvInput => {
-  const cleanSkills = Array.from(
-    new Set(skills.value.map(s => s.name.trim()).filter(Boolean)),
-  );
+  // Skill dedup theo name (case-insensitive) — giữ level của row xuất hiện
+  // ĐẦU TIÊN (giả định user nhập lại trùng thì level cũ vẫn đúng). Gửi
+  // object {name, level} để BE preserve level qua round-trip (trước đây FE
+  // chỉ gửi string[] → BE lưu mất level → edit lại thấy level reset về 3).
+  const seen = new Set<string>();
+  const cleanSkills: Array<{ name: string; level: number }> = [];
+  for (const s of skills.value) {
+    const name = s.name.trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleanSkills.push({ name, level: clampLevel(s.level) });
+  }
 
   const cleanProjects = projects.value
     .filter(p => p.name.trim())
     .map(p => ({
       name: p.name.trim(),
+      role: p.role.trim() || undefined,
+      time: p.time.trim() || undefined,
       description: p.description.trim() || undefined,
       link: p.link.trim() || undefined,
     }));
@@ -455,6 +755,36 @@ const buildDirectPayload = (): CreateDirectCvInput => {
 };
 
 /* ============================================================================
+ * Build update payload — chỉ gồm field BE PATCH nhận (xem
+ * UpdateDirectCvInput). Tách riêng buildDirectPayload (create, đầy đủ
+ * CreateDirectCvInput) và buildUpdatePayload (edit, đúng shape BE).
+ *
+ * Edit KHÔNG gửi templateId — BE chưa nhận (xem cv.service.ts update() chỉ
+ * set title + parsedData). Nếu user đổi template khi edit, thay đổi đó bị
+ * bỏ qua. Có thể mở rộng sau bằng cách thêm field `templateId` vào input
+ * + update service.
+ * ==========================================================================*/
+
+const buildUpdatePayload = (): UpdateDirectCvInput => {
+  const fullPayload = buildDirectPayload();
+  // Tách phần parsedData (BE merge vào parsedData hiện có qua deepMerge).
+  // Không gửi `templateId` vì BE update() chưa hỗ trợ — xem comment trên.
+  return {
+    title: fullPayload.title,
+    parsedData: {
+      summary: fullPayload.summary,
+      contact: fullPayload.contact,
+      education: fullPayload.education,
+      experience: fullPayload.experience,
+      skills: fullPayload.skills,
+      languages: fullPayload.languages,
+      projects: fullPayload.projects,
+      certifications: fullPayload.certifications,
+    },
+  };
+};
+
+/* ============================================================================
  * Submit — chỉ trigger ở bước cuối của wizard.
  *
  * UX: thay vì hiện banner inline (cồng kềnh, tốn chỗ), toàn bộ feedback
@@ -463,24 +793,96 @@ const buildDirectPayload = (): CreateDirectCvInput => {
  *
  * Vì `toast` store là GLOBAL (singleton), toast vẫn hiển thị sau khi
  * navigate đi — user có feedback dù trang kế tiếp mount ngay.
+ *
+ * Dispatch create vs update theo `isEditMode`:
+ *   - create: POST /cvs/direct → toast "Đã tạo CV"
+ *   - edit:   PATCH /cvs/:cvId → toast "Đã lưu thay đổi, đang phân tích lại".
+ *     BE set status='analyzing' + enqueue worker — overlay sẽ hiện khi user
+ *     về MyResumesView.
  * ==========================================================================*/
 
 const isSaving = ref(false);
 
 const handleSave = async () => {
   if (mode.value === 'direct') {
-    // Validate: position là trường bắt buộc duy nhất trên cả form. Nếu
-    // user đang ở step 7 (template) mà thiếu position thì auto-jump về
-    // step 2 để không phải tự quay lại.
+    // Validate các trường bắt buộc của CV trực tiếp. 4 field bắt buộc:
+    //   - Họ tên (step 1, Thông tin cá nhân)
+    //   - Email (step 1) — phải đúng format
+    //   - Số điện thoại (step 1) — 10–15 chữ số
+    //   - Tiêu đề CV (step 2, Giới thiệu)
+    //
+    // Thứ tự kiểm tra: bắt buộc trước (rỗng), format sau. Mỗi lỗi dừng ngay +
+    // auto-jump về step chứa field + focus + select input.
+    const fullName = (personal.value.fullName || '').trim();
+    if (!fullName) {
+      toast.warning('Vui lòng nhập họ và tên.', { title: 'Thiếu thông tin' });
+      await focusField(1, fullNameInputRef);
+      return;
+    }
+    const email = (personal.value.email || '').trim();
+    // Regex email đơn giản — match ký tự trước @, sau @ có domain + TLD.
+    // Đủ dùng cho UX (catch lỗi định dạng rõ ràng), không cần RFC 5322 strict.
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email) {
+      toast.warning('Vui lòng nhập email.', { title: 'Thiếu thông tin' });
+      await focusField(1, emailInputRef);
+      return;
+    }
+    if (!EMAIL_RE.test(email)) {
+      toast.warning('Email chưa đúng định dạng (VD: ten@example.com).', {
+        title: 'Email không hợp lệ',
+      });
+      await focusField(1, emailInputRef);
+      return;
+    }
+    const phoneDigits = (personal.value.phone || '').replace(/[^0-9]/g, '');
+    if (!phoneDigits) {
+      toast.warning('Vui lòng nhập số điện thoại.', { title: 'Thiếu thông tin' });
+      await focusField(1, phoneInputRef);
+      return;
+    }
+    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+      toast.warning(
+        `Số điện thoại phải có 10–15 chữ số (hiện tại: ${phoneDigits.length}).`,
+        { title: 'Số điện thoại chưa đúng' },
+      );
+      await focusField(1, phoneInputRef);
+      return;
+    }
     if (!personal.value.position.trim()) {
       toast.warning('Vui lòng nhập tiêu đề CV.', {
         title: 'Thiếu thông tin',
       });
-      goToStep(2);
+      await focusField(2, positionInputRef);
+      return;
+    }
+    // Avatar bắt buộc cho các mẫu có vị trí avatar trong layout (id 1, 2, 4, 5).
+    // Template 3 (1-cột, serif) không có avatar → optional. Validate SAU position
+    // vì position là field cuối cùng user nhập ở step 2 — bắt miss ngay khi user
+    // bấm Save từ step 7 (chọn mẫu) để không phải quay lại step 2.
+    if (templateRequiresAvatar && !personal.value.avatarUrl.trim()) {
+      toast.warning('Mẫu CV này có vị trí ảnh đại diện. Vui lòng tải ảnh lên.', {
+        title: 'Thiếu ảnh đại diện',
+      });
+      await focusField(1, avatarButtonRef);
       return;
     }
     isSaving.value = true;
     try {
+      if (isEditMode.value && cvIdParam.value) {
+        // Edit flow — PATCH /cvs/:cvId. Build payload riêng (đúng shape BE).
+        const updated = await cvStore.update(cvIdParam.value, buildUpdatePayload());
+        if (updated) {
+          toast.success('Đã lưu thay đổi. AI đang phân tích lại CV...', {
+            title: 'Cập nhật thành công',
+          });
+          router.push('/candidate/resumes');
+        } else {
+          toast.error(cvStoreError.value ?? 'Không lưu được CV. Vui lòng thử lại.');
+        }
+        return;
+      }
+      // Create flow — POST /cvs/direct.
       const created = await cvStore.create(buildDirectPayload());
       if (created) {
         toast.success('Đã tạo CV thành công!');
@@ -494,7 +896,7 @@ const handleSave = async () => {
     return;
   }
 
-  // mode === 'upload'
+  // mode === 'upload' — chỉ có ở create mode (edit force 'direct').
   if (!uploadFile.value) {
     toast.warning('Vui lòng chọn file CV trước khi lưu.', {
       title: 'Chưa có file',
@@ -768,6 +1170,60 @@ const goToStep = (stepId: number): void => {
   currentStep.value = stepId;
 };
 
+// Template refs cho input cần focus khi validation fail. `null` khi component
+// chưa mount step tương ứng (v-if render theo currentStep).
+const fullNameInputRef = ref<HTMLInputElement | null>(null);
+const emailInputRef = ref<HTMLInputElement | null>(null);
+const phoneInputRef = ref<HTMLInputElement | null>(null);
+const positionInputRef = ref<HTMLInputElement | null>(null);
+const avatarButtonRef = ref<HTMLButtonElement | null>(null);
+
+/**
+ * Mẫu CV nào BẮT BUỘC có avatar (templateId 1, 2, 4, 5 — đều có vị trí avatar
+ * trong layout). Template 3 (1 cột, font serif) không có avatar → optional.
+ *
+ * Khi user chọn 1 trong các mẫu này, `handleSave` sẽ chặn nếu thiếu
+ * `personal.avatarUrl`. UI cũng show `*` đỏ bên cạnh label "Ảnh đại diện"
+ * để user biết trước.
+ */
+const TEMPLATES_REQUIRING_AVATAR = new Set([1, 2, 4, 5]);
+const templateRequiresAvatar = computed<boolean>(() =>
+  TEMPLATES_REQUIRING_AVATAR.has(templateId.value),
+);
+
+/**
+ * Jump đến step + focus + select input bị lỗi.
+ *
+ * Dùng khi validation fail: user submit nhưng thiếu field → toast warning +
+ * đưa user về đúng tab + cursor vào input bị sai luôn (không cần tự click).
+ *
+ * nextTick đợi Vue render xong step mới (v-if mount component con) trước khi
+ * gọi .focus() — nếu gọi sync, ref vẫn là null vì DOM chưa swap.
+ *
+ * @param stepId   Step cần chuyển tới (1..TOTAL_STEPS).
+ * @param refToFocus Template ref của input cần focus.
+ */
+const focusField = async (
+  stepId: number,
+  // HTMLElement (input, button, textarea…) — không restrict về HTMLInputElement
+  // vì một số field (vd: avatar "Chọn ảnh" button) là <button>, không phải input.
+  refToFocus: { value: HTMLElement | null } | null,
+): Promise<void> => {
+  goToStep(stepId);
+  await nextTick();
+  // Đợi thêm 1 frame để chắc DOM đã mount xong (đặc biệt nếu component con
+  // lazy-load qua v-if).
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  const el = refToFocus?.value;
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.focus({ preventScroll: true });
+    // `select()` chỉ tồn tại trên input/textarea — dùng optional chain để
+    // skip cho button/div mà không crash.
+    (el as HTMLInputElement).select?.();
+  }
+};
+
 const nextStep = (): void => {
   if (currentStep.value < TOTAL_STEPS) currentStep.value += 1;
 };
@@ -784,24 +1240,62 @@ const cancelWizard = (): void => {
 
 <template>
   <div class="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+    <!-- ==================== Loading state khi đang load CV để edit ==================== -->
+    <div
+      v-if="isEditMode && isLoadingCv"
+      class="card flex items-center justify-center gap-3 py-16"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 class="w-5 h-5 text-[#064C8A] animate-spin" />
+      <p class="text-sm text-gray-600">Đang tải CV...</p>
+    </div>
+
+    <!-- ==================== Load error ==================== -->
+    <div
+      v-else-if="isEditMode && loadError"
+      class="card border-red-200 bg-red-50/50 text-center py-10 space-y-3"
+      role="alert"
+    >
+      <p class="text-sm text-red-700 font-medium">{{ loadError }}</p>
+      <button
+        type="button"
+        class="btn-secondary text-sm"
+        @click="router.push('/candidate/resumes')"
+      >
+        Quay lại danh sách CV
+      </button>
+    </div>
+
+    <!-- ==================== Main content (create + edit) ==================== -->
+    <template v-else>
     <!-- ==================== Page Header ==================== -->
     <header class="flex items-start justify-between gap-4 flex-wrap">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">Tạo CV mới</h1>
+        <h1 class="text-2xl font-bold text-[#064C8A]">
+          {{ isEditMode ? 'Chỉnh sửa CV' : 'Tạo CV mới' }}
+        </h1>
         <p class="text-gray-600 mt-1 text-sm">
-          {{
-            mode === 'direct'
-              ? 'Tạo CV trực tiếp theo từng bước, không cần nhập một lần.'
-              : 'Upload CV có sẵn, hệ thống sẽ tự động phân tích.'
-          }}
+          <template v-if="isEditMode">
+            Cập nhật nội dung CV. Sau khi lưu, hệ thống sẽ tự động phân tích lại.
+          </template>
+          <template v-else-if="mode === 'direct'">
+            Tạo CV trực tiếp theo từng bước, không cần nhập một lần.
+          </template>
+          <template v-else>
+            Upload CV có sẵn, hệ thống sẽ tự động phân tích.
+          </template>
         </p>
       </div>
-      <!-- Mode toggle -->
-      <div class="inline-flex rounded-lg border border-gray-300 bg-white p-1 shrink-0">
+      <!-- Mode toggle — ẩn khi edit (force direct mode, không cho đổi qua upload). -->
+      <div
+        v-if="!isEditMode"
+        class="inline-flex rounded-lg border border-gray-300 bg-white p-1 shrink-0"
+      >
         <button
           type="button"
           class="px-3 sm:px-4 py-2 text-xs sm:text-sm rounded-md flex items-center gap-1.5 sm:gap-2 transition"
-          :class="mode === 'direct' ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'"
+          :class="mode === 'direct' ? 'bg-[#064C8A] text-white' : 'text-gray-700 hover:bg-[#EEF6FB]'"
           @click="mode = 'direct'"
         >
           <FileText class="w-4 h-4 shrink-0" />
@@ -811,7 +1305,7 @@ const cancelWizard = (): void => {
         <button
           type="button"
           class="px-3 sm:px-4 py-2 text-xs sm:text-sm rounded-md flex items-center gap-1.5 sm:gap-2 transition"
-          :class="mode === 'upload' ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'"
+          :class="mode === 'upload' ? 'bg-[#064C8A] text-white' : 'text-gray-700 hover:bg-[#EEF6FB]'"
           @click="mode = 'upload'"
         >
           <Upload class="w-4 h-4 shrink-0" />
@@ -841,7 +1335,7 @@ const cancelWizard = (): void => {
               <div
                 v-if="idx > 0"
                 class="flex-1 h-0.5 -mt-0 transition-colors"
-                :class="step.id <= currentStep ? 'bg-gray-900' : 'bg-gray-200'"
+                :class="step.id <= currentStep ? 'bg-[#064C8A]' : 'bg-gray-200'"
               />
               <!-- Circle -->
               <button
@@ -849,10 +1343,10 @@ const cancelWizard = (): void => {
                 class="shrink-0 w-8 h-8 rounded-full inline-flex items-center justify-center text-xs font-semibold transition-all"
                 :class="[
                   step.id < currentStep
-                    ? 'bg-gray-900 text-white hover:bg-gray-700'
+                    ? 'bg-[#064C8A] text-white hover:bg-[#0057A8]'
                     : step.id === currentStep
-                    ? 'bg-gray-900 text-white ring-4 ring-gray-200'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
+                    ? 'bg-[#064C8A] text-white ring-4 ring-[#EEF6FB]'
+                    : 'bg-gray-100 text-gray-500 hover:bg-[#EEF6FB]',
                 ]"
                 :aria-current="step.id === currentStep ? 'step' : undefined"
                 :aria-label="`Bước ${step.id}: ${step.title}`"
@@ -865,16 +1359,16 @@ const cancelWizard = (): void => {
               <div
                 v-if="idx < steps.length - 1"
                 class="flex-1 h-0.5 -mt-0 transition-colors"
-                :class="step.id < currentStep ? 'bg-gray-900' : 'bg-gray-200'"
+                :class="step.id < currentStep ? 'bg-[#064C8A]' : 'bg-gray-200'"
               />
             </div>
             <button
               type="button"
               class="mt-2 text-[11px] font-medium text-center leading-tight transition-colors max-w-full px-0.5"
               :class="step.id === currentStep
-                ? 'text-gray-900'
+                ? 'text-[#064C8A]'
                 : step.id < currentStep
-                ? 'text-gray-700 hover:text-gray-900'
+                ? 'text-gray-700 hover:text-[#064C8A]'
                 : 'text-gray-400'"
               @click="goToStep(step.id)"
             >
@@ -889,13 +1383,13 @@ const cancelWizard = (): void => {
             <p class="text-xs text-gray-500 font-medium tabular-nums">
               Bước {{ currentStep }} / {{ TOTAL_STEPS }}
             </p>
-            <p class="text-sm font-semibold text-gray-900 truncate">
+            <p class="text-sm font-semibold text-[#064C8A] truncate">
               {{ currentStepMeta.title }}
             </p>
           </div>
           <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden">
             <div
-              class="h-full bg-gray-900 rounded-full transition-all duration-300"
+              class="h-full bg-[#064C8A] rounded-full transition-all duration-300"
               :style="{ width: `${(currentStep / TOTAL_STEPS) * 100}%` }"
             />
           </div>
@@ -906,11 +1400,11 @@ const cancelWizard = (): void => {
       <section class="card space-y-5" :aria-labelledby="`step-${currentStep}-title`">
         <!-- Step header: icon + title + description -->
         <header class="flex items-start gap-3 pb-4 border-b border-gray-200">
-          <div class="w-10 h-10 rounded-xl bg-gray-900 text-white inline-flex items-center justify-center shrink-0">
+          <div class="w-10 h-10 rounded-xl bg-[#064C8A] text-white inline-flex items-center justify-center shrink-0">
             <component :is="currentStepMeta.icon" class="w-5 h-5" />
           </div>
           <div class="min-w-0">
-            <h2 :id="`step-${currentStep}-title`" class="text-lg font-semibold text-gray-900">
+            <h2 :id="`step-${currentStep}-title`" class="text-lg font-semibold text-[#064C8A]">
               {{ currentStepMeta.title }}
             </h2>
             <p class="text-sm text-gray-500 mt-0.5">{{ currentStepMeta.description }}</p>
@@ -921,16 +1415,48 @@ const cancelWizard = (): void => {
         <div v-if="currentStep === 1" class="space-y-4">
           <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <label class="block">
-              <span class="text-sm text-gray-700">Họ và tên</span>
-              <input v-model="personal.fullName" class="input mt-1" placeholder="Nguyễn Văn A" />
+              <span class="text-sm text-gray-700">
+                Họ và tên <span class="text-red-500">*</span>
+              </span>
+              <input
+                ref="fullNameInputRef"
+                v-model="personal.fullName"
+                class="input mt-1"
+                placeholder="Nguyễn Văn A"
+              />
             </label>
             <label class="block">
-              <span class="text-sm text-gray-700">Email</span>
-              <input v-model="personal.email" type="email" class="input mt-1" placeholder="email@example.com" />
+              <span class="text-sm text-gray-700">
+                Email <span class="text-red-500">*</span>
+              </span>
+              <input
+                ref="emailInputRef"
+                v-model="personal.email"
+                type="email"
+                pattern="[^\s@]+@[^\s@]+\.[^\s@]+"
+                class="input mt-1"
+                placeholder="email@example.com"
+              />
             </label>
             <label class="block">
-              <span class="text-sm text-gray-700">Số điện thoại</span>
-              <input v-model="personal.phone" class="input mt-1" placeholder="+84 ..." />
+              <span class="text-sm text-gray-700">
+                Số điện thoại <span class="text-red-500">*</span>
+              </span>
+              <input
+                ref="phoneInputRef"
+                v-model="personal.phone"
+                type="tel"
+                inputmode="numeric"
+                pattern="[0-9]{10,15}"
+                minlength="10"
+                maxlength="15"
+                class="input mt-1"
+                placeholder="VD: 0912345678"
+                @input="personal.phone = (personal.phone || '').replace(/[^0-9]/g, '')"
+              />
+              <span class="text-xs text-gray-500 mt-1 block">
+                Nhập 10–15 chữ số (VD: 0912345678).
+              </span>
             </label>
             <label class="block">
               <span class="text-sm text-gray-700">Facebook</span>
@@ -949,7 +1475,14 @@ const cancelWizard = (): void => {
               <input v-model="personal.github" class="input mt-1" placeholder="https://github.com/..." />
             </label>
             <label class="block sm:col-span-2 lg:col-span-3">
-              <span class="text-sm text-gray-700">Ảnh đại diện</span>
+              <span class="text-sm text-gray-700">
+                Ảnh đại diện
+                <span
+                  v-if="templateRequiresAvatar"
+                  class="text-red-500"
+                  title="Mẫu CV này có vị trí ảnh đại diện — bắt buộc tải ảnh lên"
+                >*</span>
+              </span>
               <div class="flex items-center gap-3 mt-1 flex-wrap">
                 <div
                   v-if="personal.avatarUrl"
@@ -959,13 +1492,16 @@ const cancelWizard = (): void => {
                 </div>
                 <div
                   v-else
-                  class="w-14 h-14 rounded-full border border-dashed border-gray-300 shrink-0 flex items-center justify-center text-gray-400 text-xs"
+                  class="w-14 h-14 rounded-full border border-dashed shrink-0 flex items-center justify-center text-xs"
+                  :class="templateRequiresAvatar ? 'border-red-400 bg-red-50 text-red-500' : 'border-gray-300 text-gray-400'"
                 >
                   Chưa có
                 </div>
                 <button
+                  ref="avatarButtonRef"
                   type="button"
                   class="btn-secondary text-sm inline-flex items-center gap-2"
+                  :class="templateRequiresAvatar && !personal.avatarUrl ? 'ring-2 ring-red-300 ring-offset-1' : ''"
                   :disabled="avatarUploading"
                   @click="pickAvatar"
                 >
@@ -1002,6 +1538,7 @@ const cancelWizard = (): void => {
               Tiêu đề CV / Vị trí ứng tuyển <span class="text-red-500">*</span>
             </span>
             <input
+              ref="positionInputRef"
               v-model="personal.position"
               class="input mt-1"
               placeholder="Chuyên viên Marketing / Lập trình viên Backend / Kế toán tổng hợp ..."
@@ -1138,7 +1675,7 @@ const cancelWizard = (): void => {
               v-for="opt in availableSuggestions"
               :key="opt.id"
               type="button"
-              class="px-2.5 py-0.5 text-xs rounded-full border border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:text-gray-900 hover:bg-gray-100 transition"
+              class="px-2.5 py-0.5 text-xs rounded-full border border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:text-[#064C8A] hover:bg-[#EEF6FB] transition"
               @click="addSkill(opt.name)"
             >
               + {{ opt.name }}
@@ -1158,7 +1695,7 @@ const cancelWizard = (): void => {
               :key="s.name"
               class="inline-flex items-center gap-2 pl-3 pr-1 py-1 rounded-full bg-gray-100 border border-gray-200 text-sm"
             >
-              <span class="font-medium text-gray-900">{{ s.name }}</span>
+              <span class="font-medium text-[#064C8A]">{{ s.name }}</span>
 
               <!-- 5 dots level clickable -->
               <div class="inline-flex items-center gap-0.5">
@@ -1172,7 +1709,7 @@ const cancelWizard = (): void => {
                 >
                   <span
                     class="block w-2 h-2 rounded-full transition-colors"
-                    :class="n <= s.level ? 'bg-gray-700' : 'bg-gray-300'"
+                    :class="n <= s.level ? 'bg-[#0057A8]' : 'bg-gray-300'"
                   />
                 </button>
               </div>
@@ -1198,7 +1735,7 @@ const cancelWizard = (): void => {
           <div class="border border-gray-200 rounded-xl p-4 sm:p-5 space-y-4">
             <div class="flex items-center justify-between">
               <div>
-                <h3 class="font-semibold text-gray-900 text-base">Dự án</h3>
+                <h3 class="font-semibold text-[#064C8A] text-base">Dự án</h3>
                 <p class="text-xs text-gray-500 mt-0.5">
                   Các dự án cá nhân / freelance / nghiên cứu nổi bật.
                 </p>
@@ -1243,7 +1780,7 @@ const cancelWizard = (): void => {
           <div class="border border-gray-200 rounded-xl p-4 sm:p-5 space-y-4">
             <div class="flex items-center justify-between">
               <div>
-                <h3 class="font-semibold text-gray-900 text-base">Chứng chỉ</h3>
+                <h3 class="font-semibold text-[#064C8A] text-base">Chứng chỉ</h3>
                 <p class="text-xs text-gray-500 mt-0.5">
                   Chứng chỉ chuyên môn, chứng nhận nghề nghiệp.
                 </p>
@@ -1292,14 +1829,14 @@ const cancelWizard = (): void => {
               @click="templateId = tpl.id"
               class="group relative rounded-xl overflow-hidden text-left transition-all shrink-0 hover:-translate-y-0.5"
               :class="templateId === tpl.id
-                ? 'ring-4 ring-gray-200 shadow-xl'
+                ? 'ring-4 ring-[#064C8A]/40 shadow-xl'
                 : 'shadow-md hover:shadow-xl'"
               :style="{ width: `${TEMPLATE_CARD_WIDTH}px` }"
             >
               <div
                 class="relative aspect-[210/297] overflow-hidden border-2 rounded-xl transition-colors"
                 :class="templateId === tpl.id
-                  ? 'border-gray-900'
+                  ? 'border-[#064C8A]'
                   : 'border-stone-200 group-hover:border-stone-400'"
                 style="background: linear-gradient(135deg, #f5f5f4 0%, #fafaf9 50%, #fef3c7 140%)"
               >
@@ -1311,19 +1848,23 @@ const cancelWizard = (): void => {
                     transformOrigin: 'top left',
                   }"
                 >
-                  <CVTemplateRenderer :template-id="tpl.id" :data="templatePreviewData" />
+                  <CVTemplateRenderer
+                    :template-id="tpl.id"
+                    :data="templatePreviewData"
+                    :disable-links="true"
+                  />
                 </div>
 
                 <div
                   v-if="templateId === tpl.id"
-                  class="absolute top-2 right-2 w-7 h-7 bg-gray-900 text-white rounded-full inline-flex items-center justify-center shadow-lg ring-2 ring-white z-10 pointer-events-none"
+                  class="absolute top-2 right-2 w-7 h-7 bg-[#064C8A] text-white rounded-full inline-flex items-center justify-center shadow-lg ring-2 ring-white z-10 pointer-events-none"
                 >
                   <Check class="w-3.5 h-3.5" />
                 </div>
               </div>
 
               <div class="px-1 pt-2 pb-1">
-                <p class="font-semibold text-xs text-gray-900">{{ tpl.label }}</p>
+                <p class="font-semibold text-xs text-[#064C8A]">{{ tpl.label }}</p>
                 <p class="text-[10px] text-gray-500 mt-0.5 line-clamp-2 leading-tight">
                   {{ tpl.desc }}
                 </p>
@@ -1367,7 +1908,7 @@ const cancelWizard = (): void => {
           <button
             v-if="!isLastStep"
             type="button"
-            class="inline-flex items-center gap-1.5 h-10 px-5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition text-sm font-semibold"
+            class="inline-flex items-center gap-1.5 h-10 px-5 bg-[#064C8A] text-white rounded-lg hover:bg-[#0057A8] transition text-sm font-semibold"
             @click="nextStep"
           >
             Tiếp tục <ChevronRight class="w-4 h-4" />
@@ -1375,13 +1916,17 @@ const cancelWizard = (): void => {
           <button
             v-else
             type="button"
-            class="inline-flex items-center gap-1.5 h-10 px-5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            class="inline-flex items-center gap-1.5 h-10 px-5 bg-[#064C8A] text-white rounded-lg hover:bg-[#0057A8] transition text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="isSaving"
             @click="handleSave"
           >
             <Loader2 v-if="isSaving" class="w-4 h-4 animate-spin" />
             <Check v-else class="w-4 h-4" />
-            {{ isSaving ? 'Đang tạo CV...' : 'Tạo CV' }}
+            {{
+              isSaving
+                ? (isEditMode ? 'Đang lưu...' : 'Đang tạo CV...')
+                : (isEditMode ? 'Lưu thay đổi' : 'Tạo CV')
+            }}
           </button>
         </footer>
       </section>
@@ -1393,9 +1938,9 @@ const cancelWizard = (): void => {
     <template v-else>
       <section class="card">
         <header class="pb-4 mb-5 border-b border-gray-200">
-          <h2 class="font-semibold text-gray-900 text-base sm:text-lg">Upload CV của bạn</h2>
+          <h2 class="font-semibold text-[#064C8A] text-base sm:text-lg">Upload CV của bạn</h2>
           <p class="text-sm text-gray-500 mt-1">
-            Hỗ trợ PDF, DOCX, DOC, JPG, PNG. Tối đa 10MB.
+            Hỗ trợ PDF, DOCX, DOC. Tối đa 10MB.
           </p>
         </header>
 
@@ -1414,26 +1959,27 @@ const cancelWizard = (): void => {
             ref="uploadInput"
             type="file"
             class="hidden"
-            accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png"
+            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             @change="handleFileInput"
           />
           <div class="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white ring-1 ring-gray-200 shadow-sm inline-flex items-center justify-center mx-auto mb-4">
             <FileUp class="w-7 h-7 sm:w-8 sm:h-8 text-gray-500" />
           </div>
           <p class="text-sm sm:text-base text-gray-700">
-            <span class="text-gray-900 font-semibold">Chọn file</span> hoặc kéo thả vào đây
+            <span class="text-[#064C8A] font-semibold">Chọn file</span> hoặc kéo thả vào đây
           </p>
-          <p class="text-xs text-gray-500 mt-1.5">PDF, DOCX, DOC, JPG, PNG — tối đa 10MB</p>
+          <p class="text-xs text-gray-500 mt-1.5">PDF, DOCX, DOC — tối đa 10MB</p>
         </div>
 
         <!-- File đã chọn -->
         <div v-else class="flex items-center gap-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
           <div class="w-12 h-12 rounded-lg bg-white flex items-center justify-center shrink-0 border border-gray-200">
-            <img v-if="uploadPreviewUrl" :src="uploadPreviewUrl" class="w-full h-full object-cover rounded-lg" />
-            <FileText v-else class="w-6 h-6 text-gray-700" />
+            <!-- Upload flow chỉ nhận PDF/DOC/DOCX (xem ACCEPTED_MIME) → không có
+                 ảnh preview, icon FileText là đủ. -->
+            <FileText class="w-6 h-6 text-gray-700" />
           </div>
           <div class="flex-1 min-w-0">
-            <p class="font-medium text-gray-900 truncate">{{ uploadFile.name }}</p>
+            <p class="font-medium text-[#064C8A] truncate">{{ uploadFile.name }}</p>
             <p class="text-xs text-gray-500 mt-0.5">
               {{ uploadFile.type || '—' }} · {{ formatBytes(uploadFile.size) }}
               <span v-if="uploaded" class="text-green-600"> · Uploaded</span>
@@ -1467,15 +2013,9 @@ const cancelWizard = (): void => {
               <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white ring-1 ring-gray-200 text-xs font-medium text-gray-700">
                 <FileText class="w-3.5 h-3.5 text-blue-400" /> DOC
               </span>
-              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white ring-1 ring-gray-200 text-xs font-medium text-gray-700">
-                <FileText class="w-3.5 h-3.5 text-emerald-500" /> JPG
-              </span>
-              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white ring-1 ring-gray-200 text-xs font-medium text-gray-700">
-                <FileText class="w-3.5 h-3.5 text-emerald-500" /> PNG
-              </span>
             </div>
             <p class="text-[11px] text-gray-500 mt-3 leading-relaxed">
-              File PDF/DOCX cho kết quả parse tốt nhất. Ảnh CV (JPG/PNG) chỉ nên dùng khi không có bản text.
+              File PDF/DOCX cho kết quả parse tốt nhất. Hệ thống không nhận ảnh CV (JPG/PNG).
             </p>
           </div>
 
@@ -1486,19 +2026,19 @@ const cancelWizard = (): void => {
             </p>
             <ol class="space-y-2.5">
               <li class="flex items-start gap-2.5">
-                <span class="shrink-0 w-5 h-5 rounded-full bg-gray-900 text-white inline-flex items-center justify-center text-[10px] font-bold">1</span>
+                <span class="shrink-0 w-5 h-5 rounded-full bg-[#064C8A] text-white inline-flex items-center justify-center text-[10px] font-bold">1</span>
                 <p class="text-xs text-gray-700 leading-relaxed">
                   File được lưu an toàn trên storage.
                 </p>
               </li>
               <li class="flex items-start gap-2.5">
-                <span class="shrink-0 w-5 h-5 rounded-full bg-gray-900 text-white inline-flex items-center justify-center text-[10px] font-bold">2</span>
+                <span class="shrink-0 w-5 h-5 rounded-full bg-[#064C8A] text-white inline-flex items-center justify-center text-[10px] font-bold">2</span>
                 <p class="text-xs text-gray-700 leading-relaxed">
                   AI phân tích nội dung và chấm điểm CV (có thể mất 5–30 giây).
                 </p>
               </li>
               <li class="flex items-start gap-2.5">
-                <span class="shrink-0 w-5 h-5 rounded-full bg-gray-900 text-white inline-flex items-center justify-center text-[10px] font-bold">3</span>
+                <span class="shrink-0 w-5 h-5 rounded-full bg-[#064C8A] text-white inline-flex items-center justify-center text-[10px] font-bold">3</span>
                 <p class="text-xs text-gray-700 leading-relaxed">
                   CV xuất hiện trong danh sách, sẵn sàng để ứng tuyển.
                 </p>
@@ -1528,7 +2068,7 @@ const cancelWizard = (): void => {
             </button>
             <button
               type="button"
-              class="inline-flex items-center gap-2 h-10 px-4 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              class="inline-flex items-center gap-2 h-10 px-4 bg-[#064C8A] text-white rounded-lg hover:bg-[#0057A8] transition text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               :disabled="isSaving || !hasUploadQuota"
               :title="!hasUploadQuota ? uploadQuotaTooltip : undefined"
               @click="handleSave"
@@ -1540,6 +2080,8 @@ const cancelWizard = (): void => {
         </footer>
       </section>
     </template>
+    </template>
+    <!-- /Main content (create + edit) -->
   </div>
 
   <!-- ============================================================
@@ -1553,7 +2095,7 @@ const cancelWizard = (): void => {
     >
       <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
         <header class="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 flex items-center justify-between gap-2 sm:gap-4 flex-wrap">
-          <h2 class="font-semibold text-gray-900 text-sm sm:text-base shrink-0">Xem trước CV</h2>
+          <h2 class="font-semibold text-[#064C8A] text-sm sm:text-base shrink-0">Xem trước CV</h2>
           <!-- Switch template trong modal preview (chỉ direct mode). Trên mobile
                chỉ hiện số (1..5) để vừa 5 nút trong 1 hàng ngang. -->
           <div class="inline-flex rounded-lg border border-gray-300 p-0.5 sm:p-1 overflow-x-auto">
@@ -1563,7 +2105,7 @@ const cancelWizard = (): void => {
               type="button"
               @click="previewTemplateId = tpl.id"
               class="px-2.5 sm:px-3 py-1 text-xs rounded-md transition shrink-0"
-              :class="previewTemplateId === tpl.id ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'"
+              :class="previewTemplateId === tpl.id ? 'bg-[#064C8A] text-white' : 'text-gray-600 hover:bg-[#EEF6FB]'"
             >
               <span class="sm:hidden">{{ tpl.id }}</span>
               <span class="hidden sm:inline">{{ tpl.label }}</span>
