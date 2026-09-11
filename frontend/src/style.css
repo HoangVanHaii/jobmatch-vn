@@ -153,16 +153,11 @@ html,
 body {
   scrollbar-width: thin;
   scrollbar-color: rgba(203, 213, 225, 0.7) transparent;
-  /**
-   * Dành sẵn chỗ cho vertical scrollbar (~15-17px) kể cả khi content chưa
-   * vượt viewport. Tránh layout shift: page có 26 jobs thì scrollbar xuất
-   * hiện, page có 5 jobs thì scrollbar ẩn → nếu không có stable, chiều rộng
-   * khả dụng thay đổi 15-17px → toàn bộ giao diện "giật" sang phải.
-   *
-   * Hỗ trợ: Chrome 94+, Firefox 97+, Safari 16+ (rất phổ biến 2026).
-   * Fallback: browser bỏ qua thuộc tính lạ → vẫn hoạt động bình thường.
-   */
-  scrollbar-gutter: stable;
+  /* KHÔNG dùng `scrollbar-gutter: stable` vì nó reserve sẵn 15-17px bên phải
+   * kể cả khi scrollbar ẩn → lộ dải trắng (body bg) khi modal mở + scrollbar
+   * bị hide bằng `overflow: hidden`. Trade-off: scrollbar xuất hiện/biến mất
+   * theo content sẽ gây layout shift ~6-15px, nhưng đây là behavior mặc định
+   * của browser, modal `position: fixed` không bị ảnh hưởng. */
 }
 html::-webkit-scrollbar,
 body::-webkit-scrollbar {

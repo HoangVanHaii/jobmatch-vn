@@ -128,9 +128,29 @@ export const cvController = {
         throw new AppError(404, 'CV_NOT_FOUND', 'CV not found or already deleted');
       }
 
-      notificationGateway.emitToUser(candidateId, "cv:status-changed", {
+      // Emit `cv:status-changed` NGAY sau PATCH để user thấy overlay "Đang phân
+// tích" trước khi worker pick up job (5-30s sau). Đây KHÔNG phải duplicate
+// của worker emit — worker cuối cùng vẫn emit `'ready'` / `'failed'` (terminal)
+// qua `changeAnalysisAsReady` / `changeStatus`. Controller emit này chỉ
+// bridge gap `'analyzing'` intermediate.
+//
+// Payload shape PHẢI match các emit khác (xem cv.service.ts:667, :698, :723)
+// — đủ 3 field { cvId, status, failureReason }. Trước đây thiếu
+// `failureReason` → FE handler `cv:status-changed` ở MyResumesView.vue:184
+// default về `null` qua `failureReason ?? null` nên vẫn chạy, nhưng:
+//   1. Inconsistent shape → khó audit, nếu sau này FE đổi default sẽ miss
+//      ở PATCH path.
+//   2. Phá vỡ invariant "failureReason='quota_exceeded' có thể tồn tại
+//      ngay cả khi status != 'failed'" (xem cv.service.ts:651-654) —
+//      hardcode `null` ở PATCH sẽ wipe case hiếm user re-edit CV vừa bị
+//      quota-revert từ lần analyze trước.
+//
+// Sau PATCH thật, `updated.failureReason` = null (BE set status='analyzing'
+// hàm ý clear reason). `?? null` defensive cho trường hợp BE đổi logic sau.
+notificationGateway.emitToUser(candidateId, "cv:status-changed", {
         cvId,
         status: updated.status,
+        failureReason: updated.failureReason ?? null,
       });
 
       res.json({ success: true, data: updated });

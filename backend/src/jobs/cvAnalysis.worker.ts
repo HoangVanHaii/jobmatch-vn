@@ -31,12 +31,17 @@ export const cvAnalysisWorker = new Worker(
             return;
         }
 
-        if (dbCv.status !== 'pending' && dbCv.status !== 'parsing') {
+        if (dbCv.status !== 'pending' && dbCv.status !== 'analyzing') {
             return;
         }
 
+        // Worker này CHỈ phục vụ re-analysis (không phải parse text). Status
+        // 'analyzing' được set bởi cvService.triggerAnalysis trước khi enqueue.
+        // Để tránh đè status 'analyzing' → không downgrade ở đây (giữ nguyên).
+        // Nếu status='pending' (edge case: row từ migration cũ, hoặc trigger
+        // từ admin tool) → set 'analyzing' cho khớp semantic.
         if (dbCv.status === 'pending') {
-            await cvService.changeStatus(dbCv.candidateId, dbCv.id, "parsing");
+            await cvService.changeStatus(dbCv.candidateId, dbCv.id, "analyzing");
         }
 
         if (!dbCv?.parsedData) {
@@ -159,8 +164,8 @@ export const cvAnalysisWorker = new Worker(
                 "Worker: CV parse attempt failed",
             );
 
-            // Chỉ mark 'failed' khi đã hết retry — các attempt trước vẫn để status='parsing'
-            // để attempt sau được worker check `status !== 'pending' && !== 'parsing'` pass.
+            // Chỉ mark 'failed' khi đã hết retry — các attempt trước vẫn để status='analyzing'
+            // để attempt sau được worker check `status !== 'pending' && !== 'analyzing'` pass.
             if (isLastAttempt) {
                 await usageLogService.decrementCount(dbCv.candidateId, "ai_cv_analysis");
 

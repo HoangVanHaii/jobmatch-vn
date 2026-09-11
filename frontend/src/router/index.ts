@@ -63,6 +63,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'profile', name: 'candidate-profile', component: () => import('@views/candidate/ProfileView.vue') },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
       { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
+      // Edit CV direct — dùng CÙNG component CreateResumeView (dual-mode:
+      // detect cvId từ route param → prefill form → submit PATCH thay vì POST).
+      // Nav từ MyResumesView (menu "Sửa") → /resumes/:cvId/edit.
+      { path: 'resumes/:cvId/edit', name: 'edit-resume', component: () => import('@views/candidate/CreateResumeView.vue'), props: true },
       { path: 'viec-lam', name: 'candidate-jobs', component: () => import('@views/candidate/JobsView.vue') },
       { path: 'viec-lam/:slug', name: 'candidate-job-detail', component: () => import('@views/candidate/JobDetailView.vue') },
       { path: 'saved-jobs', name: 'candidate-saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },

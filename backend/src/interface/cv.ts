@@ -92,6 +92,10 @@ export interface DirectCvLanguage {
 
 export interface DirectCvProject {
   name: string;
+  /** Role trong dự án — vd "Tech Lead", "Solo Dev". Optional, có thể null qua PATCH. */
+  role?: string;
+  /** Thời gian dự án — vd "2023 — 2024". Optional. */
+  time?: string;
   description?: string;
   link?: string | null;
 }
@@ -100,6 +104,19 @@ export interface DirectCvCertification {
   name: string;
   issuer?: string;
   date?: string;
+}
+
+/**
+ * Skill có level 1-5 (1 = mới biết, 5 = chuyên sâu). Level dùng cho progress
+ * bar trên template render + dots picker ở form edit.
+ *
+ * Round-trip: BE lưu nguyên object vào parsedData (không strip level như trước).
+ * CV cũ trong DB (lưu string[]) vẫn render được — buildRenderData nhận cả 2
+ * shape (string | {name, level}).
+ */
+export interface DirectCvSkill {
+  name: string;
+  level: number;
 }
 
 
@@ -111,7 +128,8 @@ export interface CreateDirectCvInput {
   contact?: DirectCvContact;
   education?: DirectCvEducation[];
   experience?: DirectCvExperience[];
-  skills?: string[];
+  /** Có thể là string[] (CV cũ) hoặc DirectCvSkill[] (có level). BE chấp nhận cả 2. */
+  skills?: Array<string | DirectCvSkill>;
   languages?: DirectCvLanguage[];
   projects?: DirectCvProject[];
   certifications?: DirectCvCertification[];
