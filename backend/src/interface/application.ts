@@ -122,6 +122,7 @@ export interface EmployerApplicationRow {
   jobId: string;
   jobTitle: string | null;
   candidateId: string;
+  candidateAvatarUrl: string | null;
   /** Tên candidate — null nếu isAnonymous=true (employer chỉ biết có application, không biết ai). */
   candidateName: string | null;
   candidateEmail: string | null;

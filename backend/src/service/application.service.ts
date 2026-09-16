@@ -563,6 +563,7 @@ export const listByCompany = async (
         jobTitle: jobs.title,
         candidateId: applications.candidateId,
         candidateName: userProfiles.fullName,
+        candidateAvatarUrl: userProfiles.avatarUrl,
         candidateEmail: users.email,
         status: applications.status,
         stage: applications.stage,
