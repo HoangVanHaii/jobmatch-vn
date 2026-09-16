@@ -21,6 +21,24 @@ export const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
   withCredentials: true,
   timeout: 30_000,
+  /**
+   * Axios v1+ mặc định serialize giá trị `undefined` thành literal string
+   * `"undefined"` (vd `?jobType=undefined`) → backend Zod reject → 400.
+   *
+   * Custom serializer skip `undefined` để URL luôn clean (chỉ chứa key có
+   * value thật). Ảnh hưởng toàn bộ app, không cần nhớ filter thủ công ở
+   * từng call site.
+   */
+  paramsSerializer: {
+    serialize: (params) => {
+      const search = new URLSearchParams();
+      for (const [key, value] of Object.entries(params ?? {})) {
+        if (value === undefined || value === null) continue;
+        search.append(key, String(value));
+      }
+      return search.toString();
+    },
+  },
 });
 
 let isRefreshing = false;

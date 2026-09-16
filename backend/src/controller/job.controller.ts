@@ -19,6 +19,61 @@ export const jobController = {
     } catch (err) { next(err); }
   },
 
+  /**
+   * GET /jobs/cities — danh sách city distinct từ `jobs.location` của các job
+   * `live`. Dùng cho Location filter dropdown ở JobSearchView.
+   *
+   * Trả về sorted ascending, strip prefix "Thành phố "/"Tỉnh " để FE render
+   * ngắn gọn; backend đã chuẩn hoá khi filter (`locationCity` exact-match có
+   * fallback cho data cũ — xem jobService.list).
+   */
+  listCities: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await jobService.listCities();
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * GET /jobs/job-types — danh sách JobType enum values từ DB enum `job_type`
+   * (full-time, part-time, contract, internship, freelance). Dùng cho JobType
+   * filter dropdown ở JobSearchView — sync với backend enum thay vì hardcode.
+   *
+   * Trả về sorted ascending theo locale. Nếu sau này muốn kèm label tiếng Việt
+   * (vd "Toàn thời gian" thay vì "full-time"), đổi shape thành
+   * `{ key, label }[]`.
+   */
+  listJobTypes: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await jobService.listJobTypes();
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * GET /jobs/job-levels — danh sách JobLevel enum values từ DB enum
+   * `job_level` (intern, fresher, junior, mid, senior, lead, manager). Dùng
+   * cho Experience Level filter dropdown ở JobSearchView — sync với BE.
+   */
+  listJobLevels: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await jobService.listJobLevels();
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * GET /jobs/salary-range — min/max salary (VND) trên toàn bộ job `live`.
+   * Dùng để set bounds cho Salary range slider ở JobSearchView. Public,
+   * không cần auth (data đã public ở /jobs list).
+   */
+  listSalaryRange: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await jobService.listSalaryRange();
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
   list: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const filters = req.query as unknown as JobListQuery;
@@ -217,6 +272,20 @@ export const jobController = {
     try {
       const userId = req.user!.userId;
       const data = await jobService.getMatches(userId, req.params.id as string);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * `GET /jobs/:id/applicants-over-time?days=N` — timeseries count applicants
+   * theo ngày cho chart trong candidate JobDetailView. Public (optionalAuth) —
+   * chỉ aggregate, không lộ PII. `days` query default 10, max 90 (Zod clamp).
+   */
+  getApplicantsOverTime: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const jobId = req.params.id as string;
+      const days = Number(req.query.days ?? 10);
+      const data = await jobService.getApplicantsOverTime(jobId, days);
       res.json({ success: true, data });
     } catch (err) { next(err); }
   },

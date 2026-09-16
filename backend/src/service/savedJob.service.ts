@@ -7,6 +7,24 @@ import type { SavedJobListQuery } from '../middleware/savedJob';
 import type { ListSavedJobsResponse, SaveJobResponse } from '../interface/savedJob';
 
 export const savedJobService = {
+  /**
+   * Chỉ lấy `jobId[]` user đã lưu (không join `jobs`/`companies` để response
+   * nhỏ — tiết kiệm bandwidth + parse time khi client chỉ cần build Set để
+   * render bookmark icon). Dùng cho client-side "đã lưu hay chưa" check.
+   *
+   * `limit` cap 500 để tránh trả hàng nghìn IDs (1 user hiếm khi lưu quá
+   * nhiều job cùng lúc; nếu cần nhiều hơn → paginate sau).
+   */
+  listIds: async (userId: string, limit: number): Promise<string[]> => {
+    const rows = await db
+      .select({ jobId: savedJobs.jobId })
+      .from(savedJobs)
+      .where(eq(savedJobs.userId, userId))
+      .orderBy(desc(savedJobs.savedAt))
+      .limit(limit);
+    return rows.map((r) => r.jobId);
+  },
+
   list: async (userId: string, filters: SavedJobListQuery): Promise<ListSavedJobsResponse> => {
     const conditions = [eq(savedJobs.userId, userId)];
     if (filters.jobLevel) conditions.push(eq(jobs.jobLevel, filters.jobLevel));
@@ -37,6 +55,7 @@ export const savedJobService = {
             // LEFT JOIN companies — match pattern ở job.service.ts:list/search.
             companyName: companies.name,
             companyLogoUrl: companies.logoUrl,
+            descriptions: jobs.description,
             jobLevel: jobs.jobLevel,
             jobType: jobs.jobType,
             industry: jobs.industry,
@@ -52,6 +71,17 @@ export const savedJobService = {
             appliesCount: jobs.appliesCount,
             createdAt: jobs.createdAt,
             publishedAt: jobs.publishedAt,
+            hiringStatus: jobs.hiringStatus,
+            ratingAvg: sql<number | null>`(
+              SELECT AVG(rating)::float8
+              FROM job_feedbacks
+              WHERE job_id = ${jobs.id}
+            )`,
+            ratingCount: sql<number>`(
+              SELECT COUNT(*)::int
+              FROM job_feedbacks
+              WHERE job_id = ${jobs.id}
+            )`,
           },
         })
         .from(savedJobs)

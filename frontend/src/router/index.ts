@@ -8,6 +8,7 @@ import { useAuthStore } from '@stores/auth';
 const routes: RouteRecordRaw[] = [
   // Public
   // { path: '/', name: 'home', component: () => import('@views/HomeView.vue') },
+
   { path: '/login', name: 'login', component: () => import('@views/auth/LoginView.vue'), meta: { guest: true } },
   { path: '/register', name: 'register', component: () => import('@views/auth/RegisterView.vue'), meta: { guest: true } },
   { path: '/verify-otp', name: 'verify-otp', component: () => import('@views/auth/VerifyOtpView.vue'), meta: { guest: true } },
@@ -72,6 +73,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'saved-jobs', name: 'candidate-saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
       { path: 'applications', name: 'candidate-applications', component: () => import('@views/candidate/AppliedJobsView.vue') },
    // { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true } }, 
+      { path: 'job-search', name: 'job-search', component: () => import('@views/candidate/JobSearchView.vue'), meta: { auth: true } },
 
       { path: 'chat/:id?', name: 'chat', component: ChatView, meta: { auth: true },},
       // Pricing & billing (có sidebar qua layout)
@@ -127,6 +129,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'billing/history', name: 'employer-billing-history', component: () => import('@views/employer/BillingHistoryView.vue') },
       { path: 'billing/success', name: 'employer-billing-success', component: () => import('@views/BillingSuccessView.vue') },
       { path: 'billing/cancel', name: 'employer-billing-cancel', component: () => import('@views/BillingCancelView.vue') },
+
+      // Mockup test route — xem nhanh UI mockup candidate list/detail, không gọi API.
+      { path: 'test', name: 'employer-test', component: () => import('@views/employer/ApplicationMockupView.vue') },
     ],
   },
 

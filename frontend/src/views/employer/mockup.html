@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Candidates Mockup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        poppins: ['Poppins', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body class="min-h-screen bg-[#f7f9fc] font-poppins text-[#17233c]">
+    <div class="mx-auto min-h-screen max-w-[1680px] p-4">
+        <div
+            class="flex min-h-[calc(100vh-32px)] overflow-hidden rounded-[18px] border border-[#e6ebf2] bg-white shadow-[0_10px_40px_rgba(31,52,85,.08)]">
+
+            <!-- Main -->
+            <main class="min-w-0 flex-1 p-5 lg:p-6">
+                <div class="mb-5 flex items-start justify-between">
+                    <div>
+                        <h1 class="text-[28px] font-bold tracking-[-.6px]">Candidates</h1>
+                        <p class="text-[12px] text-[#8190a5]">Manage candidates and keep your hiring process moving.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div
+                            class="flex h-10 w-[215px] items-center gap-2 rounded-lg border border-[#e3e8ef] bg-white px-3 text-[12px] text-[#a0acbc]">
+                            <i data-lucide="search" class="h-4 w-4"></i>
+                            Search...
+                        </div>
+                        <button
+                            class="flex h-10 items-center gap-2 rounded-lg border border-[#e3e8ef] px-3 text-[12px] font-medium">
+                            <i data-lucide="funnel" class="h-4 w-4"></i> Filter
+                        </button>
+                        <button class="grid h-10 w-10 place-items-center rounded-lg border border-[#e3e8ef]">
+                            <i data-lucide="ellipsis" class="h-4 w-4"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <section class="overflow-hidden rounded-xl border border-[#e7ebf1] bg-white">
+                    <div class="px-4 pb-3 pt-4">
+                        <h2 class="text-[15px] font-semibold">All Candidate</h2>
+                    </div>
+
+                    <div
+                        class="grid grid-cols-[30px_1.7fr_1.7fr_1fr_1fr_1.1fr_24px] items-center border-y border-[#eef1f5] px-4 py-3 text-[11px] font-medium text-[#7c889a]">
+                        <div><input type="checkbox" class="accent-blue-600"></div>
+                        <div>Candidate</div>
+                        <div>Position</div>
+                        <div>Stage</div>
+                        <div>Match</div>
+                        <div>Applied</div>
+                        <div></div>
+                    </div>
+
+                    <div id="candidateRows"></div>
+
+                    <div
+                        class="flex items-center justify-between border-t border-[#eef1f5] px-4 py-3 text-[11px] text-[#7c889a]">
+                        <span>Showing 1 to 10 of 455 candidates</span>
+                        <div class="flex items-center gap-4">
+                            <i data-lucide="chevron-left" class="h-4 w-4"></i>
+                            <button
+                                class="grid h-8 w-8 place-items-center rounded-lg bg-[#1769e8] font-semibold text-white">1</button>
+                            <span>2</span><span>3</span><span>4</span><span>5</span><span>...</span><span>46</span>
+                            <i data-lucide="chevron-right" class="h-4 w-4"></i>
+                            <span class="ml-3">Show</span>
+                            <button
+                                class="flex items-center gap-2 rounded-lg border border-[#e3e8ef] px-3 py-2 font-medium text-[#334155]">10
+                                <i data-lucide="chevron-down" class="h-3 w-3"></i></button>
+                            <span>per page</span>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <!-- Detail panel -->
+            <aside class="w-[42%] min-w-[390px] max-w-[500px] shrink-0 border-l border-[#e9edf3] bg-[#fbfcfe] p-3">
+                <div class="h-full overflow-auto rounded-xl border border-[#e7ebf1] bg-white">
+                    <div class="relative border-b border-[#edf0f4] px-5 pb-0 pt-5">
+                        <button
+                            class="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg border border-[#e1e7ef] text-[#64748b]">
+                            <i data-lucide="x" class="h-4 w-4"></i>
+                        </button>
+
+                        <div class="flex items-center gap-4">
+                            <img src="https://i.pravatar.cc/160?img=47"
+                                class="h-20 w-20 rounded-full object-cover ring-4 ring-[#f1f4f8]">
+                            <div>
+                                <h2 class="text-[24px] font-bold">Sarah Miller</h2>
+                                <div class="mt-1 flex items-center gap-2">
+                                    <span
+                                        class="grid h-9 w-9 place-items-center rounded-full bg-[#f3e8ff] text-[#a855f7]"><i
+                                            data-lucide="box" class="h-4 w-4"></i></span>
+                                    <div>
+                                        <div class="text-[14px] font-semibold">Product Designer</div>
+                                        <span class="text-[10px] font-medium text-[#a855f7]">Design</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ml-auto flex items-center gap-2 pr-1">
+                                <div
+                                    class="relative grid h-14 w-14 place-items-center rounded-full border-[4px] border-[#1769e8] border-l-transparent text-[12px] font-bold">
+                                    83%</div>
+                                <div>
+                                    <div class="text-[10px] text-[#94a3b8]">Match Score</div>
+                                    <div class="text-[12px] font-semibold text-[#16a34a]">Strong match</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-5 flex gap-7 text-[12px] font-medium text-[#64748b]">
+                            <div class="border-b-2 border-[#1769e8] pb-3 text-[#1769e8]">Overview</div>
+                            <div class="pb-3">Profile</div>
+                            <div class="pb-3">Activity</div>
+                            <div class="pb-3">Notes</div>
+                            <div class="pb-3">Files</div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-4 p-5">
+                        <h3 class="text-[13px] font-semibold">Candidate Overview</h3>
+                        <div class="rounded-xl border border-[#e8edf3] p-4">
+                            <div class="grid grid-cols-2 gap-y-4 text-[11px] text-[#64748b]">
+                                <div class="space-y-3">
+                                    <div class="flex gap-2"><i data-lucide="mail" class="h-4 w-4"></i>
+                                        sarah.m@abcvild.com</div>
+                                    <div class="flex gap-2"><i data-lucide="map-pin" class="h-4 w-4"></i> San Francisco,
+                                        CA</div>
+                                    <div class="flex gap-2"><i data-lucide="clock-3" class="h-4 w-4"></i> Available in 2
+                                        weeks</div>
+                                    <div class="flex gap-2"><i data-lucide="phone" class="h-4 w-4"></i> +1 (415)
+                                        555-0124</div>
+                                </div>
+                                <div class="border-l border-[#edf0f4] pl-5">
+                                    <div class="text-[10px] text-[#94a3b8]">Source</div>
+                                    <div class="mt-1 font-semibold text-[#334155]">LinkedIn</div>
+                                    <div class="mt-5 text-[10px] text-[#94a3b8]">Applied</div>
+                                    <div class="mt-1 font-semibold text-[#334155]">August 24, 2026</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3 class="mb-2 text-[13px] font-semibold">Skills</h3>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="pill">Figma</span><span class="pill">Design Systems</span><span
+                                    class="pill">UX Research</span>
+                                <span class="pill">Prototyping</span><span class="pill">User Flow</span><span
+                                    class="pill">Wireframing</span><span class="pill">+3</span>
+                            </div>
+                        </div>
+
+                        <div class="rounded-xl border border-[#cfe0ff] bg-[#eef5ff] p-4">
+                            <div class="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[#1769e8]">
+                                <i data-lucide="sparkles" class="h-4 w-4"></i> AI Summary
+                            </div>
+                            <p class="text-[11px] leading-5 text-[#53657d]">
+                                Strong product designer background with excellent experience in designing scalable,
+                                user-centered web and mobile products. Recently worked on B2B SaaS products. Looking for
+                                new opportunities to make an impact.
+                            </p>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="rounded-xl border border-[#e6ebf1] p-4">
+                                <div class="text-[12px] font-semibold">Current Stage</div>
+                                <span
+                                    class="mt-3 inline-flex rounded-full bg-[#eaf2ff] px-3 py-2 text-[11px] font-medium text-[#1769e8]">Interview</span>
+                            </div>
+                            <div class="rounded-xl border border-[#e6ebf1] p-4">
+                                <div class="text-[12px] font-semibold">Next Interview</div>
+                                <div class="mt-3 flex items-center gap-3">
+                                    <span
+                                        class="grid h-9 w-9 place-items-center rounded-full bg-[#eaf2ff] text-[#1769e8]"><i
+                                            data-lucide="calendar" class="h-4 w-4"></i></span>
+                                    <div>
+                                        <div class="text-[11px] font-semibold">Tomorrow</div>
+                                        <div class="text-[10px] text-[#64748b]">10:30 AM</div>
+                                    </div>
+                                    <i data-lucide="chevron-right" class="ml-auto h-4 w-4 text-[#1769e8]"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 pt-1">
+                            <button
+                                class="flex h-11 items-center justify-center gap-2 rounded-lg border border-[#dce4ef] bg-white text-[11px] font-semibold text-[#1769e8]">
+                                <i data-lucide="calendar-plus" class="h-4 w-4"></i> Schedule Interview
+                            </button>
+                            <button
+                                class="flex h-11 items-center justify-center gap-2 rounded-lg bg-[#1769e8] text-[11px] font-semibold text-white shadow-sm">
+                                View Full Profile <i data-lucide="arrow-right" class="h-4 w-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <script>
+        const candidates = [
+            ['Robert Fernandez', 'robert.f@outlook.com', 'Graphic Designer', 'Design', 'Interview', '80%', 'Aug 29, 2026', '33'],
+            ['David Kim', 'david.kim@example.com', 'Frontend Engineer', 'Engineering', 'Screening', '77%', 'Aug 29, 2026', '12'],
+            ['Emma Wilson', 'emma.w@gmail.com', 'Product Manager', 'Product', 'Assessment', '95%', 'Aug 28, 2026', '44'],
+            ['Thomas Welbeck', 'thomas.w@gmail.com', 'Backend Engineer', 'Engineering', 'New', '55%', 'Aug 27, 2026', '11'],
+            ['Laila Hermansyah', 'laila.h@gmail.com', 'Digital Marketing', 'Marketing', 'Assessment', '84%', 'Aug 27, 2026', '32'],
+            ['Kintaro Hamada', 'kintaro.hamada@gmail.com', 'Product Research', 'Product', 'Screening', '72%', 'Aug 25, 2026', '53'],
+            ['Sarah Miller', 'sarah.miller@gmail.com', 'Product Designer', 'Design', 'Interview', '83%', 'Aug 24, 2026', '47'],
+            ['Tony Cooper', 'tony.c@servermail.com', 'SEO Specialist', 'Marketing', 'Screening', '86%', 'Aug 24, 2026', '12'],
+            ['Willie Barrington', 'willie.d@speedmail.com', 'Network Security', 'Engineering', 'Assessment', '88%', 'Aug 23, 2026', '15'],
+            ['Nicole Hernandez', 'nicole.h@globalmail.com', 'Product Designer', 'Design', 'Interview', '83%', 'Aug 22, 2026', '68']
+        ];
+
+        const roleStyle = {
+            Design: ['bg-[#f3e8ff]', 'text-[#a855f7]', 'box'],
+            Engineering: ['bg-[#fff0df]', 'text-[#f97316]', 'code-2'],
+            Product: ['bg-[#dcf8ec]', 'text-[#10b981]', 'briefcase-business'],
+            Marketing: ['bg-[#e7efff]', 'text-[#2563eb]', 'badge']
+        };
+        const stageStyle = {
+            Interview: ['bg-[#eaf2ff]', 'text-[#1769e8]'],
+            Screening: ['bg-[#fff1e7]', 'text-[#f97316]'],
+            Assessment: ['bg-[#f7e9ff]', 'text-[#b24be7]'],
+            New: ['bg-[#eef0f2]', 'text-[#64748b]']
+        };
+
+        document.getElementById('candidateRows').innerHTML = candidates.map((c, i) => {
+            const [name, email, position, role, stage, match, date, img] = c;
+            const rs = roleStyle[role], ss = stageStyle[stage];
+            const selected = name === 'Sarah Miller';
+            return `
+    <div class="grid grid-cols-[30px_1.7fr_1.7fr_1fr_1fr_1.1fr_24px] items-center px-4 py-2.5 text-[11px] ${selected ? 'bg-[#edf4ff]' : 'bg-white'} border-b border-[#eef1f5]">
+      <div><input type="checkbox" class="accent-blue-600"></div>
+      <div class="flex min-w-0 items-center gap-2">
+        <img src="https://i.pravatar.cc/80?img=${img}" class="h-8 w-8 shrink-0 rounded-full object-cover">
+        <div class="min-w-0"><div class="truncate font-semibold">${name}</div><div class="truncate text-[9px] text-[#94a3b8]">${email}</div></div>
+      </div>
+      <div class="flex min-w-0 items-center gap-2">
+        <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full ${rs[0]} ${rs[1]}"><i data-lucide="${rs[2]}" class="h-4 w-4"></i></span>
+        <div class="min-w-0"><div class="truncate font-medium">${position}</div><span class="${rs[1]} text-[9px]">${role}</span></div>
+      </div>
+      <div><span class="inline-flex rounded-full ${ss[0]} ${ss[1]} px-3 py-1.5 text-[10px] font-medium">${stage}</span></div>
+      <div>
+        <div class="font-semibold">${match}</div>
+        <div class="mt-1 h-1.5 w-[85px] rounded-full bg-[#e8eef8]"><div class="h-full rounded-full bg-[#1769e8]" style="width:${match}"></div></div>
+      </div>
+      <div class="text-[10px] text-[#475569]">${date}</div>
+      <i data-lucide="ellipsis" class="h-4 w-4 text-[#94a3b8]"></i>
+    </div>`;
+        }).join('');
+
+        document.querySelectorAll('.pill').forEach(el => {
+            el.className += ' inline-flex rounded-full border border-[#dce5f3] bg-[#f1f5fb] px-3 py-1.5 text-[10px] font-medium text-[#334155]';
+        });
+        lucide.createIcons();
+    </script>
+</body>
+
+</html>

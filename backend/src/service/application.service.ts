@@ -1096,6 +1096,9 @@ export const getStatusForCandidate = async (
   cvTitle: string | null;
   aiMatchScore: number | null;
   aiMatchReason: 'success' | 'quota_exceeded' | 'failed' | null;
+  aiExperienceScore: number | null;
+  aiIndustryScore: number | null;
+  aiSkillsScore: number | null;
 }>> => {
   const rows = await db
     .select({
@@ -1108,6 +1111,12 @@ export const getStatusForCandidate = async (
       aiMatchReason: sql<
         'success' | 'quota_exceeded' | 'failed' | null
       >`${applications.aiMatchReasoning}->>'reason'`,
+      // Per-criterion breakdown — extract từ aiMatchReasoning JSONB.
+      // `->>'key'` trả text → cast ::numeric rồi ::text để đồng bộ pattern với
+      // aiMatchScore. Application cũ không có key → NULL.
+      aiExperienceScore: sql<string | null>`(${applications.aiMatchReasoning}->>'experienceScore')::numeric::text`,
+      aiIndustryScore: sql<string | null>`(${applications.aiMatchReasoning}->>'industryScore')::numeric::text`,
+      aiSkillsScore: sql<string | null>`(${applications.aiMatchReasoning}->>'skillsScore')::numeric::text`,
     })
     .from(applications)
     .leftJoin(cvs, eq(cvs.id, applications.cvId))
@@ -1119,15 +1128,20 @@ export const getStatusForCandidate = async (
     )
     .orderBy(desc(applications.appliedAt));
 
+  const toScore = (s: string | null): number | null =>
+    s != null ? Number(Number(s).toFixed(1)) : null;
+
   return rows.map((r) => ({
     status: r.status,
     applicationId: r.applicationId,
     appliedAt: r.appliedAt.toISOString(),
     cvId: r.cvId,
     cvTitle: r.cvTitle,
-    aiMatchScore:
-      r.aiMatchScore != null ? Number(Number(r.aiMatchScore).toFixed(1)) : null,
+    aiMatchScore: toScore(r.aiMatchScore),
     aiMatchReason: r.aiMatchReason,
+    aiExperienceScore: toScore(r.aiExperienceScore),
+    aiIndustryScore: toScore(r.aiIndustryScore),
+    aiSkillsScore: toScore(r.aiSkillsScore),
   }));
 };
 

@@ -92,6 +92,17 @@ export const useJobStore = defineStore('job', () => {
     page.value = 1;
   };
 
+  /**
+   * Chuyển trang (giữ nguyên filter) — wrapper gọi `fetchList(undefined, n)`
+   * cho gọn ở component. Set page.value trước, sau đó trigger fetch (giữ
+   * nguyên `query.value` hiện tại vì `newQuery` undefined → spread không
+   * xoá key cũ).
+   */
+  const setPage = (n: number): void => {
+    if (n < 1) return;
+    void fetchList(undefined, n);
+  };
+
   /** Set 1 filter cụ thể (key bất kỳ trong ListJobQuery), reset về trang 1. */
   const setFilter = <K extends keyof ListJobQuery>(
     key: K,
@@ -116,5 +127,6 @@ export const useJobStore = defineStore('job', () => {
     fetchList,
     resetFilters,
     setFilter,
+    setPage,
   };
 });
