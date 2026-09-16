@@ -17,6 +17,7 @@ import {
   jobSearchQuerySchema,
   jobSemanticSearchQuerySchema,
   jobFeedbackBodySchema,
+  jobApplicantsOverTimeQuerySchema,
 } from '../middleware/job';
 
 export const jobRouter = Router();
@@ -27,6 +28,11 @@ jobRouter.get('/search', optionalAuth, validate(jobSearchQuerySchema, 'query'), 
 // companyId từ session user (qua companyMemberService.findMembershipByUserId).
 jobRouter.get('/company', auth, employerOnly, validate(jobListQuerySchema, 'query'), jobController.listOfCompany);
 jobRouter.get('/industries', optionalAuth, jobController.listIndustries);
+jobRouter.get('/cities', optionalAuth, jobController.listCities);
+jobRouter.get('/job-types', optionalAuth, jobController.listJobTypes);
+jobRouter.get('/job-levels', optionalAuth, jobController.listJobLevels);
+/** GET /jobs/salary-range — min/max salary bounds (VND) cho slider filter. */
+jobRouter.get('/salary-range', optionalAuth, jobController.listSalaryRange);
 jobRouter.get('/', optionalAuth, validate(jobListQuerySchema, 'query'), jobController.list);
 // SEO-friendly: lấy job theo slug. Đặt TRƯỚC `/:id` để Express match `by-slug`
 // là literal segment thay vì nhầm làm giá trị của `:id`.
@@ -101,6 +107,19 @@ jobRouter.get(
   employerOnly,
   validate(jobIdParamsSchema, 'params'),
   jobController.getMatches,
+);
+
+/**
+ * Public applicants-over-time chart data — candidate JobDetailView dùng để
+ * render SVG chart. Optional auth (chỉ aggregate count, không lộ PII).
+ * Mount TRƯỚC `/:id`/matches để tránh route conflicts (cả 2 đều bắt đầu `/:id/`).
+ */
+jobRouter.get(
+  '/:id/applicants-over-time',
+  optionalAuth,
+  validate(jobIdParamsSchema, 'params'),
+  validate(jobApplicantsOverTimeQuerySchema, 'query'),
+  jobController.getApplicantsOverTime,
 );
 
 // Employer submit job để AI scan (status: draft|ai_flagged → ai_scanning)

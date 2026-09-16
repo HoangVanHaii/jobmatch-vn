@@ -213,14 +213,17 @@ const close = (): void => {
 </script>
 
 <template>
-  <!-- Backdrop -->
-  <div
-    v-if="open"
-    class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
-    @click.self="close"
-  >
-    <!-- Modal panel -->
-    <div class="bg-white rounded-md shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+  <!-- Teleport to body để tránh stacking context của ancestor (vd sidebar có
+       overflow:hidden + transform sẽ che modal). Transition `modal` (custom)
+       fade backdrop + scale dialog khi enter/leave, total ~200ms. -->
+  <Teleport to="body">
+    <Transition name="modal">
+      <div
+        v-if="open"
+        class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+        @click.self="close"
+      >
+        <div class="bg-white rounded-md shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
       <!-- Header -->
       <div class="flex items-center justify-between p-5 border-b border-gray-200">
         <div class="min-w-0">
@@ -417,6 +420,32 @@ const close = (): void => {
           {{ submitting ? 'Đang nộp...' : 'Nộp hồ sơ' }}
         </button>
       </div>
-    </div>
-  </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
+
+<style scoped>
+/*
+ * Modal transition — fade backdrop + scale dialog khi enter/leave, total ~200ms.
+ * Match pattern `@components/common/ConfirmModal.vue`.
+ */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.18s ease;
+}
+.modal-enter-active > div:last-child,
+.modal-leave-active > div:last-child {
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-from > div:last-child,
+.modal-leave-to > div:last-child {
+  transform: scale(0.96);
+  opacity: 0;
+}
+</style>

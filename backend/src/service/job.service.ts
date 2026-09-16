@@ -19,6 +19,39 @@ import { jobFeedbackService } from './jobFeedback.service';
 import { tryCatch } from 'bullmq';
 
 /**
+ * Build prefix-matching `to_tsquery` từ keyword người dùng nhập.
+ *
+ *  Vấn đề với `plainto_tsquery` mặc định: chỉ match exact token, KHÔNG hỗ trợ
+ *  prefix → user gõ "b" / "ba" / "back" → 0 kết quả dù job có "Backend".
+ *
+ *  Cách fix: build `to_tsquery` với `:*` suffix cho mỗi token để enable prefix
+ *  match (vd "back:*" sẽ match "backend", "back-end", "backbone"...).
+ *
+ *  Sanitize input — to_tsquery operators có thể throw lỗi parse nếu gặp
+ *  ký tự đặc biệt: `& | ! ( ) : * \ '`. Strip hết trước khi build query.
+ *  Đồng thời lowercase + trim whitespace để khớp với tsvector ('simple' config
+ *  đã lower case lúc index).
+ *
+ *  Return `null` nếu input rỗng sau sanitize — caller skip query (match all).
+ */
+const buildPrefixTsquery = (keyword: string): string | null => {
+  if (!keyword) return null;
+  // Lowercase + strip to_tsquery operators + non-word chars (giữ lại chữ cái
+  // Unicode + số). Trim + collapse whitespace.
+  const cleaned = keyword
+    .toLowerCase()
+    .replace(/[&|!()':*\\]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .trim();
+  if (!cleaned) return null;
+  const tokens = cleaned.split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return null;
+  // Mỗi token kèm `:*` để enable prefix match; nối bằng `&` (AND logic —
+  // job phải chứa TẤT CẢ tokens).
+  return tokens.map((t) => `${t}:*`).join(' & ');
+};
+
+/**
  * Map sort param → Drizzle ORDER BY clause.
  * Tie-break luôn bằng `createdAt DESC` để order ổn định khi count bằng nhau
  * (vd nhiều job cùng viewsCount=0).
@@ -82,7 +115,13 @@ export const jobService = {
       conditions.push(eq(jobs.status, 'live'));
     }
     if (filters.search) {
-      conditions.push(sql`${jobs.searchTsv} @@ plainto_tsquery('simple', ${filters.search})`);
+      // Dùng buildPrefixTsquery thay vì `plainto_tsquery` — hỗ trợ prefix match
+      // (user gõ "b" / "ba" / "back" đều tìm thấy job có "Backend"...).
+      const tsq = buildPrefixTsquery(filters.search);
+      if (tsq) {
+        conditions.push(sql`${jobs.searchTsv} @@ to_tsquery('simple', ${tsq})`);
+      }
+      // Input rỗng sau sanitize → match all (giữ nguyên filter khác).
     }
     if (filters.jobLevel) conditions.push(eq(jobs.jobLevel, filters.jobLevel));
     if (filters.jobType) conditions.push(eq(jobs.jobType, filters.jobType));
@@ -105,8 +144,16 @@ export const jobService = {
         OR ${jobs.location}->>'city' = ${'Tỉnh ' + filters.locationCity}
       )`);
     }
-    if (filters.salaryMin != null) {
+    if (filters.salaryMin != null && filters.salaryMax != null) {
+      // Overlap filter — job's salary range phải overlap với user's filter range.
+      // Chuẩn LinkedIn/Indeed UX: job [20M, 30M] hiện khi filter [10M, 25M] vì overlap.
+      // Dùng LEAST/GREATEST để bound chính xác cho data cũ có thể có min > max.
       conditions.push(sql`${jobs.salaryMax} >= ${String(filters.salaryMin)}`);
+      conditions.push(sql`${jobs.salaryMin} <= ${String(filters.salaryMax)}`);
+    } else if (filters.salaryMin != null) {
+      conditions.push(sql`${jobs.salaryMax} >= ${String(filters.salaryMin)}`);
+    } else if (filters.salaryMax != null) {
+      conditions.push(sql`${jobs.salaryMin} <= ${String(filters.salaryMax)}`);
     }
     if (filters.remoteOk != null) {
       conditions.push(eq(jobs.remoteOk, filters.remoteOk));
@@ -125,6 +172,7 @@ export const jobService = {
         // gọi thêm API. NULL nếu company không tồn tại (job vẫn được trả).
         companyName: companies.name,
         companyLogoUrl: companies.logoUrl,
+        descriptions: jobs.description,
         jobLevel: jobs.jobLevel,
         jobType: jobs.jobType,
         industry: jobs.industry,
@@ -136,10 +184,31 @@ export const jobService = {
         remoteOk: jobs.remoteOk,
         deadline: jobs.deadline,
         status: jobs.status,
+        hiringStatus: jobs.hiringStatus,
         viewsCount: jobs.viewsCount,
         appliesCount: jobs.appliesCount,
         publishedAt: jobs.publishedAt,
         createdAt: jobs.createdAt,
+        /**
+         * Trung bình rating 1–5 + số feedback của job. Correlated subquery —
+         * dùng index `idx_job_feedbacks_job(job_id, createdAt)`, không làm
+         * phình row (khác LEFT JOIN + GROUP BY) và KHÔNG ảnh hưởng pagination
+         * COUNT(*). Trả `null` rating khi job chưa có feedback.
+         *
+         * Lưu ý: cast `float8` thay vì `numeric(3,1)` — pg-node serialize
+         * `numeric` thành STRING mặc định, làm FE `ratingAvg.toFixed()`
+         * throw. `float8` trả về JS number đúng type contract.
+         */
+        ratingAvg: sql<number | null>`(
+          SELECT AVG(rating)::float8
+          FROM job_feedbacks
+          WHERE job_id = ${jobs.id}
+        )`,
+        ratingCount: sql<number>`(
+          SELECT COUNT(*)::int
+          FROM job_feedbacks
+          WHERE job_id = ${jobs.id}
+        )`,
       })
         .from(jobs)
         .leftJoin(companies, eq(jobs.companyId, companies.id))
@@ -151,7 +220,7 @@ export const jobService = {
 
       db.select({ total: sql<number>`count(*)::int` }).from(jobs).where(and(...conditions)),
     ]);
-    return { data, total }
+    return { data, total } as { data: JobListItem[]; total: number };
   },
   
   /**
@@ -166,6 +235,94 @@ export const jobService = {
       .where(and(eq(jobs.status, 'live'), sql`${jobs.industry} IS NOT NULL`, sql`${jobs.industry} <> ''`))
       .orderBy(jobs.industry);
     return rows.map((r) => r.industry).filter((s): s is string => Boolean(s));
+  },
+
+  /**
+   * Lấy danh sách `city` distinct từ `jobs.location` JSONB (chỉ job `live`).
+   * Dùng cho Location filter dropdown ở JobSearchView.
+   *
+   * - Distinct ở raw value (giữ nguyên prefix "Thành phố "/"Tỉnh " nếu data
+   *   cũ vẫn còn) → strip prefix ngay tại đây + dedup lại, để FE nhận về
+   *   shortName ("Hà Nội") và gửi lại cho filter `locationCity` exact-match
+   *   (filter đã có fallback cho data cũ ở `jobService.list`).
+   * - Loại bỏ null / empty.
+   * - Sort ascending cho UX dễ scan.
+   */
+  listCities: async (): Promise<string[]> => {
+    const rows = await db
+      .selectDistinct({ city: sql<string>`${jobs.location}->>'city'` })
+      .from(jobs)
+      .where(and(eq(jobs.status, 'live'), sql`${jobs.location}->>'city' IS NOT NULL`, sql`${jobs.location}->>'city' <> ''`));
+    const set = new Set<string>();
+    for (const r of rows) {
+      const raw = r.city;
+      if (!raw) continue;
+      const stripped = raw.replace(/^(Thành phố |Tỉnh )/i, '').trim();
+      if (stripped) set.add(stripped);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'vi'));
+  },
+
+  /**
+   * Lấy danh sách JobType enum values từ DB enum `job_type`. Dùng cho FE
+   * JobType filter dropdown — sync với backend, không hardcode.
+   *
+   * Query `pg_enum` system catalog:
+   *   - enums.enumlabel = string value ('full-time', 'part-time', ...)
+   *   - enums.enumtypid = OID của enum type 'job_type'
+   *   - enums.enumsortorder = thứ tự khai báo trong CREATE TYPE
+   *
+   * Trả về sorted theo enumsortorder (giữ thứ tự enum declaration), fallback
+   * locale sort nếu order bằng nhau.
+   */
+  listJobTypes: async (): Promise<string[]> => {
+    const rows = await db.execute<{ enumlabel: string }>(sql`
+      SELECT enumlabel
+      FROM pg_enum e
+      JOIN pg_type t ON t.oid = e.enumtypid
+      WHERE t.typname = 'job_type'
+      ORDER BY e.enumsortorder ASC
+    `);
+    return rows.rows.map((r) => r.enumlabel);
+  },
+
+  /** Tương tự `listJobTypes` cho enum `job_level` (Experience Level filter). */
+  listJobLevels: async (): Promise<string[]> => {
+    const rows = await db.execute<{ enumlabel: string }>(sql`
+      SELECT enumlabel
+      FROM pg_enum e
+      JOIN pg_type t ON t.oid = e.enumtypid
+      WHERE t.typname = 'job_level'
+      ORDER BY e.enumsortorder ASC
+    `);
+    return rows.rows.map((r) => r.enumlabel);
+  },
+
+  /**
+   * Lấy min/max salary thực tế (VND) trên toàn bộ job `live` — dùng để set
+   * bounds cho Salary range slider ở JobSearchView. Dùng `LEAST/GREATEST` để
+   * bound chính xác trong trường hợp data cũ có `salary_min > salary_max`
+   * (employer set ngược). Aggregate nhẹ — partial index `idx_jobs_salary_range`
+   * (status='live') phủ toàn bộ scan.
+   *
+   * Return `{ min: 0, max: 0 }` khi DB chưa có job live nào có salary —
+   * FE fallback hiển thị slider disabled với range mặc định.
+   */
+  listSalaryRange: async (): Promise<{ min: number; max: number }> => {
+    const result = await db.execute<{ min: string | null; max: string | null }>(sql`
+      SELECT
+        MIN(LEAST(salary_min, salary_max))::text  AS min,
+        MAX(GREATEST(salary_min, salary_max))::text AS max
+      FROM jobs
+      WHERE status = 'live'
+        AND salary_min IS NOT NULL
+        AND salary_max IS NOT NULL
+    `);
+    const row = result.rows[0];
+    return {
+      min: row?.min != null ? Number(row.min) : 0,
+      max: row?.max != null ? Number(row.max) : 0,
+    };
   },
 
   getById: async (id: string): Promise<JobDetailPayload> => {
@@ -219,8 +376,12 @@ export const jobService = {
   },
 
   searchByKeyWord: async (keyword: string, page = 1, limit = 20): Promise<{ data: JobListItem[]; total: number }> => {
-    const tsq = sql`plainto_tsquery('simple', ${keyword})`;
-
+    // Build prefix tsquery thay vì plainto_tsquery — hỗ trợ user gõ "b" / "ba"
+    // (xem buildPrefixTsquery comment ở đầu file).
+    const tsqExpr = buildPrefixTsquery(keyword);
+    const tsq = tsqExpr
+      ? sql`to_tsquery('simple', ${tsqExpr})`
+      : sql`true`;  // empty → match all
     const conditions = [
       eq(jobs.status, 'live'),
       sql`${jobs.searchTsv} @@ ${tsq}`,
@@ -236,6 +397,7 @@ export const jobService = {
           companyId: jobs.companyId,
           companyName: companies.name,
           companyLogoUrl: companies.logoUrl,
+          descriptions: jobs.description,
           jobLevel: jobs.jobLevel,
           jobType: jobs.jobType,
           industry: jobs.industry,
@@ -251,8 +413,21 @@ export const jobService = {
           appliesCount: jobs.appliesCount,
           publishedAt: jobs.publishedAt,
           createdAt: jobs.createdAt,
+          hiringStatus: jobs.hiringStatus,
           // Bonus: rank score để frontend có thể debug/sort
           rank: sql<number>`ts_rank(${jobs.searchTsv}, ${tsq})`,
+          // Mirror jobService.list để FE có cùng shape dù gọi /search hay /
+          // (ratingAvg dùng ::float8 để pg-node trả JS number, không phải string)
+          ratingAvg: sql<number | null>`(
+            SELECT AVG(rating)::float8
+            FROM job_feedbacks
+            WHERE job_id = ${jobs.id}
+          )`,
+          ratingCount: sql<number>`(
+            SELECT COUNT(*)::int
+            FROM job_feedbacks
+            WHERE job_id = ${jobs.id}
+          )`,
         })
         .from(jobs)
         .leftJoin(companies, eq(jobs.companyId, companies.id))
@@ -267,7 +442,7 @@ export const jobService = {
         .where(and(...conditions)),
     ]);
 
-    return { data, total };
+    return { data, total } as { data: JobListItem[]; total: number };
   },
 
    
@@ -490,6 +665,71 @@ generateDraft: async (
   },
 
   /**
+   * `GET /jobs/:id/applicants-over-time?days=N` — timeseries applicants theo ngày
+   * cho JobDetailView chart (candidate-side). Public — chỉ aggregate count.
+   *
+   * SQL dùng `generate_series` LEFT JOIN applications để fill đủ N ngày gần
+   * nhất (kể cả ngày 0 applicant) — không bị gap khi job mới tạo.
+   *
+   * `peak` là điểm count cao nhất trong series (null nếu toàn bộ = 0).
+   * `totalApplicants` đếm TOÀN BỘ application của job (không giới hạn days).
+   */
+  getApplicantsOverTime: async (
+    jobId: string,
+    days: number,
+  ): Promise<{
+    series: { date: string; count: number }[];
+    peak: { date: string; count: number } | null;
+    totalApplicants: number;
+  }> => {
+    // Verify job tồn tại — 404 thay vì trả series rỗng (FE có thể hiểu nhầm).
+    const job = await db.query.jobs.findFirst({
+      where: eq(jobs.id, jobId),
+      columns: { id: true },
+    });
+    if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
+
+    const seriesResult = await db.execute<{ date: string; count: string }>(sql`
+      WITH days AS (
+        SELECT generate_series(
+          (CURRENT_DATE - (${days - 1}) * INTERVAL '1 day')::date,
+          CURRENT_DATE::date,
+          '1 day'
+        )::date AS d
+      )
+      SELECT to_char(d.d, 'DD/MM') AS date,
+             COUNT(a.id)::text     AS count
+      FROM days d
+      LEFT JOIN applications a
+        ON DATE(a.applied_at) = d.d
+       AND a.job_id = ${jobId}
+      GROUP BY d.d
+      ORDER BY d.d ASC
+    `);
+
+    const series = seriesResult.rows.map((r) => ({
+      date: r.date,
+      count: Number(r.count),
+    }));
+    const peak = series.reduce<{ date: string; count: number } | null>(
+      (best, p) => (best == null || p.count > best.count ? p : best),
+      null,
+    );
+
+    const [totalRow] = (await db.execute<{ c: string }>(sql`
+      SELECT COUNT(*)::text AS c
+      FROM applications
+      WHERE job_id = ${jobId}
+    `)).rows;
+
+    return {
+      series,
+      peak: peak && peak.count > 0 ? peak : null,
+      totalApplicants: Number(totalRow?.c ?? 0),
+    };
+  },
+
+  /**
    * Semantic search bằng cosine similarity (pgvector).
    * Query được embed → so sánh với embeddings của jobs đang 'live'.
    * Khác searchByKeyWord ở chỗ: tìm theo NGỮ NGHĨA (synonyms, related concepts)
@@ -568,7 +808,13 @@ generateDraft: async (
       conditions.push(eq(jobs.jobType, filters.jobType));
     }
     if (filters.search) {
-      conditions.push(sql`${jobs.searchTsv} @@ plainto_tsquery('simple', ${filters.search})`);
+      // Dùng buildPrefixTsquery thay vì `plainto_tsquery` — hỗ trợ prefix match
+      // (user gõ "b" / "ba" / "back" đều tìm thấy job có "Backend"...).
+      const tsq = buildPrefixTsquery(filters.search);
+      if (tsq) {
+        conditions.push(sql`${jobs.searchTsv} @@ to_tsquery('simple', ${tsq})`);
+      }
+      // Input rỗng sau sanitize → match all (giữ nguyên filter khác).
     }
     if (filters.industry) {
       conditions.push(eq(jobs.industry, filters.industry));
@@ -578,6 +824,15 @@ generateDraft: async (
     }
     if (filters.remoteOk !== undefined) {
       conditions.push(eq(jobs.remoteOk, filters.remoteOk));
+    }
+    // Salary range filter (admin) — same overlap semantics as list() public.
+    if (filters.salaryMin != null && filters.salaryMax != null) {
+      conditions.push(sql`${jobs.salaryMax} >= ${String(filters.salaryMin)}`);
+      conditions.push(sql`${jobs.salaryMin} <= ${String(filters.salaryMax)}`);
+    } else if (filters.salaryMin != null) {
+      conditions.push(sql`${jobs.salaryMax} >= ${String(filters.salaryMin)}`);
+    } else if (filters.salaryMax != null) {
+      conditions.push(sql`${jobs.salaryMin} <= ${String(filters.salaryMax)}`);
     }
 
     // Sort theo filter.sort (Zod đã default = 'newest'). Tie-break createdAt DESC.
@@ -611,6 +866,17 @@ generateDraft: async (
         appliesCount: jobs.appliesCount,
         publishedAt: jobs.publishedAt,
         createdAt: jobs.createdAt,
+        hiringStatus: jobs.hiringStatus,
+        ratingAvg: sql<number | null>`(
+          SELECT AVG(rating)::float8
+          FROM job_feedbacks
+          WHERE job_id = ${jobs.id}
+        )`,
+        ratingCount: sql<number>`(
+          SELECT COUNT(*)::int
+          FROM job_feedbacks
+          WHERE job_id = ${jobs.id}
+        )`,
       })
       .from(jobs)
       .leftJoin(companies, eq(jobs.companyId, companies.id))

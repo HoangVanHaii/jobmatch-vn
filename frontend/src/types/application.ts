@@ -206,6 +206,14 @@ export interface ApplicationMatchReasoning {
   concerns?: string[];
   rationale?: string;
   reason?: 'success' | 'quota_exceeded' | 'failed';
+  /**
+   * Per-criterion scores 0-100 do LLM sinh ra (cùng call với matchPercent).
+   * FE render 3 bars trong card "Your Scope" (Experience / Industry / Skills).
+   * Optional — application cũ hoặc terminal states không có.
+   */
+  experienceScore?: number;
+  industryScore?: number;
+  skillsScore?: number;
 }
 
 /**

@@ -208,6 +208,37 @@ const currentStatus = computed<ApplicationStatus>(() =>
   detail.value?.status ?? props.application?.status ?? 'pending',
 );
 
+const APPLICATION_STEPS = [
+  { key: 'pending', label: 'Chờ duyệt', step: 1 },
+  { key: 'viewed', label: 'Đã xem', step: 2 },
+  { key: 'screening', label: 'Đang sàng lọc', step: 3 },
+  { key: 'interview', label: 'Phỏng vấn', step: 4 },
+  { key: 'offered', label: 'Đề nghị', step: 5 },
+] as const;
+
+const currentStep = computed<number>(() => {
+  switch (currentStatus.value) {
+    case 'pending':
+      return 1;
+    case 'viewed':
+      return 2;
+    case 'screening':
+      return 3;
+    case 'interview':
+      return 4;
+    case 'offered':
+      return 5;
+    case 'hired':
+      return 6;
+    case 'rejected':
+    case 'withdrawn':
+      if (detail.value?.viewedAt || props.application?.viewedAt) return 2;
+      return 1;
+    default:
+      return 1;
+  }
+});
+
 const locationText = computed<string | null>(() => {
   const loc = detail.value?.jobLocation;
   if (!loc) return null;
@@ -489,47 +520,106 @@ const formatDateTime = (iso: string | null): string => {
   -->
   <section
     v-if="open"
-    class="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col h-full overflow-hidden"
+    class="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col h-full overflow-hidden font-poppins"
     aria-label="Chi tiết đơn ứng tuyển"
   >
     <!-- ===== Header (sticky) ===== -->
-    <header class="flex items-start gap-3 p-5 border-b border-gray-200 shrink-0">
-      <!-- Logo: gradient + chữ cái đầu khi không có ảnh -->
-      <div
-        class="shrink-0 w-10 h-10 rounded-[10px] overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 text-primary-700 font-bold text-[15px] ring-1 ring-black/5"
-        :aria-label="headerCompanyName ?? 'Công ty'"
-      >
-        <img
-          v-if="headerLogoUrl"
-          :src="headerLogoUrl"
-          :alt="headerCompanyName ?? ''"
-          class="w-full h-full object-cover bg-gray-50"
-        />
-        <span v-else>{{ companyInitial(headerCompanyName) }}</span>
-      </div>
-      <div class="min-w-0 flex-1">
-        <h2 class="text-base font-bold tracking-tight text-gray-900 truncate">
-          {{ headerJobTitle ?? '(Job đã bị xoá)' }}
-        </h2>
-        <p class="text-xs text-gray-500 mt-0.5 truncate">
-          {{ headerCompanyName ?? 'Công ty ẩn danh' }}
-        </p>
-        <span
-          class="mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold"
-          :class="STATUS_COLOR[currentStatus]"
+    <header class="p-5 border-b border-gray-200 shrink-0">
+      <!-- Row 1: Avatar + Job Title + Company + Close button -->
+      <div class="flex items-start gap-3">
+        <!-- Logo: gradient + chữ cái đầu khi không có ảnh -->
+        <div
+          class="shrink-0 w-10 h-10 rounded-[10px] overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 text-primary-700 font-bold text-[15px] ring-1 ring-black/5"
+          :aria-label="headerCompanyName ?? 'Công ty'"
         >
-          <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
-          {{ STATUS_LABEL[currentStatus] }}
-        </span>
+          <img
+            v-if="headerLogoUrl"
+            :src="headerLogoUrl"
+            :alt="headerCompanyName ?? ''"
+            class="w-full h-full object-cover bg-gray-50"
+          />
+          <span v-else>{{ companyInitial(headerCompanyName) }}</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <h2 class="text-base font-bold tracking-tight text-gray-900 truncate">
+            {{ headerJobTitle ?? '(Job đã bị xoá)' }}
+          </h2>
+          <p class="text-xs text-gray-500 mt-0.5 truncate flex items-center gap-2">
+            <span>{{ headerCompanyName ?? 'Công ty ẩn danh' }}</span>
+            <span
+              v-if="currentStatus === 'rejected' || currentStatus === 'withdrawn' || currentStatus === 'hired'"
+              class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold"
+              :class="STATUS_COLOR[currentStatus]"
+            >
+              <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
+              {{ STATUS_LABEL[currentStatus] }}
+            </span>
+          </p>
+        </div>
+        <button
+          type="button"
+          class="shrink-0 w-7 h-7 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition"
+          aria-label="Đóng chi tiết"
+          @click="closePanel"
+        >
+          <CloseIcon class="w-3.5 h-3.5" />
+        </button>
       </div>
-      <button
-        type="button"
-        class="shrink-0 w-7 h-7 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition"
-        aria-label="Đóng chi tiết"
-        @click="closePanel"
-      >
-        <CloseIcon class="w-3.5 h-3.5" />
-      </button>
+
+      <!-- Row 2: Status Stepper — Bắt đầu từ padding trái của Detail Panel, ngang mép trái Avatar -->
+      <div class="mt-5 pt-1">
+        <ol class="flex items-start w-full" aria-label="Tiến trình ứng tuyển">
+          <li
+            v-for="(step, idx) in APPLICATION_STEPS"
+            :key="step.key"
+            class="flex-1 flex flex-col items-center relative"
+          >
+            <!-- Connector line to next step -->
+            <div
+              v-if="idx < APPLICATION_STEPS.length - 1"
+              class="absolute top-3 left-1/2 w-full h-[2px] -translate-y-1/2 z-0"
+              :class="step.step < currentStep ? 'bg-emerald-500' : 'bg-gray-200'"
+            />
+
+            <!-- Step Circle -->
+            <div
+              class="relative z-10 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold transition-all shrink-0"
+              :class="[
+                step.step < currentStep
+                  ? 'bg-emerald-600 text-white'
+                  : step.step === currentStep
+                  ? (currentStatus === 'rejected'
+                      ? 'bg-red-600 text-white ring-4 ring-red-100'
+                      : currentStatus === 'withdrawn'
+                      ? 'bg-gray-500 text-white ring-4 ring-gray-100'
+                      : 'bg-primary-600 text-white ring-4 ring-primary-100')
+                  : 'bg-white border-2 border-gray-300 text-gray-400',
+              ]"
+            >
+              <Check v-if="step.step < currentStep" class="w-3.5 h-3.5 stroke-[2.5]" />
+              <span v-else>{{ step.step }}</span>
+            </div>
+
+            <!-- Step Label -->
+            <span
+              class="mt-2 text-[11px] leading-tight text-center px-0.5 transition-colors"
+              :class="[
+                step.step < currentStep
+                  ? 'text-emerald-700 font-medium'
+                  : step.step === currentStep
+                  ? (currentStatus === 'rejected'
+                      ? 'text-red-700 font-bold'
+                      : currentStatus === 'withdrawn'
+                      ? 'text-gray-600 font-bold'
+                      : 'text-primary-700 font-bold')
+                  : 'text-gray-400 font-normal',
+              ]"
+            >
+              {{ step.label }}
+            </span>
+          </li>
+        </ol>
+      </div>
     </header>
 
     <!-- ===== Body (scrollable) ===== -->
@@ -800,7 +890,7 @@ const formatDateTime = (iso: string | null): string => {
       <button
         v-if="canWithdraw(detail.status)"
         type="button"
-        class="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-[13px] font-semibold text-red-700 bg-white hover:bg-red-50 border border-gray-200 hover:border-red-200 rounded-lg transition"
+        class="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-[13px] font-semibold text-red-700 bg-white hover:bg-red-50 border border-gray-200 hover:border-red-200 rounded-md transition"
         @click="openWithdraw"
       >
         <XCircle class="w-3.5 h-3.5" />
@@ -809,7 +899,7 @@ const formatDateTime = (iso: string | null): string => {
       <button
         v-if="detail.jobPostedBy"
         type="button"
-        class="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-[13px] font-semibold text-white bg-gray-900 hover:bg-gray-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
+        class="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-[13px] font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-md transition disabled:opacity-60 disabled:cursor-not-allowed"
         :disabled="contacting"
         @click="contactEmployer"
       >

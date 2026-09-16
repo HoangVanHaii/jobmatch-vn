@@ -22,7 +22,7 @@ import {
 } from '../../../../prompts/chatbot/cvMatch';
 import type { HandlerContext, HandlerSection } from '../types';
 
-/** Schema cho LLM output 1 cặp. LLM ch� generate 6 fields này; jobId/cvId
+/** Schema cho LLM output 1 cặp. LLM generate 9 fields này; jobId/cvId
  *  do service tự gắn sau khi parse. */
 const llmPairSchema = z.object({
   matchPercent: z.number().min(0).max(100),
@@ -31,6 +31,9 @@ const llmPairSchema = z.object({
   matchedSkills: z.array(z.string()).max(20),
   missingSkills: z.array(z.string()).max(20),
   rationale: z.string().max(200),
+  experienceScore: z.number().min(0).max(100).optional(),
+  industryScore: z.number().min(0).max(100).optional(),
+  skillsScore: z.number().min(0).max(100).optional(),
 });
 
 /** Shape đầy đủ 1 cặp sau khi service gắn jobId/cvId. */
@@ -43,6 +46,9 @@ type ScoredPair = {
   matchedSkills: string[];
   missingSkills: string[];
   rationale: string;
+  experienceScore?: number;
+  industryScore?: number;
+  skillsScore?: number;
 };
 
 // === LLM scoring cho 1 cặp ===
@@ -141,6 +147,9 @@ const scoreOnePair = async (
       matchedSkills: parsed.matchedSkills,
       missingSkills: parsed.missingSkills,
       rationale: parsed.rationale,
+      experienceScore: parsed.experienceScore,
+      industryScore: parsed.industryScore,
+      skillsScore: parsed.skillsScore,
     },
     usage,
   };
@@ -192,6 +201,11 @@ export const cvMatchHandler = async (ctx: HandlerContext): Promise<HandlerSectio
     lines.push(`Cặp #${i + 1}:`);
     lines.push(`- matchPercent: ${r.matchPercent}`);
     lines.push(`- rationale: ${r.rationale}`);
+    // Per-criterion breakdown — optional (có thể missing với data cũ hoặc LLM
+    // skip). Final merge LLM sẽ diễn giải tự nhiên cho user.
+    if (r.experienceScore != null) lines.push(`- experienceScore: ${r.experienceScore}`);
+    if (r.industryScore != null) lines.push(`- industryScore: ${r.industryScore}`);
+    if (r.skillsScore != null) lines.push(`- skillsScore: ${r.skillsScore}`);
     if (r.strengths.length) {
       lines.push(`- strengths:`);
       r.strengths.forEach((s) => lines.push(`    - ${s}`));

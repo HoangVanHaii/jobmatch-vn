@@ -14,6 +14,18 @@ export interface ApplicationMatchReasoning {
   concerns?: string[];
   rationale?: string;
   /**
+   * Per-criterion scores 0-100 do LLM sinh ra (cùng call với matchPercent).
+   * 3 score tương đối nhất quán với `matchPercent` tổng thể — FE dùng để
+   * render breakdown bar trong card "Your Scope" (Experience / Industry / Skills).
+   *
+   * Optional vì:
+   *   - Application cũ (trước migration này) không có các field này.
+   *   - Terminal states (quota_exceeded / failed) không có scoring output.
+   */
+  experienceScore?: number;
+  industryScore?: number;
+  skillsScore?: number;
+  /**
    * Trạng thái terminal của worker AI matching:
    *   - undefined: chưa chấm xong (đang chạy hoặc đang retry) — FE hiển thị "Đang so khớp".
    *   - 'success': chấm xong, có điểm → dùng kèm strengths/rationale/...

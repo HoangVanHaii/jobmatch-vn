@@ -203,3 +203,8 @@ body::-webkit-scrollbar-thumb:hover {
 .scrollbar-visible::-webkit-scrollbar-thumb:hover {
   background-color: #6b7280;
 }
+html.no-page-scroll,
+html.no-page-scroll body {
+  overflow: hidden !important;
+  scrollbar-gutter: auto !important;
+}

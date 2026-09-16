@@ -12,6 +12,17 @@ export type JobType =
 export type JobStatus =
   | 'draft' | 'pending' | 'ai_scanning' | 'ai_flagged' | 'live' | 'expired' | 'closed';
 
+/**
+ * Trạng thái tuyển dụng do employer set thủ công — dùng cho badge UI ở
+ * JobSearchView. Không tự compute từ deadline/engagement; chỉ phản ánh
+ * ý định của employer.
+ *   - `urgent` : badge "Urgently Hiring"
+ *   - `active` : badge "Actively Hiring"
+ *   - `normal` : không render badge
+ * Xem migration 0038_add_hiring_status.sql.
+ */
+export type HiringStatus = 'urgent' | 'active' | 'normal';
+
 export interface JobLocation {
   city?: string;
   district?: string;
@@ -49,6 +60,7 @@ export interface Job {
   niceToHaveSkills: string[];
   deadline: Date | null;
   status: JobStatus;
+  hiringStatus: HiringStatus;
   featured: boolean | null;
   featuredUntil: Date | null;
   viewsCount: number;
@@ -73,6 +85,7 @@ export interface JobListItem {
    */
   companyName: string | null;
   companyLogoUrl: string | null;
+  descriptions: string | null;
   jobLevel: JobLevel | null;
   jobType: JobType | null;
   industry: string | null;
@@ -86,6 +99,9 @@ export interface JobListItem {
   remoteOk: boolean | null;
   deadline: Date | null;
   status: JobStatus;
+  /** Badge status cho FE — mirror cột `jobs.hiring_status` ở DB. Default
+   *  'normal' (no badge). Xem `HiringStatus` + migration 0038. */
+  hiringStatus: HiringStatus;
   viewsCount: number;
   appliesCount: number;
   publishedAt: Date | null;
@@ -93,6 +109,15 @@ export interface JobListItem {
    *  jobService.list() vì `publishedAt` NULL với job draft/flagged/closed
    *  sẽ làm NULLS LAST đẩy job mới tạo xuống cuối danh sách. */
   createdAt: Date;
+  /**
+   * Trung bình rating 1–5 từ `job_feedbacks`, làm tròn 1 chữ số thập phân
+   * (`numeric(3,1)`). `null` khi job chưa có feedback nào.
+   * Tính bằng correlated subquery trong `jobService.list` SELECT — dùng index
+   * `idx_job_feedbacks_job(job_id, createdAt)`, không ảnh hưởng pagination.
+   */
+  ratingAvg: number | null;
+  /** Số feedback của job — `0` khi chưa có. Companion của `ratingAvg`. */
+  ratingCount: number;
   // KHÔNG có: description, requirements, benefits, extraData, postedBy, searchTsv
 }
 /** GET /api/v1/jobs — danh sách có phân trang. */
@@ -214,6 +239,21 @@ export interface JobApplicationStatus {
   aiMatchScore: number | null;
   /** Lý do terminal của worker — FE dùng để hiển thị badge "Chưa chấm được". */
   aiMatchReason: AiMatchReason;
+  /**
+   * Per-criterion breakdown 0-100 — extract từ `aiMatchReasoning` JSONB
+   * (`->>'experienceScore' ::numeric`, ...). FE render 3 bars trong card
+   * "Your Scope" của JobDetailView.
+   *
+   * Có thể null khi:
+   *   - Application cũ (trước khi schema prompt thêm 3 field) không có data.
+   *   - Terminal states (quota_exceeded/failed) không produce score.
+   *   - LLM skip field (hiếm).
+   *
+   * FE nên fallback 0% + badge "(điểm chưa có)" khi gặp null.
+   */
+  aiExperienceScore?: number | null;
+  aiIndustryScore?: number | null;
+  aiSkillsScore?: number | null;
 }
 
 /** Response wrapper cho application-status endpoint — mảng JobApplicationStatus. */
@@ -222,4 +262,27 @@ export type JobApplicationStatusList = JobApplicationStatus[];
 export interface ExportApplicationsJobData {
   targetJobId: string;
   requestedBy: string;
+}
+
+// ============================================================================
+// Applicants-over-time chart (candidate JobDetailView)
+// ============================================================================
+
+/** 1 điểm trên timeseries — `date` format DD/MM theo mockup, `count` applicants. */
+export interface ApplicantsOverTimePoint {
+  date: string;
+  count: number;
+}
+
+/**
+ * Response `GET /jobs/:id/applicants-over-time?days=N`.
+ *
+ * Public (optionalAuth) — chỉ trả aggregate count, không lộ PII applicant.
+ * `series` fill đủ N ngày gần nhất (kể cả ngày 0 applicant) nhờ `generate_series`.
+ * `peak` là điểm count cao nhất trong series, dùng để vẽ dot highlight ở FE.
+ */
+export interface ApplicantsOverTimeResponse {
+  series: ApplicantsOverTimePoint[];
+  peak: ApplicantsOverTimePoint | null;
+  totalApplicants: number;
 }
