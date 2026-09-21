@@ -182,6 +182,7 @@ export const searchSimilarJobs = async (
     company_id: string;
     company_name: string | null;
     company_logo_url: string | null;
+    description: string | null;
     job_level: string | null;
     job_type: string | null;
     industry: string | null;
@@ -193,6 +194,9 @@ export const searchSimilarJobs = async (
     remote_ok: boolean | null;
     deadline: Date | null;
     status: string;
+    hiring_status: string;
+    rating_avg: number | null;
+    rating_count: number;
     views_count: number;
     applies_count: number;
     published_at: Date | null;
@@ -201,7 +205,7 @@ export const searchSimilarJobs = async (
   }>(sql`
     WITH scored AS (
       SELECT
-        j.id, j.title, j.slug, j.company_id, j.job_level, j.job_type,
+        j.id, j.title, j.slug, j.company_id, j.job_level, j.job_type, j.description, j.hiring_status,
         j.industry, j.salary_min, j.salary_max, j.salary_currency,
         j.salary_visible, j.location, j.remote_ok, j.deadline,
         j.status, j.views_count, j.applies_count, j.published_at, j.created_at,
@@ -228,6 +232,7 @@ export const searchSimilarJobs = async (
     companyLogoUrl: r.company_logo_url,
     jobLevel: r.job_level as JobLevel | null,
     jobType: r.job_type as JobType | null,
+    descriptions: r.description,
     industry: r.industry,
     salaryMin: r.salary_min,
     salaryMax: r.salary_max,
@@ -237,6 +242,9 @@ export const searchSimilarJobs = async (
     remoteOk: r.remote_ok,
     deadline: r.deadline,
     status: r.status as JobStatus,
+    hiringStatus: r.hiring_status as any,
+    ratingAvg: r.rating_avg || null,
+    ratingCount: r.rating_count || 0,
     viewsCount: r.views_count,
     appliesCount: r.applies_count,
     publishedAt: r.published_at,
