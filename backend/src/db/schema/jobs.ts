@@ -1,7 +1,7 @@
 import { pgTable, uuid, text, integer, numeric, boolean, timestamp, jsonb, index, customType } from 'drizzle-orm/pg-core';
 import { companies } from './companies';
 import { users } from './users';
-import { jobStatusEnum, jobLevelEnum, jobTypeEnum } from './enums';
+import { jobStatusEnum, jobLevelEnum, jobTypeEnum, hiringStatusEnum } from './enums';
 
 const tsvector = customType<{ data: string }>({ dataType() { return 'tsvector'; } });
 
@@ -29,6 +29,9 @@ export const jobs = pgTable('jobs', {
   niceToHaveSkills: jsonb('nice_to_have_skills').$type<string[]>().default([]).notNull(),
   deadline: timestamp('deadline', { withTimezone: true }),
   status: jobStatusEnum('status').default('draft').notNull(),
+  /** Badge status cho JobSearchView — employer set thủ công (urgent/active/normal).
+   *  Default 'normal' = không render badge. Xem `hiringStatusEnum` + migration 0038. */
+  hiringStatus: hiringStatusEnum('hiring_status').default('normal').notNull(),
   featured: boolean('featured').default(false),
   featuredUntil: timestamp('featured_until', { withTimezone: true }),
   viewsCount: integer('views_count').default(0).notNull(),

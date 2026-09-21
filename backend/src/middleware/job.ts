@@ -3,6 +3,9 @@ import { z } from 'zod';
 const jobLevelEnum = z.enum(['intern', 'fresher', 'junior', 'mid', 'senior', 'lead', 'manager']);
 const jobTypeEnum  = z.enum(['full-time', 'part-time', 'contract', 'internship', 'freelance']);
 const jobStatusEnum = z.enum(['draft', 'pending', 'ai_scanning', 'ai_flagged', 'live', 'expired', 'closed']);
+/** Mirror `hiring_status` enum ở DB (migration 0038). Dùng cho badge UI
+ *  JobSearchView — employer set lúc tạo/sửa job, không auto compute. */
+const hiringStatusEnum = z.enum(['urgent', 'active', 'normal']);
 /**
  * Sort options cho danh sách job.
  *  - newest: mới nhất (createdAt DESC) — mặc định
@@ -36,6 +39,14 @@ export const jobSlugParamsSchema = z.object({
     .regex(/^[a-z0-9-]+$/, 'slug không hợp lệ'),
 });
 
+/**
+ * Query `GET /jobs/:id/applicants-over-time?days=N` — số ngày của timeseries.
+ * Clamp 1-90 để tránh FE query quá lớn; default 10 (match mockup hiện tại).
+ */
+export const jobApplicantsOverTimeQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(90).default(10),
+});
+
 
 export const jobListQuerySchema = z.object({
   search: z.string().min(1).optional(),
@@ -64,6 +75,10 @@ export const jobListQuerySchema = z.object({
 
   locationCity: z.string().min(1).max(100).optional(),
   salaryMin: z.coerce.number().int().nonnegative().optional(),
+  /** Salary range (VND). Cả 2 optional; FE control từng đầu. Khi truyền cả
+   *  2, backend dùng overlap semantics (job.salary_max >= user.salary_min
+   *  AND job.salary_min <= user.salary_max) — chuẩn LinkedIn/Indeed UX. */
+  salaryMax: z.coerce.number().int().nonnegative().optional(),
   // Lưu ý: KHÔNG dùng z.coerce.boolean() — nó dùng Boolean(value) của JS,
   // mọi string non-empty (kể cả "false") đều trả về true. Phải preprocess
   // thủ công để parse "false" thành boolean false.
@@ -80,7 +95,13 @@ export const jobListQuerySchema = z.object({
    * Áp dụng cho cả /jobs public, /jobs/company và /admin/jobs.
    */
   sort: jobSortEnum.optional().default('newest'),
-});
+}).refine(
+  (d) =>
+    d.salaryMin === undefined ||
+    d.salaryMax === undefined ||
+    d.salaryMax >= d.salaryMin,
+  { message: 'salaryMax phải >= salaryMin', path: ['salaryMax'] },
+);
 
 export const jobSearchQuerySchema = z.object({
   keyword: z.string().min(2).max(200),
@@ -120,6 +141,11 @@ export const jobCreateSchema = z
     niceToHaveSkills: skillsSchema.optional().default([]),
     deadline: z.string().datetime().optional(),
     status: jobStatusEnum.default('draft'),
+    /**
+     * Badge status — employer chọn 'urgent'/'active' để highlight job trên
+     * JobSearchView. Default 'normal' = không badge. Xem HiringStatus + migration 0038.
+     */
+    hiringStatus: hiringStatusEnum.default('normal'),
     extraData: z.record(z.unknown()).default({}),
   })
   .refine(
@@ -149,6 +175,8 @@ export const jobUpdateSchema = z
     niceToHaveSkills: skillsSchema.optional().default([]),
     deadline: z.string().datetime().optional(),
     status: jobStatusEnum.optional(),
+    /** Cập nhật badge status — xem createSchema. Optional để không phá patch. */
+    hiringStatus: hiringStatusEnum.optional(),
     extraData: z.record(z.unknown()).optional(),
   })
   .refine(

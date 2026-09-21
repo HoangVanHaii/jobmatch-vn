@@ -39,14 +39,17 @@ export const useSavedJobStore = defineStore('savedJob', () => {
   const isPending = (jobId: string): boolean => pendingIds.value.has(jobId);
 
   /**
-   * Fetch toàn bộ saved-jobs (1 request, lấy max 100) để build Set ở client.
+   * Fetch toàn bộ saved-jobs (1 request) để build Set ở client. Dùng
+   * `/saved-jobs/ids` thay vì `/saved-jobs` — response chỉ trả `string[]`
+   * jobIds (không join jobs/companies), nhỏ hơn nhiều lần, parse nhanh hơn
+   * khi client chỉ cần check "đã lưu hay chưa" cho bookmark icon.
    * Gọi 1 lần khi user đăng nhập hoặc vào trang liên quan.
    */
   const fetchIds = async (): Promise<void> => {
     if (initialFetched.value) return;
     try {
-      const { data } = await savedJobApi.list({ page: 1, limit: 100 });
-      savedIds.value = new Set(data.data.map((s) => s.job.id));
+      const { data } = await savedJobApi.ids({ limit: 100 });
+      savedIds.value = new Set(data.data);
       initialFetched.value = true;
     } catch (e) {
       setError(e);

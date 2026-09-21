@@ -23,6 +23,14 @@ export const savedJobApi = {
       pagination: ListSavedJobsResponse['pagination'];
     }>('/saved-jobs', { params }),
 
+  /**
+   * GET /saved-jobs/ids — chỉ trả `jobId[]` (không join jobs/companies).
+   * Nhẹ hơn nhiều so với `list()` — dùng cho client build Set<string> để
+   * render bookmark icon (vd JobSearchView). Cap limit 500 ở BE.
+   */
+  ids: (params?: { limit?: number }) =>
+    http.get<ApiResponse<string[]>>('/saved-jobs/ids', { params }),
+
   /** POST /saved-jobs — lưu 1 job (body: { jobId }). Idempotent nếu backend dùng ON CONFLICT. */
   save: (jobId: string) =>
     http.post<ApiResponse<{ userId: string; jobId: string; savedAt: Date }>>(

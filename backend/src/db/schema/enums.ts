@@ -9,6 +9,18 @@ export const oauthProviderEnum = pgEnum('oauth_provider', ['google', 'facebook',
 export const jobStatusEnum = pgEnum('job_status', ['draft', 'pending', 'ai_scanning', 'ai_flagged', 'live', 'expired', 'closed']);
 export const jobLevelEnum = pgEnum('job_level', ['intern', 'fresher', 'junior', 'mid', 'senior', 'lead', 'manager']);
 export const jobTypeEnum = pgEnum('job_type', ['full-time', 'part-time', 'contract', 'internship', 'freelance']);
+
+/**
+ * Hiring status — dùng để FE render badge "Urgently Hiring" / "Actively Hiring"
+ * trên JobSearchView. Employer set thủ công lúc tạo/sửa job (không auto
+ * compute từ deadline/appliesCount).
+ *   - urgent : job đang cần tuyển gấp (vd campaign ngắn hạn, deadline nội bộ).
+ *   - active : employer tuyên bố đang tuyển tích cực (không phụ thuộc metric).
+ *   - normal : mặc định — không render badge urgency.
+ *
+ * Migration: 0038_add_hiring_status.sql.
+ */
+export const hiringStatusEnum = pgEnum('hiring_status', ['urgent', 'active', 'normal']);
 export const applicationStatusEnum = pgEnum('application_status', [
   'pending', 'viewed', 'screening', 'interview', 'offered', 'hired', 'rejected', 'withdrawn',
 ]);
