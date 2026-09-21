@@ -22,6 +22,7 @@ import type {
   CvSource,
   CvStatus,
   ListCvQuery,
+  UpdateDirectCvInput,
 } from '@/types/cv';
 
 export const useCvStore = defineStore('cv', () => {
@@ -196,14 +197,28 @@ export const useCvStore = defineStore('cv', () => {
     }
   };
 
-  /** Chi tiết 1 CV (full row) — trả về detail để view dùng luôn (không giữ trong store). */
-  const fetchDetail = async (cvId: string): Promise<CvDetail | null> => {
+  /** Chi tiết 1 CV (full row) — trả về detail để view dùng luôn (không giữ trong store).
+   *  Optional `config.signal` để cancel qua AbortController (race/unmount guard
+   *  cho edit form — xem CreateResumeView.vue loadCvForEdit). */
+  const fetchDetail = async (
+    cvId: string,
+    config?: import('axios').AxiosRequestConfig,
+  ): Promise<CvDetail | null> => {
     loading.value = true;
     error.value = null;
     try {
-      const { data } = await cvApi.getDetail(cvId);
+      const { data } = await cvApi.getDetail(cvId, config);
       return data.data;
     } catch (e) {
+      // Filter cancel — caller có thể đã abort, không set error state.
+      const errAny = e as { name?: string; code?: string };
+      if (
+        errAny?.name === 'AbortError' ||
+        errAny?.name === 'CanceledError' ||
+        errAny?.code === 'ERR_CANCELED'
+      ) {
+        return null;
+      }
       setError(e);
       return null;
     } finally {
@@ -266,10 +281,25 @@ export const useCvStore = defineStore('cv', () => {
   ): void => {
     const idx = items.value.findIndex((c) => c.id === cvId);
     if (idx === -1) return;
+    // Match BE semantics từ `cv.service.ts:651-654`: `failureReason` thực ra là
+    // "last operation reason" — `'quota_exceeded'` là exception duy nhất vẫn
+    // hợp lệ khi `status !== 'failed'` (analyze quota fail revert về `'ready'`
+    // nhưng giữ điểm cũ → CV vẫn dùng được, FE vẫn cần biết để hiện banner
+    // "Đã hết lượt AI"). Các reason khác (`parse_error`, `analysis_error`,
+    // `not_a_cv`, `invalid_file`) chỉ valid khi `status === 'failed'` — nếu
+    // status khác thì reason reset NULL.
+    //
+    // Trước đây: `failureReason: status === 'failed' ? failureReason : null`
+    // clobber 'quota_exceeded' khi worker emit `{ status: 'ready',
+    // failureReason: 'quota_exceeded' }` → local store mất reason trong
+    // window giữa socket fire → `refreshDetail` về → per-card badge "Đã hết
+    // lượt AI" chớp tắt. fix này giữ đúng semantic BE.
+    const failureReasonKept =
+      failureReason === 'quota_exceeded' || status === 'failed' ? failureReason : null;
     items.value[idx] = {
       ...items.value[idx],
       status,
-      failureReason: status === 'failed' ? failureReason : null,
+      failureReason: failureReasonKept,
     };
   };
 
@@ -369,6 +399,31 @@ export const useCvStore = defineStore('cv', () => {
     }
   };
 
+  /**
+   * Cập nhật CV direct — PATCH /cvs/:cvId. Chỉ gọi được khi source='direct'
+   * (BE kiểm tra). BE set status='analyzing' + enqueue cvAnalysisQueue.
+   *
+   * Update list local NGAY để UI ở MyResumesView hiện overlay "đang phân
+   * tích" ngay khi user quay về, không cần đợi socket `cv:status-changed`
+   * (khi socket chậm/mất → vẫn đúng).
+   *
+   * @returns Cv updated nếu thành công, null nếu lỗi (message ở `error`).
+   */
+  const update = async (
+    cvId: string,
+    input: UpdateDirectCvInput,
+  ): Promise<Cv | null> => {
+    error.value = null;
+    try {
+      const { data } = await cvApi.update(cvId, input);
+      applyRow(data.data);
+      return data.data;
+    } catch (e) {
+      setError(e);
+      return null;
+    }
+  };
+
   return {
     // state
     items, total, page, pageSize, loading, error, query, quotaWarning,
@@ -378,6 +433,6 @@ export const useCvStore = defineStore('cv', () => {
     fetchList, fetchDetail, setPrimary, remove, triggerAnalysis,
     updateStatus, refreshDetail,
     setQuotaWarning, dismissQuotaWarning,
-    create, upload,
+    create, upload, update,
   };
 });

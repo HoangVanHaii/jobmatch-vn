@@ -12,5 +12,7 @@ export const savedJobRouter = Router();
 savedJobRouter.use(auth);
 
 savedJobRouter.get('/', validate(savedJobListQuerySchema, 'query'), savedJobController.list);
+/** GET /saved-jobs/ids — chỉ trả jobId[] (nhẹ, dùng cho bookmark icon check). */
+savedJobRouter.get('/ids', savedJobController.listIds);
 savedJobRouter.post('/', validate(saveJobSchema, 'body'), savedJobController.save);
 savedJobRouter.delete('/:jobId', validate(unsaveJobParamsSchema, 'params'), savedJobController.unsave);

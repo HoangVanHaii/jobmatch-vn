@@ -363,22 +363,22 @@ const currentTriggerLabel = (key: DropdownKey): string | null => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50/50 p-5 md:p-8">
+  <div class="min-h-screen bg-white p-5 md:p-8 font-poppins">
     <div class="max-w-7xl mx-auto">
       <!-- ============ Header ============ -->
       <header class="mb-6 flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 class="text-xl font-semibold text-gray-900 tracking-tight">Job đã đăng</h1>
+          <h1 class="text-xl font-semibold text-gray-900 tracking-tight">Tin đã đăng</h1>
           <p class="text-sm text-gray-500 mt-1">
             Quản lý các tin tuyển dụng của công ty bạn.
           </p>
         </div>
         <button
           type="button"
-          class="px-3 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-800 transition inline-flex items-center gap-1.5"
+          class="px-3 py-2 text-sm rounded-lg bg-blue-700 text-white hover:bg-blue-800 transition inline-flex items-center gap-1.5"
           @click="openCreateModal"
         >
-          <Plus class="w-4 h-4" /> Đăng job mới
+          <Plus class="w-4 h-4" /> Đăng tin mới
         </button>
       </header>
 
@@ -391,7 +391,7 @@ const currentTriggerLabel = (key: DropdownKey): string | null => {
           <input
             v-model="searchInput"
             type="text"
-            placeholder="Tìm theo tiêu đề job..."
+            placeholder="Tìm theo tiêu đề tin..."
             class="w-full pl-9 pr-9 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-1 focus:ring-gray-300 focus:border-gray-300 transition"
           />
           <button
@@ -405,7 +405,7 @@ const currentTriggerLabel = (key: DropdownKey): string | null => {
           </button>
         </div>
         <span v-if="total > 0" class="text-xs text-gray-500 shrink-0">
-          Hiển thị <strong class="text-gray-900">{{ items.length }}</strong> / {{ total }} job
+          Hiển thị <strong class="text-gray-900">{{ items.length }}</strong> / {{ total }} tin
         </span>
       </div>
 

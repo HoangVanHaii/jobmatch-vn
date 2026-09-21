@@ -13,6 +13,40 @@ import { cvService } from "../service/cv.service";
 import { usageLogService } from "../service/usageLog.service";
 import { notificationGateway } from "../socket/notificationGateway";
 
+/* ============================================================================
+ * LlmParseError — custom error mang theo `reason` (failureReason sẽ ghi DB)
+ *
+ * Phân biệt 2 loại fail:
+ *   - 'parse_error'  : lỗi kỹ thuật — LLM API down, LLM trả JSON không phải
+ *                      object (null/primitive/array), PDF/DOCX extract throw.
+ *                      → User retry có thể succeed.
+ *   - 'not_a_cv'     : LLM trả object hợp lệ nhưng semantic rỗng (`{}` hoặc
+ *                      chỉ shell fields rỗng) → input rất có thể không phải
+ *                      CV (screenshot, tài liệu ngẫu nhiên, file sai).
+ *                      → User retry KHÔNG giúp được; cần upload file khác.
+ *
+ * Cả 2 đều đi qua retry 3 lần của BullMQ (giữ behavior cũ), chỉ khác
+ * failureReason cuối cùng → FE banner khác nhau:
+ *   - parse_error  → "Không thể xử lý CV"
+ *   - not_a_cv     → "Nội dung không phải CV"
+ *
+ * `not_a_cv` cũng đã được `cvAnalysis.worker.ts` emit khi parse OK nhưng
+ * AI analyze xác định content không phải CV → dùng cùng `reason` để FE
+ * xử lý nhất quán (xem cardReason ở MyResumesView line 273-278).
+ * ==========================================================================*/
+type FailureReason = 'parse_error' | 'not_a_cv';
+
+class LlmParseError extends Error {
+    readonly reason: FailureReason;
+    constructor(reason: FailureReason, message: string) {
+        super(message);
+        this.reason = reason;
+        this.name = 'LlmParseError';
+        // Preserve prototype chain sau khi extend Error (TS target ES5).
+        Object.setPrototypeOf(this, LlmParseError.prototype);
+    }
+}
+
 
 const QUEUE_NAME = 'cvParsing';
 
@@ -159,15 +193,69 @@ export const cvParseWorker = new Worker(
                 CV_PARSE_SYSTEM_PROMPT,
                 buildCvParseUserPrompt(text),
             );
-            if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+
+            // Validate LLM response — 2 layers:
+            //   (1) Shape: data phải là object (không phải null/primitive/array).
+            //   (2) Semantic: data phải chứa ÍT NHẤT 1 trong các field critical
+            //       (name/email/phone/exp/edu/skills) — bắt case LLM trả `{}`
+            //       hoặc chỉ shell fields rỗng do prompt không rõ / model
+            //       hallucinate. Schema trong `lib/llm/cvParse.ts` có toàn field
+            //       `.optional()` → Zod pass → invokeCvParse trả về `{}` →
+            //       worker cũng pass → DB lưu `parsedData={}` + status='ready' →
+            //       UI render CV trắng + AI analyze fail sau → silent broken.
+            //
+            // Throw ở đây sẽ rơi vào catch bên dưới → BullMQ retry 3 lần → cuối
+            // cùng status='failed' + failureReason='parse_error' → FE banner
+            // "Không thể xử lý CV" hiển thị (xem cardReason ở MyResumesView).
+            const d = result.data;
+            const isNonEmptyString = (v: unknown): boolean =>
+                typeof v === "string" && v.trim().length > 0;
+            const isNonEmptyArray = (v: unknown): boolean =>
+                Array.isArray(v) && v.length > 0;
+
+            const shapeValid = Boolean(d) && typeof d === "object" && !Array.isArray(d);
+            const semanticValid =
+                isNonEmptyString(d?.name) ||
+                isNonEmptyString(d?.email) ||
+                isNonEmptyString(d?.phone) ||
+                isNonEmptyArray(d?.experience) ||
+                isNonEmptyArray(d?.education) ||
+                isNonEmptyArray(d?.skills);
+
+            if (!shapeValid) {
+                // LLM trả null / primitive / array → lỗi kỹ thuật (LLM format
+                // sai hoặc API issue) → 'parse_error'. User retry có thể fix.
                 logger.error(
                     {
                         cvId,
+                        shapeValid,
+                        semanticValid,
                         sample: JSON.stringify(result.data)?.slice(0, 200),
                     },
-                    "Worker: LLM returned invalid parse data",
+                    "Worker: LLM returned invalid parse data (shape)",
                 );
-                throw new Error(`LLM returned invalid parsed data: ${typeof result.data}`);
+                throw new LlmParseError(
+                    "parse_error",
+                    "LLM returned invalid parse data (shape)",
+                );
+            }
+            if (!semanticValid) {
+                // LLM trả object hợp lệ nhưng không có field critical nào →
+                // input rất có thể không phải CV → 'not_a_cv' → FE banner
+                // "Nội dung không phải CV" thay vì "Không thể xử lý CV".
+                logger.error(
+                    {
+                        cvId,
+                        shapeValid,
+                        semanticValid,
+                        sample: JSON.stringify(result.data)?.slice(0, 200),
+                    },
+                    "Worker: LLM returned empty parse data — input likely not a CV",
+                );
+                throw new LlmParseError(
+                    "not_a_cv",
+                    "LLM returned semantically empty parse data — input likely not a CV",
+                );
             }
 
             // Ghi nhận token thực tế sau LLM success — invokeCvParse đã trả về usage.
@@ -220,11 +308,17 @@ export const cvParseWorker = new Worker(
                     dbCv.candidateId,
                     "ai_cv_parsed",
                 );
+                // Phân biệt failureReason:
+                //   - LlmParseError → lấy `reason` từ error (parse_error hoặc not_a_cv).
+                //   - Error khác (PDF parse throw, fetch throw, etc.) → 'parse_error'
+                //     mặc định vì là lỗi kỹ thuật, user retry có thể succeed.
+                const failureReason: FailureReason =
+                    err instanceof LlmParseError ? err.reason : "parse_error";
                 await cvService.changeStatus(
                     dbCv.candidateId,
                     dbCv.id,
                     "failed",
-                    "parse_error",
+                    failureReason,
                 );
             }
             throw err;

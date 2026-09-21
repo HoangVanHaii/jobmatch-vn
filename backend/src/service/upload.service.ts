@@ -67,23 +67,48 @@ const mimeToExt = (mime: string): string => {
     "image/webp": "webp",
     "image/gif": "gif",
     "application/pdf": "pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "text/plain": "txt",
+    "text/csv": "csv",
+    "application/zip": "zip",
+    "application/x-zip-compressed": "zip",
   };
   return map[mime] ?? "bin";
 };
 
 /**
- * RFD-01: Content-Disposition cho header (RFC 6266, chỉ ASCII).
+ * Content-Disposition cho header (RFC 6266, chỉ ASCII) — RFD-01.
  * Filename gốc có thể chứa tiếng Việt → dùng filename* (RFC 5987) để
  * giữ Unicode mà vẫn tương thích trình duyệt cũ.
+ *
+ * disposition CHIA THEO MIME:
+ *   - inline (PDF, image/*): browser render trong <object> / <iframe> / <img>
+ *     mà KHÔNG tự động tải xuống. Cần thiết cho:
+ *       • CvThumbnail — render PDF qua <object data="fileUrl"> (MyResumesView
+ *         grid card), ảnh qua <img src="fileUrl">.
+ *       • CvPreview modal — iframe preview PDF/ảnh khi user mở chi tiết.
+ *     Nếu để `attachment` thì browser ép download ngay khi mount view → user
+ *     upload xong vào trang /candidate/resumes là file tự rơi xuống máy.
+ *   - attachment (DOCX, DOC, etc.): browser không render được inline, để
+ *     `attachment` là đúng semantically — user click "Mở file gốc" mới tải về.
+ *     Google Docs Viewer (cho DOCX preview ở modal) tự fetch server-side nên
+ *     header này không ảnh hưởng.
+ *
+ * Lưu ý: file đã upload TRƯỚC fix này vẫn giữ `attachment` cũ trong MinIO.
+ * User cần upload lại CV (hoặc re-set header qua script admin) để áp dụng.
  */
 const buildContentDisposition = (originalName: string, mime: string): string => {
   const ext = mimeToExt(mime);
   const asciiName = `${randomUUID()}.${ext}`;
   // UTF-8 percent-encode cho filename* (giữ nguyên dấu tiếng Việt)
   const utf8 = `utf-8''${encodeURIComponent(originalName)}`;
-  return `attachment; filename="${asciiName}"; filename*=${utf8}`;
+  const disposition =
+    mime === 'application/pdf' || mime.startsWith('image/') ? 'inline' : 'attachment';
+  return `${disposition}; filename="${asciiName}"; filename*=${utf8}`;
 };
 
 const sanitizeName = (original: string): string => {

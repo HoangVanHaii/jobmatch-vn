@@ -167,6 +167,11 @@ export const cvMatchWorker = new Worker(
             matchedSkills: result.data.matchedSkills ?? [],
             missingSkills: result.data.missingSkills ?? [],
             rationale: result.data.rationale,
+            // Per-criterion breakdown — render "Your Scope" bars trên FE.
+            // Optional vì LLM có thể skip nếu data thiếu → FE render 0%.
+            experienceScore: result.data.experienceScore,
+            industryScore: result.data.industryScore,
+            skillsScore: result.data.skillsScore,
           },
           updatedAt: new Date(),
         })

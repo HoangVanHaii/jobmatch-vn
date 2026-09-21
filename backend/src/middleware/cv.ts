@@ -50,9 +50,24 @@ const directCvLanguageSchema = z.object({
 
 const directCvProjectSchema = z.object({
   name: z.string().trim().min(1).max(200),
+  /** Vai trò trong dự án — vd "Tech Lead / Solo Dev". */
+  role: z.string().trim().max(200).optional(),
+  /** Khoảng thời gian — vd "2024 — Hiện tại". */
+  time: z.string().trim().max(100).optional(),
   description: z.string().max(2000).optional(),
   link: z.string().url().max(2000).nullable().optional(),
 });
+
+/** Skill entry — accept cả string[] (CV cũ, FE cũ) lẫn {name, level} (CV mới).
+ * Zod union gọn hơn `z.array(z.union([...]))` — dùng `union` để lỗi rõ ràng hơn. */
+const directCvSkillSchema = z.union([
+  z.string().trim().min(1).max(100),
+  z.object({
+    name: z.string().trim().min(1).max(100),
+    /** Level 1-5, dùng cho progress bar + dots picker ở FE. */
+    level: z.number().int().min(1).max(5),
+  }),
+]);
 
 const directCvCertificationSchema = z.object({
   name: z.string().trim().min(1).max(200),
@@ -66,7 +81,7 @@ const directCvContentSchema = z.object({
   contact: directCvContactSchema.optional(),
   education: z.array(directCvEducationSchema).max(20).optional(),
   experience: z.array(directCvExperienceSchema).max(20).optional(),
-  skills: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
+  skills: z.array(directCvSkillSchema).max(50).optional(),
   languages: z.array(directCvLanguageSchema).max(10).optional(),
   projects: z.array(directCvProjectSchema).max(20).optional(),
   certifications: z.array(directCvCertificationSchema).max(20).optional(),

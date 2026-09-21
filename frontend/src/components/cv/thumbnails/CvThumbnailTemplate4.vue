@@ -1,272 +1,413 @@
 <script setup lang="ts">
 /**
- * CvThumbnailTemplate4 — bản thu nhỏ của CVTemplate4 (navy header + 2-col body).
+ * CvThumbnailTemplate4 — bản thu nhỏ của CVTemplate4 (navy top bar + light blue header).
  *
- * Phải GIỐNG HỆT CVTemplate4 về layout, navy #0e2a47 header, orange accent
- * #b86c3b, green dot #4a7c3a cho skills/interests.
- * LƯU Ý: CVTemplate4 KHÔNG có dự án và chứng chỉ — chỉ các section dưới.
+ * NGUYÊN TẮC QUAN TRỌNG: render ĐẦY ĐỦ 100% nội dung giống CVTemplate4.vue.
+ *   - Cùng data (data: CvRenderData).
+ *   - Cùng section: header (name/position/contact/avatar), Mục tiêu, Kỹ năng,
+ *     Chứng chỉ, Sở thích (left), Trình độ học vấn, Kinh nghiệm làm việc,
+ *     Hoạt động, Dự án (right).
+ *   - Cùng field cho mỗi item (KHÔNG bỏ field nào).
+ *   - Cùng thứ tự section.
+ *   - Cùng cấu trúc DOM (top navy bar + light blue header + 2 cột 47/53).
+ *   - Cùng màu navy #164D70, cùng heading pattern (text + line ngang).
  *
- * Layout mapping (full → thumb):
- *   - Header navy full-width: gradient overlay + avatar white border shadow +
- *     name (30px white) + position (#f4a261 uppercase tracking) + accent strip
- *     cam gradient dưới.
- *   - Body 2-col (grid-cols-[280px_1fr]):
- *     Left: Thông tin liên hệ (icon #b86c3b + 5 field phone/email/address/dob/gender)
- *       → Mục tiêu nghề nghiệp → Kỹ năng (green dot #4a7c3a bullets) → Sở thích.
- *     Right: Học vấn (GraduationCap icon + timeline dots #b86c3b) →
- *       Kinh nghiệm làm việc (Briefcase icon + timeline) →
- *       Hoạt động (Star icon + timeline).
+ * KHÔNG BAO GIỜ:
+ *   - truncate text bằng `...` hoặc slice.
+ *   - line-clamp / max-height / overflow-hidden để ẩn content.
+ *   - bỏ section / bỏ field / bỏ bullet.
+ *   - dùng `truncate` Tailwind class để cắt text.
  *
- * Khác biệt: bỏ lucide icons, bỏ box-shadow dot timeline (chỉ giữ dot amber).
+ * KHÁC BIỆT với CVTemplate4.vue:
+ *   - Kích thước nhỏ hơn (font 2.5-5px, padding theo %) để fit container ~132×170.
+ *   - Dùng % thay cho px để scale theo container (parent MyResumesView set
+ *     width=132px + aspectRatio 850/1100 ≈ height 170px).
+ *   - Bỏ Lucide icons trong heading (chỉ giữ text + line), avatar initial fallback
+ *     nhỏ, border avatar 0.5px.
  */
-import { computed } from 'vue';
 import type { CvRenderData } from '@/types/cv';
 
-const props = defineProps<{ data: CvRenderData }>();
+defineProps<{ data: CvRenderData }>();
 
-const initial = computed<string>(() => {
-  const name = props.data.personalInfo.fullName?.trim();
-  return (name && name.length > 0 ? name.charAt(0) : '?').toUpperCase();
-});
-
-const shortName = computed<string>(() => {
-  const parts = (props.data.personalInfo.fullName ?? '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return 'HỌ VÀ TÊN';
-  const last2 = parts.slice(-2).join(' ');
-  return last2.length > 16 ? last2.slice(0, 15) + '…' : last2;
-});
-
-const trunc = (s: string | null | undefined, max: number): string => {
-  const v = (s ?? '').trim();
-  if (v.length <= max) return v;
-  return v.slice(0, max - 1).trimEnd() + '…';
+const initial = (name: string | undefined | null): string => {
+  const trimmed = (name ?? '').trim();
+  return trimmed ? trimmed.charAt(0).toUpperCase() : '?';
 };
 </script>
 
 <template>
-  <div class="w-full h-full flex flex-col bg-white font-sans overflow-hidden">
-    <!-- Header navy giống CVTemplate4 -->
-    <header
-      class="relative overflow-hidden shrink-0 flex items-center px-[6%]"
-      style="background: linear-gradient(120deg, #0e2a47 0%, #14365a 70%, #1a4267 100%); height: 28%;"
-    >
-      <div class="relative z-[1] flex items-center gap-[5%] w-full">
-        <!-- Avatar tròn với border trắng (giống CVTemplate4) -->
-        <div
-          class="rounded-full bg-white p-[3%] shrink-0"
-          style="width: 18%; aspect-ratio: 1 / 1;"
-        >
-          <div class="w-full h-full rounded-full bg-neutral-300 flex items-center justify-center overflow-hidden">
-            <img
-              v-if="data.personalInfo.avatarUrl"
-              :src="data.personalInfo.avatarUrl"
-              :alt="data.personalInfo.fullName"
-              class="w-full h-full object-cover"
-            />
-            <span v-else class="font-semibold text-stone-600 text-[6px] leading-none">{{ initial }}</span>
-          </div>
-        </div>
+  <div
+    class="w-full h-full bg-white text-neutral-900 font-sans flex flex-col overflow-hidden"
+  >
+    <!-- ==================== THANH NAVY MỎNG TRÊN CÙNG ==================== -->
+    <div class="w-full shrink-0" style="height: 1%; background: #164D70;" />
 
-        <div class="flex-1 min-w-0 text-white leading-tight">
-          <h2
-            class="font-bold truncate"
-            style="font-size: 8px;"
+    <!-- ==================== HEADER (light blue bg) ==================== -->
+    <header
+      class="w-full grid shrink-0 items-center gap-[6%]"
+      style="
+        grid-template-columns: 1fr 28%;
+        padding: 4% 6%;
+        background: #EEF6FB;
+      "
+    >
+      <!-- LEFT: name + job title + line + contact -->
+      <div class="min-w-0">
+        <p
+          class="font-bold uppercase leading-tight break-words"
+          style="font-size: 5.5px; color: #164D70; letter-spacing: 0.3px;"
+        >
+          {{ data.personalInfo.fullName || 'HỌ VÀ TÊN' }}
+        </p>
+        <p
+          class="font-bold uppercase mt-[1px] break-words"
+          style="font-size: 3px; color: #164D70; letter-spacing: 0.5px;"
+        >
+          {{ data.personalInfo.position || 'Vị trí ứng tuyển' }}
+        </p>
+
+        <!-- Đường ngang navy ngắn dưới job title -->
+        <div
+          class="mt-[2px] mb-[3px]"
+          style="height: 0.5px; width: 30%; background: #164D70;"
+        />
+
+        <!-- Contact 2 cột: phone | email -->
+        <div
+          v-if="data.personalInfo.phone || data.personalInfo.email"
+          class="grid gap-x-[6%] gap-y-[1px]"
+          style="grid-template-columns: 1fr 1fr; font-size: 2.5px;"
+        >
+          <div
+            v-if="data.personalInfo.phone"
+            class="flex items-center gap-[2px] text-neutral-700"
           >
-            {{ shortName }}
-          </h2>
-          <p
-            v-if="data.personalInfo.position"
-            class="font-semibold uppercase tracking-[0.5px] mt-[1px] truncate"
-            style="font-size: 5.5px; color: #f4a261;"
+            <span
+              class="w-[1px] h-[1px] rounded-full shrink-0"
+              style="background: #164D70;"
+            />
+            <span class="break-all">{{ data.personalInfo.phone }}</span>
+          </div>
+          <div
+            v-if="data.personalInfo.email"
+            class="flex items-center gap-[2px] text-neutral-700"
           >
-            {{ data.personalInfo.position }}
-          </p>
+            <span
+              class="w-[1px] h-[1px] rounded-full shrink-0"
+              style="background: #164D70;"
+            />
+            <span class="break-all">{{ data.personalInfo.email }}</span>
+          </div>
         </div>
       </div>
 
-      <!-- Accent strip cam gradient dưới -->
-      <div
-        class="absolute bottom-0 left-0 w-full"
-        style="height: 5%; background: linear-gradient(90deg, #b86c3b 0%, #d68a52 60%, transparent 100%);"
-      />
+      <!-- RIGHT: avatar tròn border navy -->
+      <div class="flex justify-end">
+        <div
+          class="rounded-full bg-white shrink-0 overflow-hidden flex items-center justify-center"
+          style="
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            border: 0.5px solid #164D70;
+          "
+        >
+          <img
+            v-if="data.personalInfo.avatarUrl"
+            :src="data.personalInfo.avatarUrl"
+            :alt="data.personalInfo.fullName"
+            class="w-full h-full object-cover"
+          />
+          <span
+            v-else
+            class="font-semibold leading-none"
+            style="font-size: 6px; color: #164D70;"
+          >
+            {{ initial(data.personalInfo.fullName) }}
+          </span>
+        </div>
+      </div>
     </header>
 
-    <!-- Body 2 cột (grid-cols-[280px_1fr] → 35%/65%) -->
+    <!-- ==================== BODY 2 CỘT (47% / 53%) ==================== -->
     <div
-      class="grid gap-[4%] px-[5%] flex-1 bg-white overflow-hidden"
-      style="grid-template-columns: 35% 1fr; padding-top: 5%; padding-bottom: 5%;"
+      class="w-full grid flex-1 overflow-hidden"
+      style="grid-template-columns: 47% 53%;"
     >
-      <!-- ============ CỘT TRÁI ============ -->
-      <aside class="flex flex-col gap-[4%] overflow-hidden">
-        <!-- Thông tin liên hệ -->
-        <section
-          v-if="data.personalInfo.phone || data.personalInfo.email || data.personalInfo.address || data.personalInfo.dob || data.personalInfo.gender"
-          class="flex flex-col gap-[3%]"
-        >
-          <h3
-            class="font-bold uppercase tracking-[1px] border-b-2 leading-none"
-            style="font-size: 5px; padding-bottom: 2px; color: #0e2a47; border-color: #b86c3b;"
-          >
-            Thông tin liên hệ
-          </h3>
-          <ul class="flex flex-col gap-[3%] leading-tight" style="font-size: 5px;">
-            <li v-if="data.personalInfo.phone" class="truncate" style="color: #b86c3b;">● {{ data.personalInfo.phone }}</li>
-            <li v-if="data.personalInfo.email" class="truncate" style="color: #b86c3b;">● {{ data.personalInfo.email }}</li>
-            <li v-if="data.personalInfo.address" class="break-words" style="color: #b86c3b;">● {{ data.personalInfo.address }}</li>
-            <li v-if="data.personalInfo.dob" class="truncate" style="color: #b86c3b;">● {{ data.personalInfo.dob }}</li>
-            <li v-if="data.personalInfo.gender" class="truncate" style="color: #b86c3b;">● {{ data.personalInfo.gender }}</li>
-          </ul>
-        </section>
-
+      <!-- ============ LEFT COLUMN (47%) ============ -->
+      <aside
+        class="flex flex-col gap-[4%] overflow-hidden"
+        style="padding: 4% 4% 4% 6%;"
+      >
         <!-- Mục tiêu nghề nghiệp -->
-        <section v-if="data.summary" class="flex flex-col gap-[3%]">
-          <h3
-            class="font-bold uppercase tracking-[1px] border-b-2 leading-none"
-            style="font-size: 5px; padding-bottom: 2px; color: #0e2a47; border-color: #b86c3b;"
-          >
-            Mục tiêu nghề nghiệp
-          </h3>
+        <section v-if="data.summary">
+          <h2 class="flex items-center gap-[2px] mb-[2px] leading-none">
+            <span
+              class="font-bold uppercase whitespace-nowrap"
+              style="font-size: 3.5px; color: #164D70; letter-spacing: 0.3px;"
+            >
+              Mục tiêu nghề nghiệp
+            </span>
+            <span class="flex-1 h-[0.5px]" style="background: #164D70;" />
+          </h2>
           <p
-            class="leading-snug whitespace-pre-wrap"
-            style="font-size: 5px; color: #404040;"
+            class="text-neutral-800 whitespace-pre-wrap"
+            style="font-size: 2.5px; line-height: 1.4;"
           >
             {{ data.summary }}
           </p>
         </section>
 
-        <!-- Kỹ năng — green dot #4a7c3a bullets -->
-        <section v-if="data.skills.length" class="flex flex-col gap-[3%]">
-          <h3
-            class="font-bold uppercase tracking-[1px] border-b-2 leading-none"
-            style="font-size: 5px; padding-bottom: 2px; color: #0e2a47; border-color: #b86c3b;"
-          >
-            Kỹ năng
-          </h3>
-          <ul class="flex flex-col gap-[3%]">
+        <!-- Kỹ năng -->
+        <section v-if="data.skills.length">
+          <h2 class="flex items-center gap-[2px] mb-[2px] leading-none">
+            <span
+              class="font-bold uppercase whitespace-nowrap"
+              style="font-size: 3.5px; color: #164D70; letter-spacing: 0.3px;"
+            >
+              Kỹ năng
+            </span>
+            <span class="flex-1 h-[0.5px]" style="background: #164D70;" />
+          </h2>
+          <ul class="flex flex-col gap-[1px]" style="font-size: 2.5px;">
             <li
-              v-for="(s, idx) in data.skills"
-              :key="`s-${idx}`"
-              class="relative leading-tight"
-              style="font-size: 5px; padding-left: 6px;"
+              v-for="(s, i) in data.skills"
+              :key="i"
+              class="flex items-start gap-[2px] text-neutral-700"
             >
               <span
-                class="absolute left-0 top-1/2 -translate-y-1/2 rounded-full"
-                style="width: 2px; height: 2px; background: #4a7c3a;"
+                class="mt-[2px] w-[1px] h-[1px] rounded-full shrink-0"
+                style="background: #164D70;"
               />
-              {{ trunc(s.name, 26) }}
+              <span class="break-words">{{ s.name }}</span>
             </li>
           </ul>
         </section>
 
-        <!-- Sở thích — green dot bullets -->
-        <section v-if="data.interests && data.interests.length" class="flex flex-col gap-[3%]">
-          <h3
-            class="font-bold uppercase tracking-[1px] border-b-2 leading-none"
-            style="font-size: 5px; padding-bottom: 2px; color: #0e2a47; border-color: #b86c3b;"
-          >
-            Sở thích
-          </h3>
-          <ul class="flex flex-col gap-[3%]">
+        <!-- Chứng chỉ -->
+        <section v-if="data.certificates.length">
+          <h2 class="flex items-center gap-[2px] mb-[2px] leading-none">
+            <span
+              class="font-bold uppercase whitespace-nowrap"
+              style="font-size: 3.5px; color: #164D70; letter-spacing: 0.3px;"
+            >
+              Chứng chỉ
+            </span>
+            <span class="flex-1 h-[0.5px]" style="background: #164D70;" />
+          </h2>
+          <ul class="flex flex-col gap-[2px]" style="font-size: 2.5px;">
             <li
-              v-for="(it, idx) in data.interests"
-              :key="`i-${idx}`"
-              class="relative leading-tight"
-              style="font-size: 5px; padding-left: 6px;"
+              v-for="(c, i) in data.certificates"
+              :key="i"
+              class="text-neutral-700 break-words"
+            >
+              <strong class="text-neutral-900">{{ c.name }}</strong>
+              <span v-if="c.issuer"> — {{ c.issuer }}</span>
+              <span
+                v-if="c.date"
+                class="text-neutral-500 italic ml-[2px]"
+                style="font-size: 2px;"
+              >{{ c.date }}</span>
+            </li>
+          </ul>
+        </section>
+
+        <!-- Sở thích -->
+        <section v-if="data.interests && data.interests.length">
+          <h2 class="flex items-center gap-[2px] mb-[2px] leading-none">
+            <span
+              class="font-bold uppercase whitespace-nowrap"
+              style="font-size: 3.5px; color: #164D70; letter-spacing: 0.3px;"
+            >
+              Sở thích
+            </span>
+            <span class="flex-1 h-[0.5px]" style="background: #164D70;" />
+          </h2>
+          <ul class="flex flex-col gap-[1px]" style="font-size: 2.5px;">
+            <li
+              v-for="(it, i) in data.interests"
+              :key="i"
+              class="flex items-start gap-[2px] text-neutral-700"
             >
               <span
-                class="absolute left-0 top-1/2 -translate-y-1/2 rounded-full"
-                style="width: 2px; height: 2px; background: #4a7c3a;"
+                class="mt-[2px] w-[1px] h-[1px] rounded-full shrink-0"
+                style="background: #164D70;"
               />
-              {{ it }}
+              <span class="break-words">{{ it }}</span>
             </li>
           </ul>
         </section>
       </aside>
 
-      <!-- ============ CỘT PHẢI ============ -->
-      <main class="flex flex-col gap-[4%] overflow-hidden">
-        <!-- Học vấn — timeline dots #b86c3b -->
-        <section v-if="data.educations.length" class="flex flex-col gap-[3%]">
-          <h3
-            class="font-bold uppercase tracking-[1px] border-b-2 leading-none"
-            style="font-size: 5px; padding-bottom: 2px; color: #0e2a47; border-color: #b86c3b;"
-          >
-            Học vấn
-          </h3>
-          <ul class="flex flex-col gap-[4%]">
-            <li
-              v-for="(e, idx) in data.educations"
-              :key="`e-${idx}`"
-              class="relative leading-tight"
-              style="font-size: 5px; padding-left: 6px;"
+      <!-- ============ RIGHT COLUMN (53%) ============ -->
+      <main
+        class="flex flex-col gap-[4%] overflow-hidden"
+        style="
+          padding: 4% 6% 4% 4%;
+          background: #FFFFFF;
+          border-left: 0.5px solid #E5E7EB;
+        "
+      >
+        <!-- Trình độ học vấn -->
+        <section v-if="data.educations.length">
+          <h2 class="flex items-center gap-[2px] mb-[2px] leading-none">
+            <span
+              class="font-bold uppercase whitespace-nowrap"
+              style="font-size: 3.5px; color: #164D70; letter-spacing: 0.3px;"
             >
-              <span
-                class="absolute left-0 top-[2px] rounded-full"
-                style="width: 2px; height: 2px; background: #b86c3b;"
-              />
-              <p class="font-semibold" style="color: #0e2a47;">{{ trunc(e.school, 22) }}</p>
-              <p class="font-semibold mt-[1px]" style="color: #b86c3b; font-size: 4.5px;">
-                {{ e.startYear || '' }}<span v-if="e.startYear || e.endYear"> - </span>{{ e.endYear || 'Nay' }}
+              Trình độ học vấn
+            </span>
+            <span class="flex-1 h-[0.5px]" style="background: #164D70;" />
+          </h2>
+          <ul class="flex flex-col gap-[3px]" style="font-size: 2.5px;">
+            <li v-for="(e, i) in data.educations" :key="i">
+              <div class="flex items-baseline justify-between gap-[2px] flex-wrap">
+                <strong class="text-neutral-900 break-words">{{ e.school }}</strong>
+                <span
+                  v-if="e.startYear || e.endYear"
+                  class="text-neutral-500 italic whitespace-nowrap"
+                  style="font-size: 2px;"
+                >
+                  {{ e.startYear || '' }}<span v-if="e.startYear || e.endYear"> — </span>{{ e.endYear || 'Nay' }}
+                </span>
+              </div>
+              <p
+                v-if="e.major || e.degree"
+                class="text-neutral-700 leading-tight mt-[1px] break-words"
+              >
+                <span v-if="e.major">Chuyên ngành: {{ e.major }}</span>
+                <span v-if="e.major && e.degree"> — </span>
+                <span v-if="e.degree">{{ e.degree }}</span>
               </p>
-              <p v-if="e.major" class="mt-[1px] text-neutral-600" style="font-size: 4.5px;">
-                <strong>Chuyên ngành:</strong> {{ trunc(e.major, 22) }}
+              <p
+                v-if="e.description"
+                class="text-neutral-700 whitespace-pre-wrap mt-[1px]"
+                style="font-size: 2px; line-height: 1.35;"
+              >
+                {{ e.description }}
               </p>
             </li>
           </ul>
         </section>
 
-        <!-- Kinh nghiệm làm việc — position " — company" + dates -->
-        <section v-if="data.experiences.length" class="flex flex-col gap-[3%]">
-          <h3
-            class="font-bold uppercase tracking-[1px] border-b-2 leading-none"
-            style="font-size: 5px; padding-bottom: 2px; color: #0e2a47; border-color: #b86c3b;"
-          >
-            Kinh nghiệm làm việc
-          </h3>
-          <ul class="flex flex-col gap-[4%]">
-            <li
-              v-for="(x, idx) in data.experiences"
-              :key="`x-${idx}`"
-              class="relative leading-tight"
-              style="font-size: 5px; padding-left: 6px;"
+        <!-- Kinh nghiệm làm việc -->
+        <section v-if="data.experiences.length">
+          <h2 class="flex items-center gap-[2px] mb-[2px] leading-none">
+            <span
+              class="font-bold uppercase whitespace-nowrap"
+              style="font-size: 3.5px; color: #164D70; letter-spacing: 0.3px;"
             >
-              <span
-                class="absolute left-0 top-[2px] rounded-full"
-                style="width: 2px; height: 2px; background: #b86c3b;"
-              />
-              <p class="font-semibold" style="color: #0e2a47;">
-                {{ trunc(x.position, 20) }}<span v-if="x.company"> — {{ trunc(x.company, 14) }}</span>
+              Kinh nghiệm làm việc
+            </span>
+            <span class="flex-1 h-[0.5px]" style="background: #164D70;" />
+          </h2>
+          <ul class="flex flex-col gap-[3px]" style="font-size: 2.5px;">
+            <li v-for="(x, i) in data.experiences" :key="i">
+              <div class="flex items-baseline justify-between gap-[2px] flex-wrap">
+                <strong class="text-neutral-900 break-words">{{ x.company }}</strong>
+                <span
+                  v-if="x.startDate || x.endDate"
+                  class="text-neutral-500 italic whitespace-nowrap"
+                  style="font-size: 2px;"
+                >
+                  {{ x.startDate || '' }}<span v-if="x.startDate || x.endDate"> — </span>{{ x.endDate || 'Nay' }}
+                </span>
+              </div>
+              <p class="text-neutral-700 font-medium leading-tight mt-[1px] break-words">
+                {{ x.position }}
               </p>
-              <p class="font-semibold mt-[1px]" style="color: #b86c3b; font-size: 4.5px;">
-                {{ x.startDate || '' }}<span v-if="x.startDate || x.endDate"> - </span>{{ x.endDate || 'Nay' }}
+              <p
+                v-if="x.description"
+                class="text-neutral-700 whitespace-pre-wrap mt-[1px]"
+                style="font-size: 2px; line-height: 1.35;"
+              >
+                {{ x.description }}
               </p>
             </li>
           </ul>
         </section>
 
         <!-- Hoạt động -->
-        <section v-if="data.activities.length" class="flex flex-col gap-[3%]">
-          <h3
-            class="font-bold uppercase tracking-[1px] border-b-2 leading-none"
-            style="font-size: 5px; padding-bottom: 2px; color: #0e2a47; border-color: #b86c3b;"
-          >
-            Hoạt động
-          </h3>
-          <ul class="flex flex-col gap-[4%]">
-            <li
-              v-for="(a, idx) in data.activities"
-              :key="`a-${idx}`"
-              class="relative leading-tight"
-              style="font-size: 5px; padding-left: 6px;"
+        <section v-if="data.activities.length">
+          <h2 class="flex items-center gap-[2px] mb-[2px] leading-none">
+            <span
+              class="font-bold uppercase whitespace-nowrap"
+              style="font-size: 3.5px; color: #164D70; letter-spacing: 0.3px;"
             >
-              <span
-                class="absolute left-0 top-[2px] rounded-full"
-                style="width: 2px; height: 2px; background: #b86c3b;"
-              />
-              <p class="font-semibold" style="color: #0e2a47;">{{ trunc(a.name, 22) }}</p>
-              <p v-if="a.time" class="font-semibold mt-[1px]" style="color: #b86c3b; font-size: 4.5px;">{{ trunc(a.time, 18) }}</p>
-              <p v-if="a.role" class="mt-[1px] text-neutral-600" style="font-size: 4.5px;">
-                <strong>Vai trò:</strong> {{ trunc(a.role, 20) }}
+              Hoạt động
+            </span>
+            <span class="flex-1 h-[0.5px]" style="background: #164D70;" />
+          </h2>
+          <ul class="flex flex-col gap-[3px]" style="font-size: 2.5px;">
+            <li v-for="(a, i) in data.activities" :key="i">
+              <div class="flex items-baseline justify-between gap-[2px] flex-wrap">
+                <strong class="text-neutral-900 break-words">{{ a.name }}</strong>
+                <span
+                  v-if="a.time"
+                  class="text-neutral-500 italic whitespace-nowrap"
+                  style="font-size: 2px;"
+                >
+                  {{ a.time }}
+                </span>
+              </div>
+              <p
+                v-if="a.role"
+                class="text-neutral-700 leading-tight mt-[1px] break-words"
+              >
+                Vai trò: {{ a.role }}
+              </p>
+              <p
+                v-if="a.description"
+                class="text-neutral-700 whitespace-pre-wrap mt-[1px]"
+                style="font-size: 2px; line-height: 1.35;"
+              >
+                {{ a.description }}
+              </p>
+            </li>
+          </ul>
+        </section>
+
+        <!-- Dự án tham gia -->
+        <section v-if="data.projects.length">
+          <h2 class="flex items-center gap-[2px] mb-[2px] leading-none">
+            <span
+              class="font-bold uppercase whitespace-nowrap"
+              style="font-size: 3.5px; color: #164D70; letter-spacing: 0.3px;"
+            >
+              Dự án tham gia
+            </span>
+            <span class="flex-1 h-[0.5px]" style="background: #164D70;" />
+          </h2>
+          <ul class="flex flex-col gap-[3px]" style="font-size: 2.5px;">
+            <li v-for="(p, i) in data.projects" :key="i">
+              <div class="flex items-baseline justify-between gap-[2px] flex-wrap">
+                <strong class="text-neutral-900 break-words">{{ p.name }}</strong>
+                <span
+                  v-if="p.time"
+                  class="text-neutral-500 italic whitespace-nowrap"
+                  style="font-size: 2px;"
+                >
+                  {{ p.time }}
+                </span>
+              </div>
+              <p
+                v-if="p.role"
+                class="text-neutral-700 leading-tight mt-[1px] break-words"
+              >
+                {{ p.role }}
+              </p>
+              <p
+                v-if="p.description"
+                class="text-neutral-700 whitespace-pre-wrap mt-[1px]"
+                style="font-size: 2px; line-height: 1.35;"
+              >
+                {{ p.description }}
+              </p>
+              <p
+                v-if="p.link"
+                class="break-all mt-[1px]"
+                style="font-size: 2px; color: #164D70;"
+              >
+                {{ p.link }}
               </p>
             </li>
           </ul>

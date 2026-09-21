@@ -4,7 +4,29 @@
  * Source / Status
  * ==========================================================================*/
 export type CvSource = 'upload' | 'direct';
-export type CvStatus = 'pending' | 'parsing' | 'ready' | 'failed' | 'deleted';
+
+/**
+ * CV lifecycle status — phải đồng bộ với backend/src/db/schema/enums.ts cvStatusEnum.
+ *
+ * Phân biệt rõ 2 giai đoạn "đang xử lý":
+ *   - 'pending'   — vừa upload/tạo, queue chờ worker pick up
+ *   - 'parsing'   — cvParse worker đang parse text + LLM extract (chỉ cho
+ *                   source='upload' sau khi upload xong)
+ *   - 'analyzing' — cvAnalysis worker đang chạy AI analysis (re-analyze,
+ *                   hoặc direct CV vừa edit content → re-score)
+ *   - 'ready'     — parsed + analyzed (parsedData + ai_analysis có data)
+ *   - 'failed'    — fail (kèm `failureReason`)
+ *   - 'deleted'   — soft-delete
+ *
+ * Lý do tách 'parsing' vs 'analyzing' (thay vì dùng chung 'parsing' như trước):
+ *   FE overlay hiện message khác nhau cho user — "Đang đọc CV…" vs
+ *   "Đang phân tích AI…". Cùng status string → không phân biệt được 2 phase
+ *   có timing khác nhau (~10-30s parse vs ~5-15s analyze).
+ *
+ * Backward compat: rows cũ trong DB có status='parsing' do analysis worker
+ * set trước refactor — vẫn hợp lệ, chỉ là worker mới từ giờ set 'analyzing'.
+ */
+export type CvStatus = 'pending' | 'parsing' | 'analyzing' | 'ready' | 'failed' | 'deleted';
 
 /**
  * Lý do CV bị mark 'failed'.
@@ -78,6 +100,10 @@ export interface DirectCvLanguage {
 
 export interface DirectCvProject {
   name: string;
+  /** Vai trò trong dự án — vd "Tech Lead / Solo Dev / Founder". */
+  role?: string;
+  /** Khoảng thời gian — vd "2023 — 2024". */
+  time?: string;
   description?: string;
   /** URL cho phép null: PATCH có thể gửi null để clear link. */
   link?: string | null;
@@ -89,6 +115,12 @@ export interface DirectCvCertification {
   date?: string;
 }
 
+/** Skill có level 1-5 cho progress bar + dots picker ở form edit. */
+export interface DirectCvSkill {
+  name: string;
+  level: number;
+}
+
 /** Body của POST /cvs/direct — title + templateId bắt buộc. */
 export interface CreateDirectCvInput {
   title: string;
@@ -98,10 +130,42 @@ export interface CreateDirectCvInput {
   contact?: DirectCvContact;
   education?: DirectCvEducation[];
   experience?: DirectCvExperience[];
-  skills?: string[];
+  /**
+   * FE luôn gửi `{name, level}` (round-trip preservation). BE chấp nhận cả
+   * `string[]` để tương thích ngược (CV cũ trong DB / client cũ).
+   */
+  skills?: Array<string | DirectCvSkill>;
   languages?: DirectCvLanguage[];
   projects?: DirectCvProject[];
   certifications?: DirectCvCertification[];
+}
+
+/**
+ * Body của PATCH /cvs/:cvId — chỉ dành cho source='direct'.
+ *
+ * Field nào gửi → update field đó. Field không gửi → giữ nguyên (server
+ * merge vào parsedData hiện có qua deepMerge RFC 7396).
+ *
+ * KHÔNG gồm `templateId`: templateId thuộc root row (cvs table), không nằm
+ * trong parsedData → nếu user muốn đổi template phải thêm field riêng. Hiện
+ * tại BE chưa nhận templateId qua PATCH (chỉ qua POST tạo mới).
+ *
+ * Sau update: BE set status='analyzing' + enqueue cvAnalysisQueue (re-score).
+ * FE đợi socket `cv:status-changed` hoặc refresh list để thấy điểm mới.
+ */
+export interface UpdateDirectCvInput {
+  title?: string;
+  parsedData?: Pick<
+    CreateDirectCvInput,
+    | 'summary'
+    | 'contact'
+    | 'education'
+    | 'experience'
+    | 'skills'
+    | 'languages'
+    | 'projects'
+    | 'certifications'
+  >;
 }
 
 /* ============================================================================

@@ -1,25 +1,3 @@
-/**
- * Upload API — giao tiếp với backend /uploads (MinIO).
- *
- * Có 2 endpoint riêng biệt trên backend (router/upload.ts), mỗi cái có
- * multer instance riêng với MIME whitelist khác nhau:
- *
- *   POST /uploads/file   — `uploadMiddleware` (PDF/DOCX + image, 10MB).
- *                          Dùng cho CV upload (CreateResumeView mode=upload).
- *   POST /uploads/image  — `uploadImage` (jpeg/png/webp/gif, 5MB).
- *                          Dùng cho avatar / logo / cover — mọi nơi cần
- *                          upload ảnh. Avatar PHẢI dùng cái này; nếu gọi
- *                          sang /uploads/file thì uploadMiddleware sẽ reject
- *                          image/jpeg với 400 INVALID_FILE_TYPE.
- *   DELETE /uploads?key= — xoá theo key (chưa có wrapper — flow hiện không
- *                          cần rollback vì user chọn nhầm file thì xoá file
- *                          pill trong UI là đủ).
- *
- * Folder whitelist (backend): 'images' | 'avatars' | 'logos' | 'covers' |
- * 'cvs' | 'files' | 'general' | 'chat'.
- *   - `folder='cvs'` cho CV upload.
- *   - `folder='avatars'` cho avatar (mặc định của `uploadImage`).
- */
 import { http } from './http';
 
 export interface UploadResult {
@@ -37,6 +15,27 @@ export interface ApiResponse<T> {
 /** MIME map cho image upload — khớp với IMAGE_MIME ở backend middleware/upload.ts. */
 const IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 
+/** MIME map cho chat attachment non-image — khớp với FILE_MIME ở BE. */
+const CHAT_FILE_MIME = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/csv',
+  'application/zip',
+  'application/x-zip-compressed',
+] as const;
+
+/** Chuyển byte → KB/MB hiển thị cho user. */
+export const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
 export const uploadApi = {
   /**
    * Upload CV (PDF/DOCX/image, 10MB) — POST /uploads/file.
@@ -52,8 +51,8 @@ export const uploadApi = {
   },
 
   /**
-   * Upload ảnh (avatar, logo, cover, ...) — POST /uploads/image.
-   * MIME: image/jpeg | image/png | image/webp | image/gif, tối đa 5MB.
+   * Upload ảnh (avatar, logo, cover, chat attachment, ...) — POST /uploads/image.
+   * MIME: image/jpeg | image/png | image/webp | image/gif, tối đa 10MB.
    * Folder mặc định 'avatars'.
    *
    * @throws Error message từ backend (vd. "Image type image/svg+xml not
@@ -68,8 +67,8 @@ export const uploadApi = {
         ),
       );
     }
-    if (file.size > 5 * 1024 * 1024) {
-      return Promise.reject(new Error('Ảnh tối đa 5MB.'));
+    if (file.size > 10 * 1024 * 1024) {
+      return Promise.reject(new Error('Ảnh tối đa 10MB.'));
     }
     const formData = new FormData();
     formData.append('file', file);
@@ -77,5 +76,45 @@ export const uploadApi = {
     return http.post<ApiResponse<UploadResult>>('/uploads/image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+  },
+
+  /**
+   * Upload attachment cho chat (cả ảnh và file) — wrapper dispatch theo MIME:
+   *   - image/*  → POST /uploads/image (folder='chat')
+   *   - file khác → POST /uploads/file (folder='chat')
+   *
+   * Trả về UploadResult + `kind` discriminator để MessageInput quyết định
+   * render thumbnail (image) hay file card (file) khi preview.
+   *
+   * Phase 1 (chat): chỉ hỗ trợ image. Phase 2: mở rộng file (PDF/DOCX/XLSX/ZIP...).
+   *
+   * @throws Error nếu MIME không nằm trong whitelist.
+   */
+  uploadChatAttachment: async (
+    file: File,
+  ): Promise<UploadResult & { kind: 'image' | 'file'; name: string }> => {
+    const isImage = file.type.startsWith('image/');
+    if (isImage) {
+      if (!IMAGE_MIME.includes(file.type as (typeof IMAGE_MIME)[number])) {
+        return Promise.reject(
+          new Error(`Định dạng ảnh không hỗ trợ (${file.type}). Chỉ chấp nhận JPG, PNG, WEBP, GIF.`),
+        );
+      }
+      const { data } = await uploadApi.uploadImage(file, 'chat');
+      return { ...data.data, kind: 'image', name: file.name };
+    }
+    // Non-image file
+    if (!CHAT_FILE_MIME.includes(file.type as (typeof CHAT_FILE_MIME)[number])) {
+      return Promise.reject(
+        new Error(
+          `Loại file không hỗ trợ (${file.type || 'unknown'}). Chỉ chấp nhận PDF, DOC/DOCX, XLS/XLSX, PPT, TXT, CSV, ZIP.`,
+        ),
+      );
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      return Promise.reject(new Error('File tối đa 10MB.'));
+    }
+    const { data } = await uploadApi.uploadFile(file, 'chat');
+    return { ...data.data, kind: 'file', name: file.name };
   },
 };

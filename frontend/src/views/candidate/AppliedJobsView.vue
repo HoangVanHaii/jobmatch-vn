@@ -416,6 +416,16 @@ let socket: ReturnType<typeof getSocket> | null = null;
 
 onMounted(async () => {
   await fetchList();
+  // Auto-select đơn đầu tiên sau khi load list xong — UX master/detail kiểu
+  // inbox: user vào trang thì thấy ngay detail của đơn mới nhất thay vì panel
+  // trống. Chỉ áp dụng khi:
+  //   - Không có deep-link `?application=<id>` (đã được watcher ở trên xử lý).
+  //   - Có ít nhất 1 row trong list hiện tại.
+  //   - Chưa mở detail (tránh đè lên row do deep-link / state cũ).
+  if (!route.query.application && rows.value.length > 0 && !detailOpen.value) {
+    detailRow.value = rows.value[0] ?? null;
+    detailOpen.value = true;
+  }
   // Chỉ connect socket khi user đã login (auth token có sẵn).
   if (auth.isAuthenticated) {
     socket = getSocket();
@@ -588,7 +598,7 @@ const confirmWithdraw = async (): Promise<void> => {
     không scroll, mọi thao tác scroll xảy ra bên trong list column. Mobile:
     page scroll bình thường (lg: không áp dụng).
   -->
-  <div class="bg-gray-50/50 p-5 md:p-8 lg:h-screen lg:overflow-hidden">
+  <div class="bg-white p-5 md:p-8 lg:h-screen lg:overflow-hidden font-poppins">
     <div class="lg:flex lg:gap-6 lg:max-w-[1280px] lg:mx-auto lg:h-full">
 
       <!-- ====== List column (60%) — flex col với internal scroll ====== -->
@@ -740,7 +750,6 @@ const confirmWithdraw = async (): Promise<void> => {
               :class="[
                 'group bg-white border border-gray-200 rounded-[14px] p-4 sm:p-[18px] shadow-sm',
                 'hover:shadow-md hover:-translate-y-px hover:border-gray-300 transition cursor-pointer',
-                'flex gap-3.5',
                 row.status === 'withdrawn' ? 'opacity-60 hover:opacity-90' : '',
                 detailRow?.id === row.id
                   ? 'border-primary-500'
@@ -748,23 +757,29 @@ const confirmWithdraw = async (): Promise<void> => {
               ]"
               @click="openDetail(row, $event)"
             >
-              <!-- Company logo / initial fallback -->
-              <div
-                class="shrink-0 w-[42px] h-[42px] rounded-[10px] overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 text-primary-700 font-bold text-[15px] ring-1 ring-black/5"
-                :aria-label="row.companyName ?? 'Công ty'"
-              >
-                <img
-                  v-if="row.companyLogoUrl"
-                  :src="row.companyLogoUrl"
-                  :alt="row.companyName ?? ''"
-                  class="w-full h-full object-cover bg-gray-50"
-                />
-                <span v-else>{{ companyInitial(row.companyName) }}</span>
-              </div>
+              <!--
+                Header row — CHỈ phần này dùng layout 2 cột (avatar + jobInfo
+                + status). Mọi phần bên dưới (ngày nộp, cover letter, action)
+                trở lại full-width của card, bắt đầu từ mép trái padding của
+                card (không lệch vào sau avatar).
+              -->
+              <div class="flex items-start gap-3.5">
+                <!-- Company logo / initial fallback -->
+                <div
+                  class="shrink-0 w-[42px] h-[42px] rounded-[10px] overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 text-primary-700 font-bold text-[15px] ring-1 ring-black/5"
+                  :aria-label="row.companyName ?? 'Công ty'"
+                >
+                  <img
+                    v-if="row.companyLogoUrl"
+                    :src="row.companyLogoUrl"
+                    :alt="row.companyName ?? ''"
+                    class="w-full h-full object-cover bg-gray-50"
+                  />
+                  <span v-else>{{ companyInitial(row.companyName) }}</span>
+                </div>
 
-              <!-- Main -->
-              <div class="min-w-0 flex-1">
-                <div class="flex items-start justify-between gap-2.5">
+                <!-- Job info + status -->
+                <div class="min-w-0 flex-1 flex items-start justify-between gap-2.5">
                   <div class="min-w-0">
                     <h3 class="text-[14.5px] font-semibold tracking-tight text-gray-900 truncate">
                       {{ row.jobTitle ?? '(Job đã bị xoá)' }}
@@ -774,7 +789,7 @@ const confirmWithdraw = async (): Promise<void> => {
                     </p>
                   </div>
                   <span
-                    class="shrink-0 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold whitespace-nowrap"
+                    class="shrink-0 inline-flex items-center gap-1.5 rounded-md  px-2.5 py-0.5 text-[11.5px] font-semibold whitespace-nowrap"
                     :class="[
                       STATUS_COLOR[row.status],
                       isProcessing(row.status) ? 'animate-[badge-pulse_1.4s_infinite_ease-in-out]' : '',
@@ -784,113 +799,114 @@ const confirmWithdraw = async (): Promise<void> => {
                     {{ STATUS_LABEL[row.status] }}
                   </span>
                 </div>
+              </div>
 
-                <div class="mt-1.5 flex items-center gap-1 text-[11.5px] text-gray-400">
-                  <Calendar class="w-3 h-3" />
-                  Nộp {{ dayjs(row.appliedAt).format('DD/MM/YYYY') }}
-                  <span v-if="row.viewedAt" class="inline-flex items-center gap-1 ml-2">
-                    <Eye class="w-3 h-3" />
-                    Nhà tuyển dụng đã xem {{ formatViewedAt(row.viewedAt) }}
+              <!-- Full-width content bên dưới header — bắt đầu từ mép trái card. -->
+              <div class="mt-2 flex items-center gap-1 text-[11.5px] text-gray-400">
+                <Calendar class="w-3 h-3" />
+                Gửi đơn ngày {{ dayjs(row.appliedAt).format('DD/MM/YYYY') }}
+                <span v-if="row.viewedAt" class="inline-flex items-center gap-1 ml-2">
+                  <Eye class="w-3 h-3" />
+                  Nhà tuyển dụng đã xem {{ formatViewedAt(row.viewedAt) }}
+                </span>
+              </div>
+
+              <!-- Cover letter preview -->
+              <p
+                v-if="row.coverLetter"
+                class="mt-2 text-[12px] text-gray-500 italic line-clamp-2 pl-2 border-l-2 border-gray-200"
+              >
+                "{{ row.coverLetter }}"
+              </p>
+
+              <!-- Bottom row: CV chip + AI match (trái) / Rút đơn + Chat (phải) -->
+              <div
+                v-if="row.cvTitle || row.cvUrl || row.aiMatchScore != null || row.status !== 'withdrawn' || canWithdraw(row) || row.jobPostedBy"
+                class="mt-3 flex items-center justify-between gap-2.5 flex-wrap"
+              >
+                <div class="flex items-center gap-2 flex-wrap min-w-0">
+                  <!-- CV chip -->
+                  <span
+                    v-if="row.cvTitle || row.cvUrl"
+                    class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-100 text-[11.5px] font-medium text-gray-600 max-w-[170px]"
+                  >
+                    <FileText class="w-3 h-3 text-gray-500 shrink-0" />
+                    <span class="truncate">{{ row.cvTitle ?? 'CV' }}</span>
+                    <button
+                      v-if="row.cvUrl"
+                      type="button"
+                      class="text-primary-600 hover:text-primary-800 shrink-0 disabled:opacity-50"
+                      title="Tải xuống"
+                      :disabled="downloading === row.id"
+                      @click.stop="downloadCv(row.cvUrl, row.cvTitle ?? 'cv', row.id)"
+                    >
+                      <Loader2
+                        v-if="downloading === row.id"
+                        class="w-3 h-3 animate-spin"
+                      />
+                      <Download v-else class="w-3 h-3" />
+                    </button>
+                  </span>
+
+                  <!-- AI match mini (text only — radial chỉ ở detail panel) -->
+                  <span
+                    v-if="row.aiMatchScore != null"
+                    class="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-violet-700"
+                    :title="`Mức độ phù hợp: ${MATCH_STYLE[matchLevel(row.aiMatchScore)!]?.label ?? ''}`"
+                  >
+                    <Sparkles class="w-3.5 h-3.5 text-violet-600" />
+                    {{ formatMatchScore(row.aiMatchScore) }} phù hợp
+                  </span>
+                  <!-- Trạng thái terminal khi worker skip do quota/LLM lỗi — badge
+                       cố định (không spinner) để user biết matching đã kết thúc
+                       không thành công, không phải "đang chờ". -->
+                  <span
+                    v-else-if="row.aiMatchReason === 'quota_exceeded'"
+                    class="inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-[11.5px] font-semibold"
+                    title="Bạn đã hết lượt AI match — nâng cấp gói để dùng tiếp"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                    Hết lượt AI
+                  </span>
+                  <span
+                    v-else-if="row.aiMatchReason === 'failed'"
+                    class="inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-full bg-rose-100 text-rose-800 text-[11.5px] font-semibold"
+                    title="AI tạm thời không khả dụng, sẽ thử lại sau"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                    AI tạm lỗi
+                  </span>
+                  <span
+                    v-else-if="row.status !== 'withdrawn'"
+                    class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-violet-100 text-violet-800 text-[11.5px] font-semibold"
+                  >
+                    <Loader2 class="w-3 h-3 animate-spin" />
+                    Đang so khớp
                   </span>
                 </div>
 
-                <!-- Cover letter preview -->
-                <p
-                  v-if="row.coverLetter"
-                  class="mt-1.5 text-[12px] text-gray-500 italic line-clamp-2 pl-2 border-l-2 border-gray-200"
-                >
-                  "{{ row.coverLetter }}"
-                </p>
-
-                <!-- Bottom row: CV chip + AI match (trái) / Rút đơn + Chat (phải) -->
-                <div
-                  v-if="row.cvTitle || row.cvUrl || row.aiMatchScore != null || row.status !== 'withdrawn' || canWithdraw(row) || row.jobPostedBy"
-                  class="mt-3 flex items-center justify-between gap-2.5 flex-wrap"
-                >
-                  <div class="flex items-center gap-2 flex-wrap min-w-0">
-                    <!-- CV chip -->
-                    <span
-                      v-if="row.cvTitle || row.cvUrl"
-                      class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-100 text-[11.5px] font-medium text-gray-600 max-w-[170px]"
-                    >
-                      <FileText class="w-3 h-3 text-gray-500 shrink-0" />
-                      <span class="truncate">{{ row.cvTitle ?? 'CV' }}</span>
-                      <button
-                        v-if="row.cvUrl"
-                        type="button"
-                        class="text-primary-600 hover:text-primary-800 shrink-0 disabled:opacity-50"
-                        title="Tải xuống"
-                        :disabled="downloading === row.id"
-                        @click.stop="downloadCv(row.cvUrl, row.cvTitle ?? 'cv', row.id)"
-                      >
-                        <Loader2
-                          v-if="downloading === row.id"
-                          class="w-3 h-3 animate-spin"
-                        />
-                        <Download v-else class="w-3 h-3" />
-                      </button>
-                    </span>
-
-                    <!-- AI match mini (text only — radial chỉ ở detail panel) -->
-                    <span
-                      v-if="row.aiMatchScore != null"
-                      class="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-violet-700"
-                      :title="`Mức độ phù hợp: ${MATCH_STYLE[matchLevel(row.aiMatchScore)!]?.label ?? ''}`"
-                    >
-                      <Sparkles class="w-3.5 h-3.5 text-violet-600" />
-                      {{ formatMatchScore(row.aiMatchScore) }} phù hợp
-                    </span>
-                    <!-- Trạng thái terminal khi worker skip do quota/LLM lỗi — badge
-                         cố định (không spinner) để user biết matching đã kết thúc
-                         không thành công, không phải "đang chờ". -->
-                    <span
-                      v-else-if="row.aiMatchReason === 'quota_exceeded'"
-                      class="inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-[11.5px] font-semibold"
-                      title="Bạn đã hết lượt AI match — nâng cấp gói để dùng tiếp"
-                    >
-                      <span class="w-1.5 h-1.5 rounded-full bg-amber-600" />
-                      Hết lượt AI
-                    </span>
-                    <span
-                      v-else-if="row.aiMatchReason === 'failed'"
-                      class="inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-full bg-rose-100 text-rose-800 text-[11.5px] font-semibold"
-                      title="AI tạm thời không khả dụng, sẽ thử lại sau"
-                    >
-                      <span class="w-1.5 h-1.5 rounded-full bg-rose-600" />
-                      AI tạm lỗi
-                    </span>
-                    <span
-                      v-else-if="row.status !== 'withdrawn'"
-                      class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-violet-100 text-violet-800 text-[11.5px] font-semibold"
-                    >
-                      <Loader2 class="w-3 h-3 animate-spin" />
-                      Đang so khớp
-                    </span>
-                  </div>
-
-                  <!-- Actions: Rút đơn + Chat -->
-                  <div class="flex items-center gap-2">
-                    <button
-                      v-if="canWithdraw(row)"
-                      type="button"
-                      class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-700 bg-white border border-gray-200 hover:bg-red-50 hover:border-red-200 rounded-lg transition"
-                      @click="openWithdrawModal(row, $event)"
-                    >
-                      <XCircle class="w-3.5 h-3.5" />
-                      Rút đơn
-                    </button>
-                    <button
-                      v-if="row.jobPostedBy"
-                      type="button"
-                      class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-gray-900 hover:bg-gray-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
-                      :disabled="chatLoadingId === row.id"
-                      @click="contactEmployer(row, $event)"
-                    >
-                      <Loader2 v-if="chatLoadingId === row.id" class="w-3.5 h-3.5 animate-spin" />
-                      <MessageCircle v-else class="w-3.5 h-3.5" />
-                      Chat
-                    </button>
-                  </div>
+                <!-- Actions: Rút đơn + Chat -->
+                <div class="flex items-center gap-2">
+                  <button
+                    v-if="canWithdraw(row)"
+                    type="button"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-700 bg-white border border-gray-200 hover:bg-red-50 hover:border-red-200 rounded-md transition"
+                    @click="openWithdrawModal(row, $event)"
+                  >
+                    <XCircle class="w-3.5 h-3.5" />
+                    Rút đơn
+                  </button>
+                  <button
+                    v-if="row.jobPostedBy"
+                    type="button"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-md transition disabled:opacity-60 disabled:cursor-not-allowed"
+                    :disabled="chatLoadingId === row.id"
+                    @click="contactEmployer(row, $event)"
+                  >
+                    <Loader2 v-if="chatLoadingId === row.id" class="w-3.5 h-3.5 animate-spin" />
+                    <MessageCircle v-else class="w-3.5 h-3.5" />
+                    Chat
+                  </button>
                 </div>
               </div>
             </article>

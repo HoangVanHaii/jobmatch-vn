@@ -1,0 +1,25 @@
+-- =============================================================================
+-- 0038 — Thêm 'analyzing' vào cv_status enum
+--
+-- Lý do: trước đây cả 2 worker (cvParse.worker.ts + cvAnalysis.worker.ts) đều
+-- set status='parsing' khi đang xử lý → user không phân biệt được CV đang
+-- được parse text (worker 1, ~10-30s) hay đang được AI phân tích (worker 2,
+-- ~5-15s). UI chỉ hiện "Đang xử lý…" chung.
+--
+-- Phân biệt rõ:
+--   - 'parsing'   → cvParse.worker.ts đang parse text + extract LLM
+--   - 'analyzing' → cvAnalysis.worker.ts đang chạy AI analysis (re-analyze)
+--   - 'ready'     → xử lý xong
+--
+-- Backward compat: rows cũ trong DB đang có status='parsing' (do analysis
+-- worker set trước refactor này) vẫn hợp lệ — chỉ là worker mới từ giờ sẽ
+-- set 'analyzing' thay vì 'parsing' cho analysis flow. PG enum cho phép ADD
+-- VALUE mà không cần DROP giá trị cũ.
+--
+-- Lưu ý Postgres: `ALTER TYPE ... ADD VALUE` KHÔNG được chạy trong transaction
+-- ở PG < 12. Project này dùng PG 12+ (xem docker-compose.yml) — OK.
+-- Nếu chạy trong transaction bị lỗi → split migration runner hoặc dùng
+-- `ALTER TYPE ... ADD VALUE ... COMMIT` riêng.
+-- =============================================================================
+
+ALTER TYPE cv_status ADD VALUE 'analyzing';

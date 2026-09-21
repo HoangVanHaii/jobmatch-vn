@@ -1389,68 +1389,7 @@ const jobsPath = { name: 'employer-jobs' as const };
                 </div>
               </section>
 
-              <!-- Jobs -->
-              <section class="bg-white rounded-2xl border border-gray-200 shadow-sm">
-                <header class="px-5 md:px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-2">
-                  <div class="flex items-center gap-2">
-                    <div class="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
-                      <BriefcaseBusiness class="w-3.5 h-3.5" />
-                    </div>
-                    <h3 class="text-sm font-semibold text-gray-900">Việc làm đang tuyển</h3>
-                    <span v-if="current.jobs?.length" class="inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-full bg-gray-100 text-gray-700">{{ current.jobs.length }} vị trí</span>
-                  </div>
-                  <button type="button" class="md:hidden inline-flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition"
-                          :title="expanded.jobs ? 'Thu gọn' : 'Mở rộng'" @click="expanded.jobs = !expanded.jobs">
-                    <ChevronUp v-if="expanded.jobs" class="w-4 h-4" />
-                    <ChevronDown v-else class="w-4 h-4" />
-                  </button>
-                </header>
-                <div v-show="expanded.jobs" class="p-5 md:p-6">
-                  <div v-if="!current.jobs || current.jobs.length === 0" class="flex flex-col items-center justify-center py-8 text-center">
-                    <div class="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-2">
-                      <BriefcaseBusiness class="w-5 h-5 text-gray-400" />
-                    </div>
-                    <p class="text-sm font-medium text-gray-700">Chưa có việc làm đang tuyển</p>
-                    <p class="text-xs text-gray-500 mt-1 max-w-xs">Các vị trí tuyển dụng của công ty sẽ hiển thị ở đây.</p>
-                    <router-link v-if="canEdit" :to="jobsPath" class="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-800 transition">
-                      <Plus class="w-3.5 h-3.5" />Đăng tin tuyển dụng
-                    </router-link>
-                  </div>
-                  <ul v-else class="space-y-2.5">
-                    <li v-for="job in current.jobs" :key="job.id"
-                        class="group flex items-start gap-3 p-3 rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-sm transition cursor-pointer">
-                      <div class="shrink-0 w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
-                        <BriefcaseBusiness class="w-4 h-4 text-primary-600" />
-                      </div>
-                      <div class="flex-1 min-w-0">
-                        <div class="flex items-start justify-between gap-2">
-                          <p class="text-sm font-semibold text-gray-900 truncate">{{ job.title }}</p>
-                          <ChevronRight class="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition shrink-0 mt-0.5" />
-                        </div>
-                        <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-                          <span v-if="job.jobType" class="inline-flex items-center gap-1">
-                            <BriefcaseBusiness class="w-3 h-3" />{{ job.jobType }}
-                          </span>
-                          <span v-if="job.jobLevel" class="inline-flex items-center gap-1">
-                            <span class="text-gray-300">·</span>{{ job.jobLevel }}
-                          </span>
-                          <span v-if="formatJobLocation(job.location)" class="inline-flex items-center gap-1">
-                            <MapPin class="w-3 h-3" />{{ formatJobLocation(job.location) }}
-                          </span>
-                          <template v-if="formatSalary(job.salaryMin, job.salaryMax)">
-                            <span class="inline-flex items-center gap-1">
-                              <span class="text-gray-300">·</span>
-                              <Banknote class="w-3 h-3" />
-                              <span class="text-emerald-700 font-medium">{{ formatSalary(job.salaryMin, job.salaryMax) }}</span>
-                            </span>
-                          </template>
-                        </div>
-                      </div>
-                    </li>
-                  </ul>
-                </div>
-              </section>
-            </div>
+              </div>
 
             <div class="lg:col-span-5 space-y-4 md:space-y-5">
               <!-- Address -->
@@ -1536,6 +1475,69 @@ const jobsPath = { name: 'employer-jobs' as const };
               </section>
             </div>
           </div>
+
+          <!-- Jobs — full-width section below the 2-column grid so it never
+               unbalances the columns. 2-col on lg+ for compactness with many jobs. -->
+          <section class="bg-white rounded-2xl border border-gray-200 shadow-sm">
+            <header class="px-5 md:px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <div class="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
+                  <BriefcaseBusiness class="w-3.5 h-3.5" />
+                </div>
+                <h3 class="text-sm font-semibold text-gray-900">Việc làm đang tuyển</h3>
+                <span v-if="current.jobs?.length" class="inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-full bg-gray-100 text-gray-700">{{ current.jobs.length }} vị trí</span>
+              </div>
+              <button type="button" class="md:hidden inline-flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition"
+                      :title="expanded.jobs ? 'Thu gọn' : 'Mở rộng'" @click="expanded.jobs = !expanded.jobs">
+                <ChevronUp v-if="expanded.jobs" class="w-4 h-4" />
+                <ChevronDown v-else class="w-4 h-4" />
+              </button>
+            </header>
+            <div v-show="expanded.jobs" class="p-5 md:p-6">
+              <div v-if="!current.jobs || current.jobs.length === 0" class="flex flex-col items-center justify-center py-8 text-center">
+                <div class="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-2">
+                  <BriefcaseBusiness class="w-5 h-5 text-gray-400" />
+                </div>
+                <p class="text-sm font-medium text-gray-700">Chưa có việc làm đang tuyển</p>
+                <p class="text-xs text-gray-500 mt-1 max-w-xs">Các vị trí tuyển dụng của công ty sẽ hiển thị ở đây.</p>
+                <router-link v-if="canEdit" :to="jobsPath" class="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-800 transition">
+                  <Plus class="w-3.5 h-3.5" />Đăng tin tuyển dụng
+                </router-link>
+              </div>
+              <ul v-else class="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+                <li v-for="job in current.jobs" :key="job.id"
+                    class="group flex items-start gap-3 p-3 rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-sm transition cursor-pointer">
+                  <div class="shrink-0 w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
+                    <BriefcaseBusiness class="w-4 h-4 text-primary-600" />
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-start justify-between gap-2">
+                      <p class="text-sm font-semibold text-gray-900 truncate">{{ job.title }}</p>
+                      <ChevronRight class="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition shrink-0 mt-0.5" />
+                    </div>
+                    <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                      <span v-if="job.jobType" class="inline-flex items-center gap-1">
+                        <BriefcaseBusiness class="w-3 h-3" />{{ job.jobType }}
+                      </span>
+                      <span v-if="job.jobLevel" class="inline-flex items-center gap-1">
+                        <span class="text-gray-300">·</span>{{ job.jobLevel }}
+                      </span>
+                      <span v-if="formatJobLocation(job.location)" class="inline-flex items-center gap-1">
+                        <MapPin class="w-3 h-3" />{{ formatJobLocation(job.location) }}
+                      </span>
+                      <template v-if="formatSalary(job.salaryMin, job.salaryMax)">
+                        <span class="inline-flex items-center gap-1">
+                          <span class="text-gray-300">·</span>
+                          <Banknote class="w-3 h-3" />
+                          <span class="text-emerald-700 font-medium">{{ formatSalary(job.salaryMin, job.salaryMax) }}</span>
+                        </span>
+                      </template>
+                    </div>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </section>
         </template>
       </template>
     </div>

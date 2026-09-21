@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import {
@@ -24,9 +24,11 @@ import {
   Clock,
   Download,
   ExternalLink,
+  Pencil,
 } from 'lucide-vue-next';
 import { useCvStore } from '@stores/cv';
 import { usePlanStore } from '@stores/plan';
+import { useToastStore } from '@stores/toast';
 import { useCvDownload } from '@/composables/useCvDownload';
 import CvPreview from '@components/cv/CvPreview.vue';
 import CvThumbnail from '@components/cv/thumbnails/CvThumbnail.vue';
@@ -39,7 +41,28 @@ import { useSocket } from '@composables/useSocket';
 const router = useRouter();
 const cvStore = useCvStore();
 const planStore = usePlanStore();
+const toast = useToastStore();
 const { items, total, page, pageSize, totalPages, loading, error } = storeToRefs(cvStore);
+
+/* ============================================================================
+ * Error → toast.
+ *
+ * Trước: store set `error.value` (qua setError trong catch), template render
+ * banner đỏ inline. Nhưng banner lại sticky ngay đầu trang — nếu user bấm
+ * "Phân tích lại" CV chưa parse xong, banner hiện ngay trên đầu list làm
+ * giật layout. Đổi sang toast: transient, không chiếm chỗ trên trang, hiện
+ * rồi tự dismiss sau 4s.
+ *
+ * Watch fire toast khi `error` set (non-null). Sau đó clear `error.value`
+ * để lần fetchList sau không re-fire (store cũng clear error.value = null
+ * ở đầu fetchList — double-clear, OK).
+ * ==========================================================================*/
+watch(error, (msg) => {
+  if (msg) {
+    toast.error(msg);
+    error.value = null;
+  }
+});
 
 // Set loading=true NGAY TRONG setup() — trước frame render đầu tiên —
 // để spinner loading hiện ra thay vì empty state "Bạn chưa có CV nào" flash
@@ -66,8 +89,31 @@ const sourceToQuery = (s: 'all' | CvSource): CvSource | undefined =>
   s === 'all' ? undefined : s;
 
 const loadList = async () => {
-  // Preserve current search across re-mount / route return.
-  await cvStore.fetchList(sourceToQuery(sourceFilter.value), undefined, undefined);
+  // RESET trước khi FETCH — đảm bảo API đồng bộ với UI mặc định "Tất cả".
+  //
+  // Bối cảnh bug:
+  //   - Component re-mount (quay lại từ route khác) → `sourceFilter` /
+  //     `searchQuery` là refs MỚI → mặc định 'all' và '' (đúng theo yêu cầu
+  //     "Tất cả" là default khi quay lại).
+  //   - NHƯNG `cvStore.query.source` + `query.q` vẫn giữ 'upload'/'direct'/
+  //     searchTerm từ lần visit trước — Pinia store SỐNG QUA route navigation,
+  //     KHÔNG tự reset.
+  //   - `fetchList` mặc định coi `source` / `q` undefined = "giữ nguyên
+  //     store.query" (cơ chế dùng cho `watch(searchQuery)` — tránh reset tab
+  //     khi user chỉ gõ search). Nếu chỉ pass undefined → API call vẫn
+  //     filter theo source cũ → UI "Tất cả" nhưng data upload-only → MISMATCH.
+  //
+  // Cách fix: truyền `resetFilters=true` → store clear nguyên `query.value`
+  // (drop source + q + mọi key cũ) TRƯỚC khi build axios params → API không
+  // có source/q → khớp với UI "Tất cả".
+  //
+  // Không duplicate fetch vì:
+  //   - `watch(() => router.currentRoute.value.fullPath, ...)` KHÔNG fire
+  //     giá trị đầu (Vue watch default `immediate: false`) → không thêm
+  //     fetch ngoài `onMounted`.
+  //   - `watch(searchQuery)` không fire vì searchQuery đã là '' (fresh ref).
+  //   - `handleSourceChange` không liên quan (chỉ chạy khi user click tab).
+  await cvStore.fetchList(undefined, undefined, undefined, true);
 };
 
 const handleSourceChange = async (s: 'all' | CvSource) => {
@@ -140,9 +186,28 @@ useSocket(
   async (payload: { cvId: string; status: CvStatus; failureReason?: CvFailureReason | null }) => {
       const { cvId, status, failureReason } = payload;
     if (!cvId || !status) return;
+    // Update status trong store ngay để UI hiện "Đang phân tích" / "Sẵn sàng"
+    // mà không cần fetch lại.
     cvStore.updateStatus(cvId, status, failureReason ?? null);
-    if (status === 'ready') {
-      await cvStore.refreshDetail(cvId);
+
+    // Re-fetch full row khi status về TERMINAL — BE vừa ghi `ai_analysis`
+    // mới (worker `changeAnalysisAsReady`) hoặc reset về `isCv=false`
+    // (worker `changeAnalysisAsNotCv`) nên store local đang giữ data cũ.
+    // `updateStatus` chỉ patch 2 field trên — KHÔNG đụng `ai_analysis` — nên
+    // nếu không fetch lại thì:
+    //   - card score badge (`getAiScore`) hiển thị điểm cũ,
+    //   - nút Brain (xem phân tích AI) chỉ hiện khi `isCv=true` cũ,
+    //   - mở analysis modal cũng thấy strengths/weaknesses cũ.
+    //
+    // `void` để fire-and-forget — handler async không cần đợi fetch xong
+    // mới resolve; lỗi (nếu có) đã được `refreshDetail` nuốt im lặng.
+    //
+    // Chỉ re-fetch cho status TERMINAL ('ready' / 'failed'). 3 status tạm
+    // ('parsing' / 'analyzing' / 'pending') không làm `ai_analysis` đổi
+    // → giữ nguyên tối ưu patch-only để khỏi tốn GET thừa mỗi lần worker
+    // vào queue.
+    if (status === 'ready' || status === 'failed') {
+      void cvStore.refreshDetail(cvId);
     }
   },
 );
@@ -153,6 +218,7 @@ useSocket(
 const statusDotClass: Record<CvStatus, string> = {
   pending: 'bg-amber-500',
   parsing: 'bg-blue-500',
+  analyzing: 'bg-violet-500',
   ready: 'bg-emerald-500',
   failed: 'bg-red-500',
   deleted: 'bg-slate-300',
@@ -291,6 +357,8 @@ const statusBadge = (cv: Cv): { tone: BadgeTone; label: string } => {
       return { tone: 'amber', label: 'Pending' };
     case 'parsing':
       return { tone: 'blue', label: 'Parsing' };
+    case 'analyzing':
+      return { tone: 'blue', label: 'Analyzing' };
     case 'deleted':
       return { tone: 'slate', label: 'Đã xoá' };
   }
@@ -321,7 +389,7 @@ const handleAnalyze = async (cvId: string) => {
   try {
     await cvStore.triggerAnalysis(cvId);
   } catch {
-    // store đã set error; UI banner hiện.
+    // store đã set error; watch ở setup() fire toast tương ứng.
   } finally {
     analyzingId.value = null;
   }
@@ -377,7 +445,7 @@ const confirmDeleteAction = async (): Promise<void> => {
       await cvStore.fetchList(undefined, 1);
     }
   } catch {
-    // store đã set error
+    // store đã set error; watch ở setup() fire toast tương ứng.
   }
 };
 
@@ -447,15 +515,33 @@ const closeQuotaDetail = (): void => {
  * hiện warning riêng).
  * ==========================================================================*/
 const analysisOpen = ref(false);
-const analysisData = ref<Cv | null>(null);
+const analysisDataId = ref<string | null>(null);
+
+/**
+ * CV đang xem trong analysis modal — lookup từ `items` theo id (cùng pattern
+ * `previewDataId`/`previewCv` và `quotaDetailCvId`/`quotaCv` ở trên) để
+ * auto-sync store mutations, đặc biệt là socket `cv:status-changed` →
+ * `refreshDetail` sẽ `applyRow` full row mới vào `items` → modal re-render
+ * với `ai_analysis` mới NGAY KHÔNG CẦN đóng/mở lại.
+ *
+ * Trước đây dùng `ref<Cv | null>` snapshot được gán qua `openAnalysis(cv)`
+ * — nếu user mở modal đúng lúc worker re-analyze đang chạy, modal giữ data
+ * CŨ cho tới khi user đóng/mở lại. Đây là bug mà user báo "CV đổi nhưng
+ * điểm chưa cập nhật" khi open modal ngay giữa analyze.
+ */
+const analysisCv = computed<Cv | null>(() => {
+  const id = analysisDataId.value;
+  if (!id) return null;
+  return items.value.find((c) => c.id === id) ?? null;
+});
 
 const openAnalysis = (cv: Cv): void => {
-  analysisData.value = cv;
+  analysisDataId.value = cv.id;
   analysisOpen.value = true;
 };
 const closeAnalysis = (): void => {
   analysisOpen.value = false;
-  analysisData.value = null;
+  analysisDataId.value = null;
 };
 
 /** Dùng cho UI: CV có mở nút "Xem phân tích" hay không. Có analysis + isCv. */
@@ -552,6 +638,47 @@ const openOriginalFromMenu = (cv: Cv) => {
   menuHandleOpenOriginal(cv);
   openMenuId.value = null;
 };
+
+/* ============================================================================
+ * Edit CV — nav tới /candidate/resumes/:cvId/edit.
+ *
+ * Guard: chỉ cho phép khi CV không đang trong "đang xử lý" (pending/parsing/
+ * analyzing). Sửa CV đang được worker chạy có thể conflict với deepMerge
+ * của PATCH — BE update() KHÔNG check status đó, nhưng để chắc chắn UX
+ * đúng, disable nút. Status 'failed' thì OK (BE update() chấp nhận).
+ *
+ * CV đã 'deleted' không thể edit (BE softDelete đã set status='deleted'
+ * → row bị filter khỏi list, nhưng defensive check vẫn có).
+ * ==========================================================================*/
+const menuCanEdit = (cv: Cv): boolean =>
+  cv.status !== 'pending' &&
+  cv.status !== 'parsing' &&
+  cv.status !== 'analyzing' &&
+  cv.status !== 'deleted';
+
+const menuEditTooltip = (cv: Cv): string => {
+  if (cv.status === 'pending') return 'CV đang chờ xử lý, chưa thể sửa';
+  if (cv.status === 'parsing') return 'CV đang được parse, chưa thể sửa';
+  if (cv.status === 'analyzing') return 'CV đang được AI phân tích, chưa thể sửa';
+  if (cv.status === 'deleted') return 'CV đã bị xoá';
+  return 'Chỉnh sửa nội dung CV';
+};
+
+const editFromMenu = (cv: Cv) => {
+  openMenuId.value = null;
+  router.push({ name: 'edit-resume', params: { cvId: cv.id } });
+};
+
+/**
+ * Edit từ CvPreview modal — user bấm nút "Sửa CV" trong header modal.
+ * Đóng modal trước để cleanup, sau đó navigate. Tận dụng `editFromMenu` để
+ * không nhân đôi logic route — chỉ khác entry point.
+ */
+const onEditFromPreview = (cvId: string) => {
+  closePreview();
+  const cv = items.value.find((c) => c.id === cvId);
+  if (cv) editFromMenu(cv);
+};
 /** Đóng menu khi click ra ngoài (delegate trên document, dùng data attr `data-cv-menu`).
  *  Quota modal đóng qua backdrop @click.self riêng — không cần check ở đây. */
 const onDocClick = (e: MouseEvent) => {
@@ -569,13 +696,21 @@ const hasActiveFilter = computed<boolean>(
   () => sourceFilter.value !== 'all' || searchQuery.value.trim().length > 0,
 );
 const clearAllFilters = async (): Promise<void> => {
-  // Set searchQuery TRƯỚC sẽ trigger watch(searchQuery) — watch cancel timer
-  // cũ rồi set timer mới cho 400ms sau. Phải cancel timer mới này SAU khi
-  // watch fire để chặn race call (watch 400ms-later có thể dùng stale
-  // query.value hoặc reset thứ khác trước khi clearAllFilters xong).
+  // Bug H1 — race condition với watch(searchQuery):
+  //   Set searchQuery TRƯỚC trigger watch(searchQuery) (Vue 3 watch default
+  //   `flush: 'pre'` chạy async sau current sync code). Watch cancel timer cũ
+  //   rồi SET TIMER MỚI 400ms với `q=undefined`. Nếu không cancel timer mới
+  //   này → 400ms sau, setTimeout fire `fetchList(undefined, undefined, undefined)`
+  //   KHÔNG có resetFilters=true, clobber state do user đổi trong lúc chờ.
+  //
+  //   Fix: await nextTick() TRƯỚC khi clear timer lần 2 — buộc watch fire đồng
+  //   bộ, set timer mới, rồi mới clear timer mới này. Cuối cùng mới gọi
+  //   fetchList với resetFilters=true (caller chính thức, không qua watch).
   if (searchTimer) clearTimeout(searchTimer);
   searchQuery.value = '';
+  await nextTick();
   if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = null;
   sourceFilter.value = 'all';
   // ResetFilters=true → store clear query.source + query.q về undefined rồi
   // fetch lại từ DB. Nếu không có flag này, fetchList coi undefined = "giữ
@@ -703,20 +838,10 @@ const clearAllFilters = async (): Promise<void> => {
         </div>
       </div>
 
-      <!-- ============ Error banner ============ -->
-      <Transition
-        enter-active-class="transition duration-150 ease-out"
-        enter-from-class="opacity-0 -translate-y-1"
-        enter-to-class="opacity-100 translate-y-0"
-      >
-        <div
-          v-if="error"
-          class="mb-5 rounded-xl border border-red-200/80 bg-red-50 px-4 py-3 flex items-start gap-2.5"
-        >
-          <AlertCircle class="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-          <p class="text-sm text-red-700">{{ error }}</p>
-        </div>
-      </Transition>
+      <!-- ============ Error → toast ============
+           Trước: render banner đỏ inline (sticky đầu trang). Giờ chuyển sang
+           toast — watch ở setup() fire toast.error khi store set `error.value`.
+           Xem script block đầu file để biết lý do + cách clear. -->
 
       <!-- ============ Quota warning hiển thị per-card (xem bên dưới) ============
            Hiện inline trên từng thẻ CV có `failureReason='quota_exceeded'` +
@@ -925,6 +1050,21 @@ const clearAllFilters = async (): Promise<void> => {
                       <ExternalLink class="w-3.5 h-3.5 text-slate-400" />
                       <span>Mở file gốc</span>
                     </button>
+                    <!-- Edit — chỉ cho source='direct'. CV upload chỉnh sửa qua
+                         re-upload, không có endpoint PATCH cho upload source
+                         (BE chỉ accept source='direct' qua cv.service.update). -->
+                    <button
+                      v-if="cv.source === 'direct'"
+                      type="button"
+                      class="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white transition-colors"
+                      role="menuitem"
+                      :disabled="!menuCanEdit(cv)"
+                      :title="menuEditTooltip(cv)"
+                      @click="editFromMenu(cv)"
+                    >
+                      <Pencil class="w-3.5 h-3.5 text-slate-400" />
+                      <span>Sửa</span>
+                    </button>
                     <div class="my-1 border-t border-slate-100" role="separator" />
                     <button
                       type="button"
@@ -944,7 +1084,7 @@ const clearAllFilters = async (): Promise<void> => {
             <div
               class="relative bg-white rounded-[3px] ring-1 ring-slate-900/[0.06] overflow-hidden transition-transform duration-200 group-hover:-translate-y-0.5"
               :class="{
-                'opacity-95': cv.status === 'pending' || cv.status === 'parsing',
+                'opacity-95': cv.status === 'pending' || cv.status === 'parsing' || cv.status === 'analyzing',
               }"
               :style="{
                 width: `${PAPER_WIDTH_PX}px`,
@@ -959,11 +1099,13 @@ const clearAllFilters = async (): Promise<void> => {
                    bản thu nhỏ tương ứng CVTemplate1-5. -->
               <CvThumbnail :cv="cv" class="absolute inset-0" />
 
-              <!-- Loading / parsing overlay — giữ ở ngoài CvThumbnail vì chỉ áp dụng
-                   cho upload CV đang pending/parsing (trạng thái thuộc về CV row,
-                   không phải thumbnail). -->
+              <!-- Loading overlay — hiện cho cả 3 status "đang xử lý":
+                     - 'pending'   — chờ worker pick up
+                     - 'parsing'   — cvParse worker parse text + LLM extract
+                     - 'analyzing' — cvAnalysis worker re-analyze AI score
+                   Giữ ở ngoài CvThumbnail vì status thuộc về CV row, không phải thumbnail. -->
               <div
-                v-if="cv.status === 'pending' || cv.status === 'parsing'"
+                v-if="cv.status === 'pending' || cv.status === 'parsing' || cv.status === 'analyzing'"
                 class="absolute inset-0 bg-white/70 backdrop-blur-[1px] flex items-center justify-center"
               >
                 <Loader2 class="w-4 h-4 text-primary-600 animate-spin" />
@@ -1145,12 +1287,13 @@ const clearAllFilters = async (): Promise<void> => {
       :setting-primary="settingPrimaryId === previewCv?.id"
       @close="closePreview"
       @set-primary="handleSetPrimary"
+      @edit="onEditFromPreview"
     />
 
     <!-- ============ AI analysis modal ============ -->
     <CvAiAnalysisView
       :open="analysisOpen"
-      :cv="analysisData"
+      :cv="analysisCv"
       @close="closeAnalysis"
     />
 

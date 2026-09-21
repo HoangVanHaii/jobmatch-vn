@@ -1,0 +1,14 @@
+
+    <div id="app" data-v-app=""><div data-v-d54db898="" class="notif-bell-root fixed top-3 right-2 z-50 select-none"><!-- Bell button --><button data-v-d54db898="" type="button" class="relative w-6 h-6 flex items-center justify-center transition" aria-label="Thông báo"><svg data-v-d54db898="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bell-icon text-gray-400 w-4 h-4 transition-colors duration-200"><path d="M10.268 21a2 2 0 0 0 3.464 0"></path><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"></path></svg><!--v-if--></button><!-- Dropdown --><!--v-if--></div><!-- Toast container — render hàng đợi toast toàn cục. Teleport tới body.
+   *  - <ToastContainer /> : simple toasts (success/info/warning/error) với icon + title.
+   *  - <ToastHost />     : chat realtime variant (avatar + click → /chat).
+   *  Cả 2 đọc cùng queue trong stores/toast.ts — ToastHost đọc `items` (alias
+   *  của `toasts`), ToastContainer đọc `toasts`. Dedupe theo `id` để socket
+   *  emit duplicate không push 2 lần. --><!--
+    Anchor: BPM `.toast` dùng fixed top:72px + left:50% + translateX(-50%).
+    Tailwind có sẵn `top-[72px] left-1/2 -translate-x-1/2`.
+    z-100 cao hơn modal z-50 và ToastHost z-60 để không bị che.
+  --><!--teleport start--><!--teleport end--><!-- Container cố định — top-right, dưới NotificationBell (top: ~60px). --><!--teleport start--><!--teleport end--></div>
+    <script type="module" src="/src/main.ts"></script>
+  
+<div data-v-e72458fe="" class="toast-anchor pointer-events-none" aria-label="Thông báo"><!-- Top-right: offset right 16px (cùng gutter với topbar). --><!--v-if--></div><!--v-if--><!--v-if-->

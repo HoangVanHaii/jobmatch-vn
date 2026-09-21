@@ -1,253 +1,379 @@
 <script setup lang="ts">
 /**
- * CvThumbnailTemplate1 — bản thu nhỏ của CVTemplate1 (sidebar tối + main).
+ * CvThumbnailTemplate1 — bản thu nhỏ của CVTemplate1 (orange header + 2 cột).
  *
- * Phải GIỐNG HỆT CVTemplate1 về layout, màu sắc, content, format. Chỉ khác
- * ở font size nhỏ hơn (4-6px thay vì 12-22px) để fit thumbnail 132×170.
+ * NGUYÊN TẮC QUAN TRỌNG: render ĐẦY ĐỦ 100% nội dung giống CVTemplate1.vue.
+ *   - Cùng data (data: CvRenderData).
+ *   - Cùng section: contact, skills, interests, certificates, activities,
+ *     summary, educations, experiences, projects.
+ *   - Cùng field cho mỗi item.
+ *   - Cùng thứ tự section (sidebar trước, main sau).
+ *   - Cùng cấu trúc DOM (header cam + 2 cột 35/65).
  *
- * Layout mapping (full size → thumbnail):
- *   - Sidebar (grid-cols-[280px_1fr]): 35% width, bg-stone-700, nội dung:
- *       1. Avatar tròn (white border, bg-stone-300 fallback)
- *       2. Name (uppercase tracking-wide) + position (italic stone-200)
- *       3. Contact list: phone, email, address, dob, gender (MỖI field là 1 dòng)
- *       4. Mục tiêu nghề nghiệp (heading IN HOA + border-bottom)
- *       5. Kỹ năng: progress bar amber-500 (name + X/5 + bar)
- *       6. Sở thích: list-disc amber marker
- *   - Main (65% width, bg-white):
- *       1. Học vấn (heading IN HOA + Lightbulb icon + amber border) — timeline dots amber
- *       2. Kinh nghiệm làm việc (Users icon + amber border) — timeline dots amber
- *       3. Dự án (Wrench icon + amber border) — cards border-neutral-200 + role amber uppercase
+ * KHÔNG BAO GIỜ:
+ *   - truncate text bằng `...` hoặc slice.
+ *   - line-clamp / max-height / overflow-hidden để ẩn content.
+ *   - bỏ section / bỏ field / bỏ bullet.
+ *   - thay text bằng placeholder khác.
  *
- * Khác biệt với full template:
- *   - Bỏ lucide icons (sẽ vô hình ở 4-6px font).
- *   - Bỏ `mb-7` → dùng gap %.
- *   - Bỏ timeline (relative pl-6 before:) → thay bằng indent nhỏ.
- *   - overflow-hidden clip phần thừa nếu content quá dài.
+ * KHÁC BIỆT với CVTemplate1.vue:
+ *   - Kích thước nhỏ hơn (font 3-5px, padding theo %) để fit container ~132×170.
+ *   - Dùng % thay cho px để scale theo container (parent MyResumesView set
+ *     width=132px + aspectRatio 850/1100 ≈ height 170px).
+ *   - Bỏ avatar initial fallback lớn (sẽ vô hình ở size 4-5px).
  */
-import { computed } from 'vue';
 import type { CvRenderData } from '@/types/cv';
 
-const props = defineProps<{ data: CvRenderData }>();
+defineProps<{ data: CvRenderData }>();
 
-const initial = computed<string>(() => {
-  const name = props.data.personalInfo.fullName?.trim();
-  return (name && name.length > 0 ? name.charAt(0) : '?').toUpperCase();
-});
-
-const shortName = computed<string>(() => {
-  const parts = (props.data.personalInfo.fullName ?? '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return 'HỌ VÀ TÊN';
-  const last2 = parts.slice(-2).join(' ');
-  return last2.length > 16 ? last2.slice(0, 15) + '…' : last2;
-});
-
-/** Level 1-5 → % chiều rộng progress bar. */
-const skillPercent = (level?: number): number => {
-  const lv = level ?? 3;
-  return Math.max(0, Math.min(100, (lv / 5) * 100));
+const initial = (name: string | undefined | null): string => {
+  const trimmed = (name ?? '').trim();
+  return trimmed ? trimmed.charAt(0).toUpperCase() : '?';
 };
 
-const trunc = (s: string | null | undefined, max: number): string => {
-  const v = (s ?? '').trim();
-  if (v.length <= max) return v;
-  return v.slice(0, max - 1).trimEnd() + '…';
+const dateRange = (start: string | undefined, end: string | undefined): string => {
+  const s = start ?? '';
+  const e = end ?? '';
+  if (!s && !e) return '';
+  if (s && !e) return s;
+  if (!s && e) return e;
+  return `${s} — ${e}`;
 };
 </script>
 
 <template>
-  <div
-    class="w-full h-full grid bg-white text-neutral-800 font-sans overflow-hidden"
-    style="grid-template-columns: 35% 65%; gap: 0;"
-  >
-    <!-- ============ SIDEBAR TRÁI (đúng thứ tự CVTemplate1) ============ -->
-    <aside class="bg-stone-700 text-white px-[5%] py-[5%] flex flex-col gap-[4%] overflow-hidden">
-      <!-- Avatar tròn, bo viền trắng -->
-      <div class="flex justify-center">
+  <div class="w-full h-full bg-white text-neutral-800 font-sans leading-tight overflow-hidden">
+    <!-- ==================== HEADER CAM (full width) ==================== -->
+    <div class="w-full bg-orange-500 relative" style="height: 22%;">
+      <div class="h-full relative">
+        <!-- Họ tên + chức danh (căn giữa theo chiều dọc, bên phải avatar) -->
         <div
-          class="rounded-full bg-white shrink-0 overflow-hidden flex items-center justify-center"
-          style="width: 28%; aspect-ratio: 1 / 1;"
+          class="absolute top-1/2 -translate-y-1/2 text-white"
+          style="left: 30%; right: 4%;"
         >
-          <div class="w-full h-full bg-stone-300 flex items-center justify-center overflow-hidden">
+          <p
+            class="font-bold uppercase tracking-wide leading-tight break-words"
+            style="font-size: 5.5px;"
+          >
+            {{ data.personalInfo.fullName || 'HỌ VÀ TÊN' }}
+          </p>
+          <p
+            class="font-normal mt-[1px] opacity-95 break-words"
+            style="font-size: 4px;"
+          >
+            {{ data.personalInfo.position || 'Vị trí ứng tuyển' }}
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== BODY 2 CỘT ==================== -->
+    <div class="grid relative w-full" style="grid-template-columns: 35% 65%; height: 78%;">
+      <!-- ============ AVATAR (nằm giữa header và body) ============ -->
+      <div
+        class="absolute z-10"
+        style="left: 4%; top: -11%; width: 22%; aspect-ratio: 1 / 1;"
+      >
+        <div class="w-full h-full rounded-full bg-white p-[2%] shadow-md">
+          <div class="w-full h-full rounded-full overflow-hidden bg-stone-200 flex items-center justify-center">
             <img
               v-if="data.personalInfo.avatarUrl"
               :src="data.personalInfo.avatarUrl"
               :alt="data.personalInfo.fullName"
               class="w-full h-full object-cover"
             />
-            <span v-else class="font-semibold text-stone-700 text-[8px] leading-none">
-              {{ initial }}
+            <span
+              v-else
+              class="font-semibold text-stone-400 leading-none"
+              style="font-size: 8px;"
+            >
+              {{ initial(data.personalInfo.fullName) }}
             </span>
           </div>
         </div>
       </div>
 
-      <!-- Tên + position (uppercase tracking-wide) -->
-      <div class="w-full text-center leading-tight">
-        <p
-          class="font-bold uppercase tracking-wide truncate"
-          style="font-size: 7px;"
-        >
-          {{ shortName }}
-        </p>
-        <p
-          v-if="data.personalInfo.position"
-          class="italic font-normal text-stone-200 opacity-90 mt-[2px] truncate"
-          style="font-size: 5.5px;"
-        >
-          {{ data.personalInfo.position }}
-        </p>
-      </div>
-
-      <!-- Contact list (mỗi field là 1 dòng riêng, giống CVTemplate1) -->
-      <div class="flex flex-col gap-[3%] leading-tight" style="font-size: 5px;">
-        <p v-if="data.personalInfo.phone" class="break-all">{{ data.personalInfo.phone }}</p>
-        <p v-if="data.personalInfo.email" class="break-all">{{ data.personalInfo.email }}</p>
-        <p v-if="data.personalInfo.address" class="break-words">{{ data.personalInfo.address }}</p>
-        <p v-if="data.personalInfo.dob">{{ data.personalInfo.dob }}</p>
-        <p v-if="data.personalInfo.gender">{{ data.personalInfo.gender }}</p>
-      </div>
-
-      <!-- Mục tiêu nghề nghiệp (sidebar — đúng thứ tự CVTemplate1) -->
-      <section v-if="data.summary" class="flex flex-col gap-[4%]">
-        <h4
-          class="font-bold uppercase tracking-wider border-b border-white/30 leading-none"
-          style="font-size: 5px; padding-bottom: 2px;"
-        >
-          Mục tiêu nghề nghiệp
-        </h4>
-        <p
-          class="whitespace-pre-wrap leading-snug"
-          style="font-size: 5px;"
-        >
-          {{ data.summary }}
-        </p>
-      </section>
-
-      <!-- Kỹ năng — progress bar amber-500 (đúng format CVTemplate1) -->
-      <section v-if="data.skills.length" class="flex flex-col gap-[4%] overflow-hidden">
-        <h4
-          class="font-bold uppercase tracking-wider border-b border-white/30 leading-none"
-          style="font-size: 5px; padding-bottom: 2px;"
-        >
-          Kỹ năng
-        </h4>
-        <ul class="flex flex-col gap-[4%]">
-          <li
-            v-for="(s, idx) in data.skills"
-            :key="`s-${idx}`"
-            class="flex flex-col gap-[1px] leading-tight"
-          >
-            <div class="flex items-center justify-between" style="font-size: 5px;">
-              <span>{{ trunc(s.name, 14) }}</span>
-              <span class="text-stone-300" style="font-size: 4.5px;">{{ s.level ?? 3 }}/5</span>
-            </div>
-            <div class="bg-white/15 rounded-full overflow-hidden" style="height: 2px;">
-              <div
-                class="bg-amber-500 rounded-full h-full"
-                :style="{ width: `${skillPercent(s.level)}%` }"
-              />
-            </div>
-          </li>
-        </ul>
-      </section>
-
-      <!-- Sở thích — list-disc amber marker -->
-      <section v-if="data.interests && data.interests.length" class="flex flex-col gap-[4%]">
-        <h4
-          class="font-bold uppercase tracking-wider border-b border-white/30 leading-none"
-          style="font-size: 5px; padding-bottom: 2px;"
-        >
-          Sở thích
-        </h4>
-        <ul
-          class="list-disc flex flex-col gap-[2%] marker:text-amber-500"
-          style="font-size: 5px; padding-left: 8px;"
-        >
-          <li v-for="(it, idx) in data.interests" :key="`i-${idx}`">{{ it }}</li>
-        </ul>
-      </section>
-    </aside>
-
-    <!-- ============ MAIN PHẢI (đúng thứ tự CVTemplate1) ============ -->
-    <main class="px-[5%] py-[5%] flex flex-col gap-[5%] bg-white overflow-hidden">
-
-      <!-- Học vấn — major (font-semibold stone-700) + dates (amber) + school (bold) -->
-      <section v-if="data.educations.length" class="flex flex-col gap-[4%]">
-        <h4
-          class="flex items-center gap-[2%] font-bold uppercase tracking-wide text-stone-700 border-b-2 border-amber-700 leading-none"
-          style="font-size: 5px; padding-bottom: 2px;"
-        >
-          Học vấn
-        </h4>
-        <ul class="flex flex-col gap-[4%]">
-          <li
-            v-for="(e, idx) in data.educations"
-            :key="`e-${idx}`"
-            class="leading-tight"
-          >
-            <div class="flex items-baseline justify-between gap-[4%] flex-wrap" style="font-size: 5px;">
-              <span class="font-semibold text-stone-700">{{ trunc(e.major || 'Công nghệ thông tin', 26) }}</span>
-              <span v-if="e.startYear || e.endYear" class="text-amber-700 font-semibold tracking-wide" style="font-size: 4.5px;">
-                {{ e.startYear || '' }}<span v-if="e.startYear || e.endYear"> — </span>{{ e.endYear || 'Nay' }}
-              </span>
-            </div>
-            <p class="mt-[1px] font-semibold text-stone-700" style="font-size: 5px;">
-              {{ trunc(e.school, 26) }}
+      <!-- ============ SIDEBAR TRÁI (~35%) ============ -->
+      <aside
+        class="bg-white"
+        style="padding: 12% 4% 3% 4%;"
+      >
+        <!-- Thông tin cá nhân — căn giữa, chỉ hiển thị Email và Điện thoại
+             (database chỉ lưu 2 field này, gender/dob/address bị bỏ). -->
+        <div class="flex flex-col items-center gap-[2px] mb-[5%]">
+          <div class="text-center">
+            <p class="text-neutral-500 leading-none" style="font-size: 2.5px;">Email</p>
+            <p class="font-semibold text-neutral-800 leading-tight mt-[1px] break-all" style="font-size: 3px;">
+              {{ data.personalInfo.email || '—' }}
             </p>
-          </li>
-        </ul>
-      </section>
-
-      <!-- Kinh nghiệm làm việc — position (font-semibold stone-700) + dates (amber) + company (bold) -->
-      <section v-if="data.experiences.length" class="flex flex-col gap-[4%]">
-        <h4
-          class="flex items-center gap-[2%] font-bold uppercase tracking-wide text-stone-700 border-b-2 border-amber-700 leading-none"
-          style="font-size: 5px; padding-bottom: 2px;"
-        >
-          Kinh nghiệm làm việc
-        </h4>
-        <ul class="flex flex-col gap-[4%]">
-          <li
-            v-for="(x, idx) in data.experiences"
-            :key="`x-${idx}`"
-            class="leading-tight"
-          >
-            <div class="flex items-baseline justify-between gap-[4%] flex-wrap" style="font-size: 5px;">
-              <span class="font-semibold text-stone-700">{{ trunc(x.position, 26) }}</span>
-              <span v-if="x.startDate || x.endDate" class="text-amber-700 font-semibold tracking-wide" style="font-size: 4.5px;">
-                {{ x.startDate || '' }}<span v-if="x.startDate || x.endDate"> — </span>{{ x.endDate || 'Nay' }}
-              </span>
-            </div>
-            <p class="mt-[1px] font-semibold text-stone-700" style="font-size: 5px;">
-              {{ trunc(x.company, 26) }}
+          </div>
+          <div class="text-center">
+            <p class="text-neutral-500 leading-none" style="font-size: 2.5px;">Điện thoại</p>
+            <p class="font-semibold text-neutral-800 leading-tight mt-[1px]" style="font-size: 3px;">
+              {{ data.personalInfo.phone || '—' }}
             </p>
-          </li>
-        </ul>
-      </section>
+          </div>
+        </div>
 
-      <!-- Dự án — name + role (uppercase amber) + description + link -->
-      <section v-if="data.projects.length" class="flex flex-col gap-[4%]">
-        <h4
-          class="flex items-center gap-[2%] font-bold uppercase tracking-wide text-stone-700 border-b-2 border-amber-700 leading-none"
-          style="font-size: 5px; padding-bottom: 2px;"
-        >
-          Dự án
-        </h4>
-        <ul class="flex flex-col gap-[4%]">
-          <li
-            v-for="(p, idx) in data.projects"
-            :key="`p-${idx}`"
-            class="leading-tight rounded-sm border border-neutral-200 bg-neutral-50/50"
-            style="padding: 4px 6px;"
+        <!-- Kỹ năng -->
+        <section v-if="data.skills.length" class="mb-[4%]">
+          <h2
+            class="inline-block bg-orange-500 text-white font-semibold rounded-sm leading-none mb-[3%]"
+            style="font-size: 3.5px; padding: 1.5px 3px;"
           >
-            <p class="font-semibold text-stone-700" style="font-size: 5px;">{{ trunc(p.name, 26) }}</p>
-            <p v-if="p.role" class="text-amber-700 font-semibold uppercase tracking-wide mt-[1px]" style="font-size: 4.5px;">
-              {{ p.role }}
-            </p>
-            <p v-if="p.link" class="text-stone-500 break-all mt-[1px]" style="font-size: 4px;">{{ p.link }}</p>
-          </li>
-        </ul>
-      </section>
-    </main>
+            Kỹ năng
+          </h2>
+          <ul class="flex flex-col gap-[1px]">
+            <li
+              v-for="(s, i) in data.skills"
+              :key="i"
+              class="text-neutral-700 leading-snug"
+              style="font-size: 3px;"
+            >
+              • {{ s.name }}
+            </li>
+          </ul>
+        </section>
+
+        <!-- Sở thích -->
+        <section v-if="data.interests && data.interests.length" class="mb-[4%]">
+          <h2
+            class="inline-block bg-orange-500 text-white font-semibold rounded-sm leading-none mb-[3%]"
+            style="font-size: 3.5px; padding: 1.5px 3px;"
+          >
+            Sở thích
+          </h2>
+          <ul class="flex flex-col gap-[1px]">
+            <li
+              v-for="(it, i) in data.interests"
+              :key="i"
+              class="text-neutral-700 leading-snug"
+              style="font-size: 3px;"
+            >
+              • {{ it }}
+            </li>
+          </ul>
+        </section>
+
+        <!-- Chứng chỉ -->
+        <section v-if="data.certificates.length" class="mb-[4%]">
+          <h2
+            class="inline-block bg-orange-500 text-white font-semibold rounded-sm leading-none mb-[3%]"
+            style="font-size: 3.5px; padding: 1.5px 3px;"
+          >
+            Chứng chỉ
+          </h2>
+          <ul class="flex flex-col gap-[2px]">
+            <li v-for="(c, i) in data.certificates" :key="i">
+              <p class="font-semibold text-neutral-800 leading-tight" style="font-size: 3px;">
+                {{ c.name }}
+              </p>
+              <p
+                v-if="c.issuer"
+                class="text-neutral-600 leading-tight mt-[1px]"
+                style="font-size: 2.5px;"
+              >
+                {{ c.issuer }}
+              </p>
+              <p
+                v-if="c.date"
+                class="text-neutral-500 leading-tight mt-[1px]"
+                style="font-size: 2.5px;"
+              >
+                {{ c.date }}
+              </p>
+            </li>
+          </ul>
+        </section>
+
+        <!-- Hoạt động -->
+        <section v-if="data.activities.length">
+          <h2
+            class="inline-block bg-orange-500 text-white font-semibold rounded-sm leading-none mb-[3%]"
+            style="font-size: 3.5px; padding: 1.5px 3px;"
+          >
+            Hoạt động
+          </h2>
+          <ul class="flex flex-col gap-[3px]">
+            <li v-for="(a, i) in data.activities" :key="i">
+              <p class="font-semibold text-neutral-800 leading-tight" style="font-size: 3px;">
+                {{ a.name }}
+              </p>
+              <p
+                v-if="a.role"
+                class="text-neutral-600 leading-tight mt-[1px]"
+                style="font-size: 2.5px;"
+              >
+                {{ a.role }}
+              </p>
+              <p
+                v-if="a.time"
+                class="text-neutral-500 leading-tight mt-[1px]"
+                style="font-size: 2.5px;"
+              >
+                {{ a.time }}
+              </p>
+              <p
+                v-if="a.description"
+                class="text-neutral-700 whitespace-pre-wrap mt-[1px]"
+                style="font-size: 2.5px; line-height: 1.4;"
+              >
+                {{ a.description }}
+              </p>
+            </li>
+          </ul>
+        </section>
+      </aside>
+
+      <!-- ============ MAIN PHẢI (~65%) ============ -->
+      <main
+        class="bg-white"
+        style="padding: 3% 4% 3% 3%;"
+      >
+        <!-- Mục tiêu nghề nghiệp -->
+        <section v-if="data.summary" class="mb-[5%]">
+          <h2
+            class="inline-block bg-orange-500 text-white font-semibold rounded-sm leading-none mb-[3%]"
+            style="font-size: 3.5px; padding: 1.5px 3px;"
+          >
+            Mục tiêu nghề nghiệp
+          </h2>
+          <p
+            class="text-neutral-800 whitespace-pre-wrap"
+            style="font-size: 3px; line-height: 1.5;"
+          >
+            {{ data.summary }}
+          </p>
+        </section>
+
+        <!-- Học vấn -->
+        <section v-if="data.educations.length" class="mb-[5%]">
+          <h2
+            class="inline-block bg-orange-500 text-white font-semibold rounded-sm leading-none mb-[3%]"
+            style="font-size: 3.5px; padding: 1.5px 3px;"
+          >
+            Học vấn
+          </h2>
+          <ul class="flex flex-col gap-[3px]">
+            <li v-for="(e, i) in data.educations" :key="i">
+              <div class="flex items-baseline justify-between gap-[3px] flex-wrap">
+                <p class="font-bold text-neutral-800 leading-tight" style="font-size: 3.2px;">
+                  {{ e.school }}
+                </p>
+                <p
+                  v-if="e.startYear || e.endYear"
+                  class="text-neutral-600 leading-tight whitespace-nowrap"
+                  style="font-size: 2.5px;"
+                >
+                  {{ dateRange(e.startYear, e.endYear) || 'Nay' }}
+                </p>
+              </div>
+              <p
+                v-if="e.degree || e.major"
+                class="font-semibold text-neutral-700 leading-tight mt-[1px]"
+                style="font-size: 3px;"
+              >
+                <span v-if="e.degree">{{ e.degree }}</span>
+                <span v-if="e.degree && e.major"> - </span>
+                <span v-if="e.major">{{ e.major }}</span>
+              </p>
+              <p
+                v-if="e.description"
+                class="text-neutral-700 whitespace-pre-wrap mt-[1px]"
+                style="font-size: 2.5px; line-height: 1.4;"
+              >
+                {{ e.description }}
+              </p>
+            </li>
+          </ul>
+        </section>
+
+        <!-- Kinh nghiệm làm việc -->
+        <section v-if="data.experiences.length" class="mb-[5%]">
+          <h2
+            class="inline-block bg-orange-500 text-white font-semibold rounded-sm leading-none mb-[3%]"
+            style="font-size: 3.5px; padding: 1.5px 3px;"
+          >
+            Kinh nghiệm làm việc
+          </h2>
+          <ul class="flex flex-col gap-[3px]">
+            <li v-for="(x, i) in data.experiences" :key="i">
+              <div class="flex items-baseline justify-between gap-[3px] flex-wrap">
+                <p class="font-bold text-neutral-800 leading-tight" style="font-size: 3.2px;">
+                  {{ x.company }}
+                </p>
+                <p
+                  v-if="x.startDate || x.endDate"
+                  class="text-neutral-600 leading-tight whitespace-nowrap"
+                  style="font-size: 2.5px;"
+                >
+                  {{ dateRange(x.startDate, x.endDate) || 'Nay' }}
+                </p>
+              </div>
+              <p
+                class="font-semibold text-neutral-700 leading-tight mt-[1px]"
+                style="font-size: 3px;"
+              >
+                {{ x.position }}
+              </p>
+              <p
+                v-if="x.description"
+                class="text-neutral-700 whitespace-pre-wrap mt-[1px]"
+                style="font-size: 2.5px; line-height: 1.4;"
+              >
+                {{ x.description }}
+              </p>
+            </li>
+          </ul>
+        </section>
+
+        <!-- Dự án -->
+        <section v-if="data.projects.length">
+          <h2
+            class="inline-block bg-orange-500 text-white font-semibold rounded-sm leading-none mb-[3%]"
+            style="font-size: 3.5px; padding: 1.5px 3px;"
+          >
+            Dự án
+          </h2>
+          <ul class="flex flex-col gap-[3px]">
+            <li v-for="(p, i) in data.projects" :key="i">
+              <div class="flex items-baseline justify-between gap-[3px] flex-wrap">
+                <p class="font-bold text-neutral-800 leading-tight" style="font-size: 3.2px;">
+                  {{ p.name }}
+                </p>
+                <p
+                  v-if="p.time"
+                  class="text-neutral-600 leading-tight whitespace-nowrap"
+                  style="font-size: 2.5px;"
+                >
+                  {{ p.time }}
+                </p>
+              </div>
+              <p
+                v-if="p.role"
+                class="font-semibold text-neutral-700 leading-tight mt-[1px]"
+                style="font-size: 3px;"
+              >
+                {{ p.role }}
+              </p>
+              <p
+                v-if="p.description"
+                class="text-neutral-700 whitespace-pre-wrap mt-[1px]"
+                style="font-size: 2.5px; line-height: 1.4;"
+              >
+                {{ p.description }}
+              </p>
+              <p
+                v-if="p.link"
+                class="text-orange-600 break-all mt-[1px]"
+                style="font-size: 2.5px;"
+              >
+                {{ p.link }}
+              </p>
+            </li>
+          </ul>
+        </section>
+      </main>
+    </div>
   </div>
 </template>

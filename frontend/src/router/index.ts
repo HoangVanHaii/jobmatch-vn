@@ -8,6 +8,7 @@ import { useAuthStore } from '@stores/auth';
 const routes: RouteRecordRaw[] = [
   // Public
   // { path: '/', name: 'home', component: () => import('@views/HomeView.vue') },
+
   { path: '/login', name: 'login', component: () => import('@views/auth/LoginView.vue'), meta: { guest: true } },
   { path: '/register', name: 'register', component: () => import('@views/auth/RegisterView.vue'), meta: { guest: true } },
   { path: '/verify-otp', name: 'verify-otp', component: () => import('@views/auth/VerifyOtpView.vue'), meta: { guest: true } },
@@ -63,11 +64,16 @@ const routes: RouteRecordRaw[] = [
       { path: 'profile', name: 'candidate-profile', component: () => import('@views/candidate/ProfileView.vue') },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
       { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
+      // Edit CV direct — dùng CÙNG component CreateResumeView (dual-mode:
+      // detect cvId từ route param → prefill form → submit PATCH thay vì POST).
+      // Nav từ MyResumesView (menu "Sửa") → /resumes/:cvId/edit.
+      { path: 'resumes/:cvId/edit', name: 'edit-resume', component: () => import('@views/candidate/CreateResumeView.vue'), props: true },
       { path: 'viec-lam', name: 'candidate-jobs', component: () => import('@views/candidate/JobsView.vue') },
       { path: 'viec-lam/:slug', name: 'candidate-job-detail', component: () => import('@views/candidate/JobDetailView.vue') },
       { path: 'saved-jobs', name: 'candidate-saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
       { path: 'applications', name: 'candidate-applications', component: () => import('@views/candidate/AppliedJobsView.vue') },
    // { path: 'chatbot', name: 'chatbot', component: () => import('@views/chat/ChatbotView.vue'), meta: { auth: true } }, 
+      { path: 'job-search', name: 'job-search', component: () => import('@views/candidate/JobSearchView.vue'), meta: { auth: true } },
 
       { path: 'chat/:id?', name: 'chat', component: ChatView, meta: { auth: true },},
       // Pricing & billing (có sidebar qua layout)
@@ -123,6 +129,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'billing/history', name: 'employer-billing-history', component: () => import('@views/employer/BillingHistoryView.vue') },
       { path: 'billing/success', name: 'employer-billing-success', component: () => import('@views/BillingSuccessView.vue') },
       { path: 'billing/cancel', name: 'employer-billing-cancel', component: () => import('@views/BillingCancelView.vue') },
+
+      // Mockup test route — xem nhanh UI mockup candidate list/detail, không gọi API.
+      { path: 'test', name: 'employer-test', component: () => import('@views/employer/ApplicationMockupView.vue') },
     ],
   },
 
@@ -133,16 +142,39 @@ const routes: RouteRecordRaw[] = [
   
 
   // Admin
-  // {
-  //   path: '/admin',
-  //   meta: { auth: true, role: 'admin' },
-  //   children: [
-  //     { path: '', name: 'admin-dashboard', component: () => import('@views/admin/DashBoardAdmin.vue') },
-  //     { path: 'users', name: 'admin-users', component: () => import('@views/admin/CandidateManagement.vue') },
-  //     { path: 'jobs', name: 'admin-jobs', component: () => import('@views/admin/AllJobManagement.vue') },
-  //     { path: 'companies', name: 'admin-companies', component: () => import('@views/admin/CompanyManagement.vue') },
-  //   ],
-  // },
+  // Layout chung + 8 children routes tương ứng 8 mục trong AdminSidebar.
+  // meta.role = 'admin' + guard ở dưới đảm bảo chỉ role admin mới vào được.
+  {
+    path: '/admin',
+    component: () => import('@views/admin/AdminLayout.vue'),
+    meta: { auth: true, role: 'admin' },
+    children: [
+      // Default → Dashboard (entry point của admin)
+      { path: '', redirect: { name: 'admin-dashboard' } },
+      { path: 'dashboard', name: 'admin-dashboard', component: () => import('@views/admin/DashboardView.vue') },
+
+      // Người dùng — 1 route duy nhất sau khi merge CandidatesView/EmployersView
+      // vào UsersListView. Trang này list mọi role, có filter bên trong.
+      { path: 'users', name: 'admin-users', component: () => import('@views/admin/UsersListView.vue') },
+
+      // Nội dung
+      { path: 'jobs', name: 'admin-jobs', component: () => import('@views/admin/AllJobsView.vue') },
+      { path: 'companies', name: 'admin-companies', component: () => import('@views/admin/CompaniesView.vue') },
+      { path: 'reports', name: 'admin-reports', component: () => import('@views/admin/ReportsView.vue') },
+
+      // Kinh doanh — tách thành 3 mục riêng (plans CRUD / subscriptions / payments)
+      // thay vì gộp "billing" chung. Mỗi workflow có use-case riêng.
+      { path: 'plans', name: 'admin-plans', component: () => import('@views/admin/PlansView.vue') },
+      { path: 'subscriptions', name: 'admin-subscriptions', component: () => import('@views/admin/SubscriptionsView.vue') },
+      { path: 'payments', name: 'admin-payments', component: () => import('@views/admin/PaymentsView.vue') },
+
+      // Hệ thống
+      { path: 'skills', name: 'admin-skills', component: () => import('@views/admin/SkillsView.vue') },
+      { path: 'notifications', name: 'admin-notifications', component: () => import('@views/admin/NotificationsView.vue') },
+      { path: 'settings', name: 'admin-settings', component: () => import('@views/admin/SettingsView.vue') },
+      { path: 'logs', name: 'admin-logs', component: () => import('@views/admin/LogsView.vue') },
+    ],
+  },
 
   // Errors
   { path: '/403', name: 'forbidden', component: () => import('@views/errors/Forbidden.vue') },
@@ -164,9 +196,10 @@ router.beforeEach(async (to) => {
   // về { name: 'jobs' } khiến candidate/employer đã login bị "rớt" ra trang
   // job list thay vì dashboard của họ.
   if (to.meta.guest && auth.isAuthenticated) {
+    if (auth.user?.role === 'admin') return { name: 'admin-dashboard' };
     if (auth.user?.role === 'employer') return { name: 'employer-jobs' };
     if (auth.user?.role === 'candidate') return { name: 'candidate-jobs' };
-    // Admin / role lạ / role chưa gán → trang chủ (public jobs) là fallback an toàn
+    // Role lạ / chưa gán → fallback an toàn về /login.
     return { name: 'login' };
   }
   if (to.meta.role && auth.user?.role !== to.meta.role) return { name: 'forbidden' };

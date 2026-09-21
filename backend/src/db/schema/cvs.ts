@@ -35,7 +35,13 @@ export const cvs = pgTable('cvs', {
     summary?: string;
     education?: Array<Record<string, unknown>>;
     experience?: Array<Record<string, unknown>>;
-    skills?: string[];
+    /**
+     * Skills có level 1-5 cho progress bar. Schema dùng union để tương thích
+     * ngược với CV cũ (lưu string[]) — FE/BE normalize về {name, level} khi
+     * build/update. CV cũ trong DB có string[] vẫn render được (xem
+     * buildRenderData — nhận cả 2 shape).
+     */
+    skills?: Array<string | { name: string; level: number }>;
     languages?: Array<Record<string, unknown>>;
     projects?: Array<Record<string, unknown>>;
     certifications?: Array<Record<string, unknown>>;

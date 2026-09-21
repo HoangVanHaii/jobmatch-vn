@@ -20,7 +20,7 @@
  *     (đi qua `http` instance để được auto-refresh interceptor), KHÔNG tự
  *     gọi axios trực tiếp. Component → composable → cvApi → http → BE.
  */
-import { ref, watch, type Ref } from 'vue';
+import { onUnmounted, ref, watch, type Ref } from 'vue';
 import { cvApi, type CvRenderRow } from '@/services/cv.api';
 import type { CvRenderData } from '@/types/cv';
 
@@ -64,7 +64,10 @@ export const buildRenderData = (input: {
       ? (p.experience as CvRenderData['experiences'])
       : [],
     skills: Array.isArray(p.skills)
-      ? (p.skills as string[]).map((name) => ({ name }))
+      ? (p.skills as Array<string | { name?: string; level?: number }>).map((s) => {
+          if (typeof s === 'string') return { name: s };
+          return { name: s.name ?? '', level: typeof s.level === 'number' ? s.level : undefined };
+        })
       : [],
     projects: Array.isArray(p.projects)
       ? (p.projects as CvRenderData['projects'])
@@ -92,15 +95,23 @@ export const buildRenderData = (input: {
  *   - `templateId` : number | null
  *   - `loading`  : boolean
  *   - `error`    : string | null
+ *   - `dispose`  : manual cleanup (cho test ngoài component context)
  *
  * Caller watch `data` để biết khi nào render xong.
  *
- * Lưu ý:
- *   - Đi qua `cvApi` (services layer) → `http` (axios + interceptors) → BE.
- *     KHÔNG import axios trực tiếp — bỏ qua sẽ mất auto-refresh on 401.
- *   - Mount trong setup() của component, lifecycle gắn với component đó.
- *     Nếu component unmount giữa chừng → fetch vẫn chạy (axios không cancel).
- *     Caller cần guard unmount state nếu cần thiết.
+ * Race + leak fix (tương tự Bug 1 + Bug 3 đã fix cho useDocxRenderer):
+ *   - AbortController per fetch: mỗi fetch tạo AbortController riêng, abort
+ *     request cũ trước khi tạo mới → click CV-A rồi CV-B nhanh, fetch A bị
+ *     abort → user chỉ thấy data B (tránh data corruption).
+ *   - `isComponentMounted` flag + `onUnmounted`: khi component dùng composable
+ *     bị huỷ giữa lúc đang fetch → response trả về không ghi vào data.value
+ *     (tránh set state trên component đã destroy → Vue warning hoặc stale UI).
+ *   - AbortError / CanceledError filter ở catch: axios 1.x throw CanceledError
+ *     khi abort → không set error state (im lặng, tránh UI flash error).
+ *
+ * Caller KHÔNG cần guard thêm — composable tự cleanup. Component lifecycle:
+ *   - CvPreview inline mode: cvId đổi khi user đổi CV (prop binding).
+ *   - CvPrintView (Playwright): cvId + token extract từ URL, 1 lần mount/unmount.
  * ==========================================================================*/
 export const useCvRenderData = (
   cvId: Ref<string | null>,
@@ -111,26 +122,69 @@ export const useCvRenderData = (
   loading: Ref<boolean>;
   error: Ref<string | null>;
   refresh: () => Promise<void>;
+  dispose: () => void;
 } => {
   const data = ref<CvRenderData | null>(null);
   const templateId = ref<number | null>(null);
   const loading = ref(false);
   const error = ref<string | null>(null);
 
+  // Race + leak state — KHÔNG exposed ra ngoài.
+  let activeController: AbortController | null = null;
+  let isComponentMounted = true;
+
+  /**
+   * Manual cleanup cho test (ngoài component context). Component thật dùng
+   * `onUnmounted` tự register; test gọi dispose() trực tiếp để simulate unmount.
+   * Idempotent — gọi nhiều lần OK.
+   */
+  const dispose = (): void => {
+    isComponentMounted = false;
+    activeController?.abort();
+  };
+  onUnmounted(dispose);
+
   // Mỗi lần cvId hoặc token đổi → fetch lại.
   const fetchData = async (): Promise<void> => {
     const id = cvId.value;
     if (!id) {
+      // Clear state khi cvId = null. Guard isMounted phòng edge case hiếm:
+      // watch fire 1 lần cuối trước khi component destroy.
+      if (!isComponentMounted) return;
       data.value = null;
       templateId.value = null;
       error.value = 'Thiếu cvId.';
       return;
     }
+
+    // Abort request cũ (nếu có) trước khi tạo request mới — core của race fix.
+    // Click CV-A rồi click CV-B nhanh → A abort → B chạy độc lập → data.value
+    // chỉ chứa B. Không có abort → 2 fetch chạy parallel → B resolve xong,
+    // A resolve sau → data bị A overwrite.
+    activeController?.abort();
+    const ctrl = new AbortController();
+    activeController = ctrl;
+
+    if (!isComponentMounted) return;
     loading.value = true;
     error.value = null;
+
     try {
-      const { data: resp } = await cvApi.getRenderData(id, token.value ?? undefined);
+      // Axios 1.x chấp nhận `signal` option trong config để cancel request qua
+      // AbortController. Khi ctrl.abort() → axios throw AxiosError với
+      // code='ERR_CANCELED', name='CanceledError'.
+      const { data: resp } = await cvApi.getRenderData(id, token.value ?? undefined, {
+        signal: ctrl.signal,
+      });
       const row: CvRenderRow = resp.data;
+
+      // Guard unmount SAU await — response có thể trả về SAU khi component đã
+      // destroy (unmount giữa lúc fetch). Nếu set state trên unmounted ref →
+      // Vue 3 warn "Set operation on key X failed".
+      if (!isComponentMounted) return;
+      // Guard abort: nếu request này đã bị abort bởi fetch mới → skip.
+      if (ctrl.signal.aborted) return;
+
       if (row.source !== 'direct' || !row.templateId) {
         error.value = 'CV không hỗ trợ render (chỉ CV direct có templateId).';
         data.value = null;
@@ -143,6 +197,18 @@ export const useCvRenderData = (
         title: row.title,
       });
     } catch (err) {
+      // Filter cancel — axios throw CanceledError (code='ERR_CANCELED'),
+      // hoặc DOMException 'AbortError' trên một số browser/phiên bản.
+      // KHÔNG set error state cho cancel (fetch mới sẽ set riêng).
+      const errAny = err as { name?: string; code?: string };
+      if (
+        errAny?.name === 'AbortError' ||
+        errAny?.name === 'CanceledError' ||
+        errAny?.code === 'ERR_CANCELED'
+      ) {
+        return;
+      }
+      if (!isComponentMounted) return;
       // axios.isAxiosError(err) covers network errors + HTTP error responses.
       // Error response shape: { success: false, error: { code, message } }.
       const axErr = err as { response?: { status?: number; data?: { error?: { message?: string } } }; message?: string };
@@ -152,12 +218,16 @@ export const useCvRenderData = (
       data.value = null;
       templateId.value = null;
     } finally {
-      loading.value = false;
+      // Chỉ clear loading nếu đây vẫn là request active (không bị abort bởi
+      // request mới). Tránh flash loading=false giữa 2 request liên tiếp.
+      if (activeController === ctrl && isComponentMounted) {
+        loading.value = false;
+      }
     }
   };
 
   // Auto-fetch khi cvId/token thay đổi. immediate: true để chạy lần đầu.
   watch([cvId, token], fetchData, { immediate: true });
 
-  return { data, templateId, loading, error, refresh: fetchData };
+  return { data, templateId, loading, error, refresh: fetchData, dispose };
 };

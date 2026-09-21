@@ -9,7 +9,7 @@ import {
   validateListCvQuery,
 } from "../middleware/cv";
 import { auth, candidateOnly } from "../middleware/auth";
-import { cvAiRateLimiter, cvWriteRateLimiter } from "../middleware/rateLimit";
+import { cvAiRateLimiter, cvDownloadRateLimiter, cvWriteRateLimiter } from "../middleware/rateLimit";
 
 export const cvRouter = Router();
 
@@ -41,12 +41,17 @@ cvRouter.get("/:cvId", auth, validateCvIdParam, cvController.getDetail);
  * GET /cvs/:cvId/download-pdf — render CV direct sang PDF vector bằng
  * Playwright + Chromium server-side. Rate-limit riêng (PDF render nặng).
  *
- * KHÔNG áp cvAiRateLimiter (không gọi AI) nhưng áp cvWriteRateLimiter? —
- * thực ra download PDF là read-only + side-effect server (CPU/RAM), không
- * ghi DB. Bỏ qua rate limiter để giữ latency đơn giản; nếu cần scale thêm
- * thì wrap semaphore concurrency ở playwright.service.ts đã đủ (default 2).
+ * KHÔNG áp `cvAiRateLimiter` (không gọi AI) — thay vào đó áp
+ * `cvDownloadRateLimiter` (5 req/phút/user) vì:
+ *   - Playwright render chiếm Chromium pool (~5-30s/lần).
+ *   - `cvWriteRateLimiter` (20/phút) cho phép 20 lần render/phút → dễ
+ *     exhaust pool, block user khác.
+ *   - Defense layer BE; FE cũng throttle riêng (xem useCvDownload.ts).
+ *
+ * Concurrency giới hạn bổ sung ở semaphore (playwright.service.ts, default 2)
+ * → nếu user vượt rate limit mà cố spam, request phải xếp hàng ở semaphore.
  */
-cvRouter.get("/:cvId/download-pdf", auth, validateCvIdParam, cvController.downloadPdf);
+cvRouter.get("/:cvId/download-pdf", auth, cvDownloadRateLimiter, validateCvIdParam, cvController.downloadPdf);
 
 cvRouter.post("/direct", auth, cvAiRateLimiter, validateCreateDirectCv, cvController.create);
 

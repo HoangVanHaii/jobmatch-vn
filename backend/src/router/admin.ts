@@ -4,10 +4,12 @@ import { db } from '../config/database';
 import { users, jobs, companies, subscriptions, payments } from '../db/schema';
 import { sql } from 'drizzle-orm';
 import { adminUserRouter} from './admin/user';
+import { adminJobRouter } from './admin/job';
 
 export const adminRouter = Router();
 adminRouter.use(auth, adminOnly);
 adminRouter.use('/users', adminUserRouter);
+adminRouter.use('/jobs', adminJobRouter);
 
 // Stats
 adminRouter.get('/stats', async (_req, res, next) => {

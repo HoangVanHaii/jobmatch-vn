@@ -34,6 +34,11 @@ Output (JSON keys tuyệt đối không đổi):
 - matchedSkills[]: skill trùng (đã chuẩn hoá về 1 tên gốc).
 - missingSkills[]: job yêu cầu nhưng CV thiếu (kể cả synonym đã tính).
 - rationale: 1 câu <= 30 từ tóm tắt tại sao ra điểm đó.
+- experienceScore: 0-100, so sánh năm kinh nghiệm candidate (tính từ workHistory trong CV) với jobExperienceYearsMin/Max. YOE đủ hoặc dư → cao; thiếu nhiều → thấp. Senior title + scope lớn có thể bù YOE thiếu.
+- industryScore: 0-100, candidate đã làm trong industry nào (workHistory.industry, jobTitle context) vs jobIndustry. Trùng ngành → cao; liên quan (VD cùng domain tech) → trung bình; khác ngành → thấp. Nếu CV không nêu industry rõ → 50 mặc định.
+- skillsScore: 0-100 = (matchedSkills.length / jobRequiredSkills.length) × 100, clamp 0-100. niceToHaveSkills KHÔNG tính vào (chỉ là bonus). Nếu jobRequiredSkills rỗng → 100.
+
+3 score trên nên tương đối nhất quán với matchPercent tổng thể (skillsScore có trọng số cao nhất, sau đó experience, sau đó industry). Ví dụ: matchPercent=85 thì trung bình 3 score ~70-90. Đừng để 1 score = 100 và 1 score = 0 khi matchPercent=80.
 
 KHONG suy đoán ngoài data. Nếu thiếu info -> concerns ghi rõ "thiếu data về X".
 `.trim();

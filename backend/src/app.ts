@@ -24,6 +24,12 @@ export const createApp = (): Application => {
   app.use(cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173',
     credentials: true,
+    /**
+     * Cache preflight 24h (mặc định cors package chỉ 5s).
+     * Vì API không đổi CORS headers thường xuyên → cache lâu giúp giảm 1 round-trip
+     * OPTIONS cho mỗi nhóm request cùng signature.
+     */
+    maxAge: 86400,
   }));
 
   // Body parsers

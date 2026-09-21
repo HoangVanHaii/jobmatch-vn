@@ -4,9 +4,21 @@
  *
  * Auto-scroll xuống cuối khi có message mới. Load older khi scroll
  * tới đỉnh (cần chat: còn trang tiếp theo).
+ *
+ * Phase chat_attachments: render ảnh inline trong bubble. Ảnh hiển thị dạng
+ * thumbnail (max-w ~200px), nếu >1 ảnh → grid 2 cột. Click → mở lightbox
+ * (chỉ plain `<a target="_blank">` cho phase 1; phase 2 có thể làm modal
+ * với zoom/swipe).
  */
-import { computed, nextTick, ref, watch } from 'vue';
-import { Check, CheckCheck, Loader2 } from 'lucide-vue-next';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+  Check,
+  CheckCheck,
+  Download,
+  Loader2,
+} from 'lucide-vue-next';
+import { formatFileSize } from '@services/upload.api';
+import { fileIconInfo } from '@utils/fileIcon';
 import type { ChatMessage } from '@/types/chat';
 
 const props = defineProps<{
@@ -27,6 +39,12 @@ const props = defineProps<{
   hasMore: boolean;
   loading: boolean;
   peerTyping: boolean;
+  /**
+   * Conversation key (id) — khi đổi conv, force scroll xuống cuối bỏ qua
+   * `stickToBottom`. Dùng cho initial load / reload / switch conversation.
+   * Nếu không truyền → fallback watch messages.length như cũ.
+   */
+  scrollKey?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -36,22 +54,105 @@ const emit = defineEmits<{
 const scrollEl = ref<HTMLElement | null>(null);
 const stickToBottom = ref(true);
 
-/** Khi nào append message xuống dưới thì scroll xuống. */
-const scrollToBottom = async (smooth = true): Promise<void> => {
+/**
+ * Track xem đã scroll initial cho conversation hiện tại chưa. Khi conversation
+ * đổi → reset flag → watcher messages.length sẽ scroll khi messages populate
+ * (length 0 → N).
+ *
+ * Vấn đề trước đây: watcher fire ngay khi mount (immediate), scrollToBottom
+ * chạy khi messages.length === 0 → scrollHeight = 0 (chỉ loading spinner) →
+ * scroll về 0 → khi messages load sau, scroll không auto-reset vì
+ * stickToBottom = distance(0 - 0 - 0) < 100 = true nhưng scrollToBottom đã
+ * chạy với vị trí sai trước đó.
+ *
+ * Fix: chỉ scroll khi messages.length > 0 (i.e. đã load xong).
+ */
+const initialScrolledFor = ref<string | null>(null);
+
+/**
+ * Scroll xuống cuối. `instant=true` dùng cho initial load (reload / deep-link /
+ * đổi conversation) — instant jump thay vì animate, tránh smooth-scroll kẹt ở
+ * giữa khi scrollHeight tăng trong lúc animation chạy (images load, layout
+ * settle). `instant=false` cho realtime append (UX mượt).
+ */
+const scrollToBottom = async (instant = false): Promise<void> => {
   await nextTick();
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
   if (!scrollEl.value) return;
   scrollEl.value.scrollTo({
     top: scrollEl.value.scrollHeight,
-    behavior: smooth ? 'smooth' : 'auto',
+    behavior: instant ? 'auto' : 'smooth',
   });
 };
 
-/** Theo dõi length messages — nếu user đang ở cuối thì scroll xuống. */
+/**
+ * ResizeObserver trên scrollEl — bắt MỌI content height change (image load,
+ * date separator thêm vào, peerTyping dots xuất hiện, ...) và auto-scroll lại
+ * nếu user đang ở cuối. Đây là safety net cho initial load: dù scrollToBottom
+ * chạy trước khi images load xong → scrollHeight tăng sau → ResizeObserver
+ * catch và scroll lại về bottom. Cleanup khi unmount.
+ */
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  if (typeof window === 'undefined' || typeof ResizeObserver === 'undefined') return;
+  const el = scrollEl.value;
+  if (!el) return;
+  resizeObserver = new ResizeObserver(() => {
+    if (!stickToBottom.value || !el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
+  });
+  resizeObserver.observe(el);
+});
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+});
+
+/**
+ * Watch (scrollKey, messages.length) cùng lúc — đây là single source of truth
+ * cho "khi nào cần force-scroll":
+ *   - Đổi conversation (scrollKey khác) → reset flag, chờ messages populate.
+ *   - Messages populate lần đầu cho conv này → smooth scroll xuống cuối.
+ *   - Tin nhắn MỚI từ mình gửi → INSTANT scroll xuống cuối (force, kể cả
+ *     user đang scroll lên đọc history).
+ *   - Tin nhắn MỚI từ peer + user đang ở cuối → smooth scroll.
+ */
+const lastMessageId = ref<string | null>(null);
+
 watch(
-  () => props.messages.length,
-  () => {
-    if (stickToBottom.value) scrollToBottom(true);
+  () => [props.scrollKey, props.messages.length] as const,
+  async ([key, len]) => {
+    if (!key) return;
+    // Đổi conversation → reset, chờ messages load
+    if (key !== initialScrolledFor.value) {
+      stickToBottom.value = true;
+      initialScrolledFor.value = key;
+      lastMessageId.value = null;
+      return; // Đợi watcher fire lần kế (khi len > 0)
+    }
+    if (len === 0) return;
+
+    const last = props.messages[props.messages.length - 1];
+    const isNewMsg = last && last.id !== lastMessageId.value;
+
+    // Tin nhắn mới từ MÌNH gửi → force scroll xuống cuối (smooth), kể cả
+    // user đang ở trên đọc history — UX "đã gửi thì phải thấy".
+    if (isNewMsg && last.senderId === props.currentUserId) {
+      lastMessageId.value = last.id;
+      stickToBottom.value = true;
+      await scrollToBottom(false);
+      return;
+    }
+
+    // Initial load (lastMessageId null) HOẶC tin từ peer + ở cuối → smooth.
+    if (isNewMsg) lastMessageId.value = last.id;
+    if (stickToBottom.value) {
+      await scrollToBottom(false);
+    }
   },
+  { immediate: true },
 );
 
 /**
@@ -63,7 +164,7 @@ watch(
 watch(
   () => props.peerTyping,
   () => {
-    if (stickToBottom.value) scrollToBottom(true);
+    if (stickToBottom.value) void scrollToBottom(false);
   },
 );
 
@@ -135,6 +236,35 @@ const grouped = computed(() => {
   }
   return groups;
 });
+
+/**
+ * Helper: lọc attachment theo kind. Attachment không có `kind` được coi như
+ * image (legacy data phase 1 chỉ có ảnh).
+ */
+const imageAttachments = (atts: ChatMessage['attachments']) =>
+  (atts ?? []).filter((a) => a.kind !== 'file' && a.mime.startsWith('image/'));
+
+const fileAttachments = (atts: ChatMessage['attachments']) =>
+  (atts ?? []).filter((a) => a.kind === 'file' || !a.mime.startsWith('image/'));
+
+/**
+ * Map MIME → icon + màu + label. Centralized ở utils/fileIcon để MessageInput
+ * (preview) và MessageList (render) dùng chung → đồng bộ visual.
+ */
+const fileIcon = (mime: string, name?: string | null) => fileIconInfo(mime, name);
+
+/** Lấy tên file từ URL MinIO (fallback khi `att.name` không có). */
+const filenameFromUrl = (url: string): string => {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split('/').pop() ?? '';
+    // Key format: {uuid}-{safeName}.{ext} → strip uuid prefix + extension
+    const noExt = last.replace(/\.[^.]+$/, '');
+    return noExt.replace(/^[0-9a-f-]{36}-/, '') || last;
+  } catch {
+    return url;
+  }
+};
 </script>
 
 <template>
@@ -177,13 +307,83 @@ const grouped = computed(() => {
         <div
           class="max-w-[70%] px-2.5 py-1.5 rounded-xl text-[13px] leading-snug shadow-sm"
           :class="m.senderId === currentUserId
-            ? 'bg-primary-500 text-white rounded-br-md'
+            ? 'bg-blue-600 text-white rounded-br-md'
             : 'bg-white text-gray-800 border border-gray-200 rounded-bl-md'"
         >
-          <div class="break-words" v-html="safe(m.content)" />
+          <!--
+            Attachments block — render TRƯỚC content text.
+            - Ảnh: grid 1 hoặc 2 cột (nếu >1 ảnh). Click mở tab mới.
+            - File (PDF/DOCX/...): card với icon MIME + tên + size + nút tải.
+            Phase 2: thêm lightbox với zoom/swipe cho ảnh.
+          -->
+          <div
+            v-if="m.attachments && m.attachments.length > 0"
+            class="mb-1.5 space-y-1"
+          >
+            <!-- Ảnh: grid (1 cột nếu 1 ảnh, 2 cột nếu nhiều) -->
+            <div
+              v-if="imageAttachments(m.attachments).length > 0"
+              class="grid gap-1"
+              :class="imageAttachments(m.attachments).length === 1 ? 'grid-cols-1' : 'grid-cols-2'"
+            >
+              <a
+                v-for="(att, idx) in imageAttachments(m.attachments)"
+                :key="`img-${idx}`"
+                :href="att.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="block rounded-md overflow-hidden bg-gray-100 max-w-[200px] max-h-[200px] hover:opacity-90 transition"
+                :title="att.mime"
+              >
+                <img
+                  :src="att.url"
+                  :alt="att.mime"
+                  class="w-full h-full object-cover max-h-[200px]"
+                  loading="lazy"
+                />
+              </a>
+            </div>
+
+            <!-- File non-image: danh sách card dọc -->
+            <div
+              v-if="fileAttachments(m.attachments).length > 0"
+              class="space-y-1"
+            >
+              <a
+                v-for="(att, idx) in fileAttachments(m.attachments)"
+                :key="`file-${idx}`"
+                :href="att.url"
+                :download="att.name ?? true"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="flex items-center gap-2 px-2.5 py-1.5 rounded-md border transition"
+                :class="m.senderId === currentUserId
+                  ? 'bg-blue-700/30 border-blue-500/40 hover:bg-blue-700/50 text-white'
+                  : 'bg-gray-50 border-gray-200 hover:bg-gray-100 text-gray-800'"
+                :title="`Tải ${att.name ?? att.mime}`"
+              >
+                <component
+                  :is="fileIcon(att.mime, att.name).icon"
+                  class="w-4 h-4 shrink-0"
+                  :class="fileIcon(att.mime, att.name).color"
+                />
+                <span class="flex-1 min-w-0 truncate text-[12px] font-medium">
+                  {{ att.name ?? filenameFromUrl(att.url) }}
+                </span>
+                <span
+                  class="shrink-0 text-[10px]"
+                  :class="m.senderId === currentUserId ? 'text-blue-100' : 'text-gray-500'"
+                >
+                  {{ formatFileSize(att.sizeBytes) }}
+                </span>
+                <Download class="w-3.5 h-3.5 shrink-0" :class="m.senderId === currentUserId ? 'text-white' : 'text-gray-400'" />
+              </a>
+            </div>
+          </div>
+          <div v-if="m.content" class="break-words" v-html="safe(m.content)" />
           <div
             class="mt-0.5 flex items-center justify-end gap-1 text-[10px] font-mono"
-            :class="m.senderId === currentUserId ? 'text-primary-100' : 'text-gray-400'"
+            :class="m.senderId === currentUserId ? 'text-blue-100' : 'text-gray-400'"
           >
             <span>{{ fmtTime(m.createdAt) }}</span>
             <!--
@@ -204,7 +404,7 @@ const grouped = computed(() => {
               :aria-label="readTooltip(m.readAt)"
             >
               <CheckCheck
-                class="h-4 w-4 text-primary-700"
+                class="h-4 w-4 text-blue-100"
                 aria-hidden="true"
               />
               <!--
