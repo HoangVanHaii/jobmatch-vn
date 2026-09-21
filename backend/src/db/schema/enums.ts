@@ -40,6 +40,10 @@ export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'me
  *     (chỉ cho phép khi status=pending|viewed, xem service.application.withdraw)
  *     → employer biết realtime để update pipeline / không chờ candidate nữa.
  *
+ *   - interview_scheduled: gửi cho candidate khi HR tạo lịch phỏng vấn mới
+ *   - interview_updated: gửi cho candidate khi HR cập nhật lịch phỏng vấn (đổi giờ, link, v.v.)
+ *   - interview_cancelled: gửi cho candidate khi HR hủy lịch phỏng vấn
+ *
  *   - company_invite: BACKWARD COMPAT. Rows cũ trước 0032 dùng type này cho
  *     invite. Backend không emit nữa; FE fallback coi như kind='company_invite_sent'.
  *
@@ -47,6 +51,7 @@ export const companyMemberRoleEnum = pgEnum('company_member_role', ['owner', 'me
  *   0025_notification_type_applications.sql (application_new + application_match_ready)
  *   0026_notification_type_withdraw.sql (application_withdrawn)
  *   0032_add_notification_type_company.sql ('company' + gom company_* về 1 type)
+ *   0035_notification_type_interview.sql (interview_scheduled + interview_updated + interview_cancelled)
  */
 export const notificationTypeEnum = pgEnum('notification_type', [
   'company_invite',         // legacy — xem comment trên
@@ -57,6 +62,9 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'application_new',
   'application_match_ready',
   'application_withdrawn',
+  'interview_scheduled',
+  'interview_updated',
+  'interview_cancelled',
 ]);
 export const companyMemberStatusEnum = pgEnum('company_member_status', [
   'pending',
