@@ -5,12 +5,13 @@
 import type { HandlerContext, HandlerSection } from '../types';
 import { interviewService } from '../../../../service/interview.service';
 
-type InterviewRow = Awaited<ReturnType<typeof interviewService.listByCandidate>>[number];
+import type { CandidateInterviewRow } from '../../../../interface/interview';
 
 export const interviewHandler = async (ctx: HandlerContext): Promise<HandlerSection> => {
-  let rows: InterviewRow[];
+  let rows: CandidateInterviewRow[];
   try {
-    rows = await interviewService.listByCandidate(ctx.userId, { upcoming: true, limit: 10 });
+    const result = await interviewService.listByCandidate(ctx.userId, { upcoming: true, limit: 10 });
+    rows = result.rows;
   } catch {
     return {
       label: 'interview',

@@ -27,6 +27,7 @@ import { cvRouter } from './cv';
 import { candidateSkillRouter } from './candidateSkill';
 import { uploadRouter } from './upload';
 import { chatbotRouter } from './chatbot';
+import { interviewRouter } from './interview';
 
 export const apiRouter = Router();
 
@@ -55,3 +56,5 @@ apiRouter.use("/uploads", uploadRouter);
 apiRouter.use("/skills", candidateSkillRouter);
 // Chatbot AI (candidate + employer)
 apiRouter.use('/chatbot', chatbotRouter);
+// Interview management (HR/Employer)
+apiRouter.use('/interviews', interviewRouter);
