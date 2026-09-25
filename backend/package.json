@@ -21,6 +21,7 @@
     "db:seed:cvs": "tsx scripts/seed-cvs.ts",
     "db:seed:org": "tsx scripts/seed-org.ts",
     "db:seed:jobs": "tsx scripts/seed-jobs.ts",
+    "db:seed:chat": "tsx scripts/seed-chat.ts",
     "db:reset": "tsx scripts/dev-reset.ts",
     "db:studio": "drizzle-kit studio",
     "playwright:install": "playwright install chromium"

@@ -14,6 +14,7 @@ import {
   ClientAttachmentMeta, AttachmentWithContext,
 } from '../interface/chat';
 import { chatMessages, chatAttachments, conversations, conversationDeletions, users, userProfiles as userProfilesTable } from '../db/schema';
+import { id } from 'zod/v4/locales';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -594,13 +595,23 @@ export const chatService = {
        */
       let createdAtCmp: SQL | undefined;
       if (data.lastReadMessageId) {
+        // Lookup target với date_trunc('millisecond') vì:
+        //   - DB lưu timestamptz ở microsecond (6 chữ số).
+        //   - JS Date chỉ giữ millisecond (3 chữ số) → khi drizzle pass Date
+        //     xuống PG, µs bị cắt → so sánh lte fail cho tin cùng ms với target.
+        //   - date_trunc 2 bên đảm bảo cùng precision.
         const target = await tx
-          .select({ createdAt: chatMessages.createdAt })
+          .select({
+            createdAt: sql<Date>`date_trunc('millisecond', ${chatMessages.createdAt})`,
+          })
           .from(chatMessages)
           .where(eq(chatMessages.id, data.lastReadMessageId))
           .limit(1);
         if (target.length > 0) {
-          createdAtCmp = lte(chatMessages.createdAt, target[0].createdAt);
+          createdAtCmp = lte(
+            sql`date_trunc('millisecond', ${chatMessages.createdAt})`,
+            target[0].createdAt,
+          );
         } else {
           createdAtCmp = sql`true`;
         }

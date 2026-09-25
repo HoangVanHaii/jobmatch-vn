@@ -320,7 +320,7 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
 </script>
 
 <template>
-  <div class="flex h-screen flex-col bg-gray-50/50">
+  <div class="font-poppins flex h-screen flex-col bg-gray-50/50">
     <ChatbotHeader
       :title="store.activeSession?.title ?? null"
       :total-tokens="store.totalTokens"
