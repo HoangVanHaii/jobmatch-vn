@@ -92,6 +92,8 @@ export interface EmployerApplicationRow {
   /** null nếu isAnonymous=true (employer không biết candidate là ai). */
   candidateName: string | null;
   candidateEmail: string | null;
+  /** Avatar URL từ userProfiles.avatarUrl (null nếu candidate chưa upload). */
+  candidateAvatarUrl: string | null;
   status: ApplicationStatus;
   stage: string | null;
   aiMatchScore: string | null;
