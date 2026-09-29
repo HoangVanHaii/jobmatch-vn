@@ -89,6 +89,8 @@ const routes: RouteRecordRaw[] = [
     //   { path: 'saved', name: 'saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
     //   { path: 'cv-score', name: 'cv-score', component: () => import('@views/candidate/CVScoringView.vue') },
       { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
+      { path: 'test5', name: 'candidate-test5', component: () => import('@views/candidate/MockupResumeView.vue') },
+
     ],
   },
   
@@ -134,6 +136,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'test', name: 'employer-test', component: () => import('@views/employer/ApplicationMockupView.vue') },
       // Mockup Upgrade Plan page (static, không gọi API).
       { path: 'test2', name: 'employer-test-plan', component: () => import('@views/employer/PlanMockupView.vue') },
+      // Mockup TechNova landing page (static, không gọi API).
+      { path: 'test3', name: 'employer-test-technova', component: () => import('@views/employer/TechNovaMockupView.vue') },
+      // Mockup Facebook-style profile page (static, không gọi API).
     ],
   },
 

@@ -21,8 +21,27 @@ export const userProfiles = pgTable('user_profiles', {
   userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
   fullName: text('full_name'),
   avatarUrl: text('avatar_url'),
+  coverUrl: text('cover_url'),
   phone: text('phone'),
-  location: jsonb('location').$type<{ city?: string; district?: string; lat?: number; lng?: number }>(),
-  social: jsonb('social').$type<{ linkedin?: string; github?: string; portfolio?: string }>(),
+  location: jsonb('location').$type<{
+    city?: string;
+    district?: string;
+    address?: string;
+    lat?: number;
+    lng?: number;
+  }>(),
+  social: jsonb('social').$type<{
+    linkedin?: string;
+    github?: string;
+    portfolio?: string;
+    [key: string]: string | undefined;
+  }>(),
   preferences: jsonb('preferences').$type<Record<string, unknown>>(),
+  metadata: jsonb('metadata')
+    .$type<{
+      school?: string;
+      work?: string;
+      birthday?: string;
+    }>()
+    .default({}),
 });

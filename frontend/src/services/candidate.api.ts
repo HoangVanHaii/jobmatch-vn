@@ -20,19 +20,45 @@ export interface CandidateProfile {
   email: string;
   fullName: string | null;
   avatarUrl: string | null;
+  coverUrl: string | null;
   phone: string | null;
-  location: { city?: string; district?: string } | null;
-  social: { linkedin?: string; github?: string; portfolio?: string } | null;
+  location: {
+    city?: string;
+    district?: string;
+    address?: string;
+    lat?: number;
+    lng?: number;
+  } | null;
+  social: {
+    linkedin?: string;
+    github?: string;
+    portfolio?: string;
+    [key: string]: string | undefined;
+  } | null;
   preferences: Record<string, unknown> | null;
+  metadata: { school?: string; work?: string; birthday?: string };
 }
 
 /** Payload cho PATCH — tất cả field optional (partial update). */
 export interface UpdateCandidateProfilePayload {
   fullName?: string;
+  coverUrl?: string | null;
   phone?: string;
-  location?: { city?: string; district?: string };
-  social?: { linkedin?: string; github?: string; portfolio?: string };
+  location?: {
+    city?: string;
+    district?: string;
+    address?: string;
+    lat?: number;
+    lng?: number;
+  };
+  social?: {
+    linkedin?: string;
+    github?: string;
+    portfolio?: string;
+    [key: string]: string | undefined;
+  };
   preferences?: Record<string, unknown>;
+  metadata?: { school?: string; work?: string; birthday?: string };
 }
 
 export interface ApiResponse<T> {

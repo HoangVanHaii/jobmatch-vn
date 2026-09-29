@@ -74,6 +74,7 @@ import type { Company } from '@/types/company';
 import type { Socket } from 'socket.io-client';
 import { getSocket } from '@services/socket';
 import ApplyJob from '@components/job/ApplyJob.vue';
+import TechNovaMockupView from '@views/employer/TechNovaMockupView.vue';
 import type {
   ApplicationMatchReadyPayload,
   ApplicationMatchSkippedPayload,
@@ -525,6 +526,15 @@ watch(jobSlug, async () => {
   await fetchMyApplicationStatus();
 });
 
+// Fetch company detail (cho CompanyMap/social/address trong Overview tab) khi job load xong.
+watch(
+  () => job.value?.companyId,
+  (id) => {
+    if (id) void fetchCompany(id);
+    else company.value = null;
+  },
+);
+
 // ============================================================================
 // Auth + application status
 // ============================================================================
@@ -626,27 +636,19 @@ type ActiveTab = 'overview' | 'company';
 const activeTab = ref<ActiveTab>('overview');
 
 const company = ref<Company | null>(null);
-const loadingCompany = ref(false);
 
+/** Fetch company detail khi job load hoặc companyId đổi — dùng cho CompanyMap/social/address ở Overview tab. */
 const fetchCompany = async (companyId: string): Promise<void> => {
-  loadingCompany.value = true;
   try {
     const { data } = await companyApi.getById(companyId);
     company.value = data.data;
   } catch {
     company.value = null;
-  } finally {
-    loadingCompany.value = false;
   }
 };
 
 const selectTab = (tab: ActiveTab): void => {
   activeTab.value = tab;
-  // Lazy-load Company detail lần đầu switch tab (tránh fetch thừa khi user
-  // chỉ xem Overview).
-  if (tab === 'company' && !company.value && job.value?.companyId) {
-    void fetchCompany(job.value.companyId);
-  }
 };
 
 /** Format address JSONB thành chuỗi ngắn (city, district). */
@@ -994,9 +996,10 @@ const cancelEditFeedback = (): void => {
 
     <!-- ============ Main content ============ -->
     <template v-else>
-      <main class="px-6 pt-5 pb-10 h-full overflow-y-auto">
+      <main class="flex min-h-0 flex-col px-6 pt-5 pb-10">
         <!-- Job header -->
-        <div class="flex items-center justify-between gap-4 mb-3">
+        <div class="flex items-center justify-between gap-4 pb-3 mb-3 border-b border-[#EEF1F5]">
+
           <div class="flex items-center gap-2 min-w-0">
             <button
               type="button"
@@ -1101,6 +1104,7 @@ const cancelEditFeedback = (): void => {
                 class="absolute left-0 right-0 -bottom-px h-[2px] bg-[#1677FF] rounded-full"
               ></span>
             </button>
+
             <button
               class="relative py-2.5 text-[12.5px] font-medium transition"
               :class="activeTab === 'company' ? 'text-[#1677FF]' : 'text-[#64748B] hover:text-[#334155]'"
@@ -1115,6 +1119,8 @@ const cancelEditFeedback = (): void => {
           </div>
         </div>
 
+        <!-- Tab content (scrollable) -->
+        <div class="flex-1 overflow-y-auto">
         <!-- Overview tab -->
         <template v-if="activeTab === 'overview'">
         <!-- Grid -->
@@ -1123,7 +1129,7 @@ const cancelEditFeedback = (): void => {
           <div class="col-span-12 lg:col-span-8 min-w-0">
             <!-- About -->
             <section class="mb-5">
-              <h3 class="text-[13.5px] font-semibold text-[#0F172A] mb-1.5">Mô tả</h3>
+              <h1 class="text-[15.5px] font-semibold text-[#0F172A] mb-1.5">Mô tả</h1>
               <p class="text-[12.5px] leading-[1.55] text-[#64748B] whitespace-pre-line">
                 {{ truncatedDescription }}
                 <span
@@ -1633,240 +1639,11 @@ const cancelEditFeedback = (): void => {
         </template>
         <!-- /Overview tab -->
 
-        <!-- Company tab -->
-        <div v-else>
-          <!-- Loading -->
-          <div v-if="loadingCompany" class="text-center py-12 text-[12.5px] text-[#64748B]">
-            Đang tải thông tin công ty...
-          </div>
-          <!-- Empty / error -->
-          <div
-            v-else-if="!company"
-            class="text-center py-12 text-[12.5px] text-[#64748B]"
-          >
-            Không tải được thông tin công ty.
-          </div>
-          <!-- Loaded: 2-col grid (info left, open jobs right) -->
-          <div v-else class="grid grid-cols-12 gap-5">
-            <!-- ============ Left: Company info ============ -->
-            <div class="col-span-12 lg:col-span-8 min-w-0">
-              <!-- Company header card -->
-              <section class="mb-5 rounded-lg border border-[#EEF1F5] bg-white p-5">
-                <div class="flex items-start gap-4">
-                  <!-- Logo: object-cover để fill vuông 56×56 (logo có thể crop nhẹ
-                       2 bên nhưng luôn full-bleed, tránh khoảng trắng thừa). -->
-                  <div
-                    class="h-14 w-14 rounded-lg bg-[#F8FAFB] border border-[#EEF1F5] flex items-center justify-center text-[#94A3B8] text-[14px] font-semibold overflow-hidden shrink-0"
-                  >
-                    <img
-                      v-if="company.logoUrl"
-                      :src="company.logoUrl"
-                      :alt="company.name"
-                      class="h-full w-full object-cover"
-                    />
-                    <template v-else>{{ company.name.slice(0, 2).toUpperCase() }}</template>
-                  </div>
-                  <div class="flex-1 min-w-0">
-                    <h2 class="text-[16px] font-semibold text-[#0F172A] leading-tight flex items-center gap-1.5">
-                      <span class="truncate flex-1 min-w-0">{{ company.name }}</span>
-                      <!-- Cờ VN ở phía cuối (bên phải) — `shrink-0` để không bị
-                           truncate đẩy ra ngoài viewport. Dùng chung
-                           `showVietnamFlag` computed (true nếu country null/empty
-                           hoặc chứa "vietnam"). -->
-                      <svg
-                        v-if="showVietnamFlag"
-                        width="22"
-                        height="16"
-                        viewBox="0 0 30 20"
-                        class="rounded-[2px] border border-[#EEF1F5] shrink-0"
-                        role="img"
-                        aria-label="Vietnam"
-                        title="Vietnam"
-                      >
-                        <rect width="30" height="20" fill="#DA251D" />
-                        <path fill="#FFFF00" d="M15 4.2 16.36 8.05 20.45 8.05 17.05 10.45 18.4 14.3 15 11.9 11.6 14.3 12.95 10.45 9.55 8.05 13.64 8.05 Z" />
-                      </svg>
-                      <span v-if="countryName" class="text-[10.5px] text-[#64748B] shrink-0">{{ countryName }}</span>
-                    </h2>
-                    <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[#64748B]">
-                      <span v-if="company.industry">{{ company.industry }}</span>
-                      <!-- sizeRange + icon Users (sau size) -->
-                      <span v-if="company.sizeRange" class="inline-flex items-center gap-1">
-                        <span class="text-[#CBD5E1]">·</span>
-                        {{ company.sizeRange }}
-                        <Users class="w-3 h-3 text-[#94A3B8] shrink-0" aria-hidden="true" />
-                      </span>
-                      <!-- Address + cờ VN (nếu là Vietnam hoặc country null/empty thì show flag) -->
-                      <span
-                        v-if="formatCompanyAddress(company.address ?? null)"
-                        class="inline-flex items-center gap-1.5"
-                      >
-                        <span class="text-[#CBD5E1]">·</span>
-                        {{ formatCompanyAddress(company.address ?? null) }}
-                        <span
-                          v-if="showVietnamFlag"
-                          class="inline-flex items-center"
-                          title="Vietnam"
-                        >
-                          <svg
-                            width="16"
-                            height="11"
-                            viewBox="0 0 30 20"
-                            class="rounded-[2px] border border-[#EEF1F5] shrink-0"
-                            role="img"
-                            aria-label="Vietnam"
-                          >
-                            <rect width="30" height="20" fill="#DA251D" />
-                            <path
-                              fill="#FFFF00"
-                              d="M15 4.2 16.36 8.05 20.45 8.05 17.05 10.45 18.4 14.3 15 11.9 11.6 14.3 12.95 10.45 9.55 8.05 13.64 8.05 Z"
-                            />
-                          </svg>
-                        </span>
-                        <span v-if="countryName" class="text-[#64748B] text-[10.5px]">
-                          · {{ countryName }}
-                        </span>
-                      </span>
-                    </div>
-                    <div v-if="company.website" class="mt-2">
-                      <a
-                        :href="company.website"
-                        target="_blank"
-                        rel="noopener"
-                        class="text-[11.5px] text-[#1677FF] hover:underline"
-                      >{{ company.website }}</a>
-                    </div>
-                  </div>
-                </div>
-                <!-- Social links — icon brand color (LinkedIn blue, Twitter blue,
-                     GitHub black, v.v.) + label. Hover: nền nhạt theo brand color. -->
-                <div v-if="socialLinks.length" class="mt-4 flex flex-wrap gap-2">
-                  <a
-                    v-for="l in socialLinks"
-                    :key="l.key"
-                    :href="l.href"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    :title="l.href"
-                    :class="['inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[#EEF1F5] text-[11px] transition hover:bg-black/[0.04]', l.color]"
-                  >
-                    <component :is="l.icon" class="w-3 h-3 shrink-0" />
-                    {{ l.label }}
-                  </a>
-                </div>
-              </section>
-
-              <!-- About company -->
-              <section v-if="company.description">
-                <h3 class="text-[13.5px] font-semibold text-[#0F172A] mb-1.5">Giới thiệu công ty</h3>
-                <p class="text-[12.5px] leading-[1.55] text-[#64748B] whitespace-pre-line">
-                  {{ company.description }}
-                </p>
-              </section>
-            </div>
-
-            <!-- ============ Right: Map + Open jobs list ============ -->
-            <aside class="col-span-12 lg:col-span-4 min-w-0 space-y-4">
-              <!-- Map nhỏ ở trên — click vào marker popup hiện company name -->
-              <section v-if="companyMapCoords">
-                <h3 class="text-[13.5px] font-semibold text-[#0F172A] mb-2">Vị trí</h3>
-                <div class="h-48 w-full overflow-hidden rounded-lg border border-[#EEF1F5]">
-                  <CompanyMap
-                    :lat="companyMapCoords.lat"
-                    :lng="companyMapCoords.lng"
-                    :label="company.name"
-                  />
-                </div>
-                <!-- Địa chỉ text dưới map (street + city/district), kèm cờ VN
-                     hoặc raw country name nếu khác Vietnam. -->
-                <p
-                  v-if="companyAddressText || showVietnamFlag || countryName"
-                  class="mt-2 flex items-center gap-1.5 text-[11.5px] leading-[1.5] text-[#64748B]"
-                >
-                  <MapPin class="w-3 h-3 shrink-0" />
-                  <span class="flex-1 min-w-0">{{ companyAddressText }}</span>
-                  <svg
-                    v-if="showVietnamFlag"
-                    width="14"
-                    height="10"
-                    viewBox="0 0 30 20"
-                    class="rounded-[2px] border border-[#EEF1F5] shrink-0"
-                    role="img"
-                    aria-label="Vietnam"
-                  >
-                    <rect width="30" height="20" fill="#DA251D" />
-                    <path fill="#FFFF00" d="M15 4.2 16.36 8.05 20.45 8.05 17.05 10.45 18.4 14.3 15 11.9 11.6 14.3 12.95 10.45 9.55 8.05 13.64 8.05 Z" />
-                  </svg>
-                  <span v-if="countryName" class="text-[10.5px] shrink-0">{{ countryName }}</span>
-                </p>
-              </section>
-
-              <section v-if="company.jobs && company.jobs.length">
-                <h3 class="text-[13.5px] font-semibold text-[#0F172A] mb-2.5">
-                  Công việc đang tuyển
-                  <span class="text-[#94A3B8] font-normal">({{ company.jobs.length }})</span>
-                </h3>
-                <ul class="space-y-2">
-                  <li
-                    v-for="j in company.jobs"
-                    :key="j.id"
-                    class="rounded-lg border border-[#EEF1F5] bg-white p-3 hover:border-[#1677FF]/40 transition"
-                  >
-                    <router-link
-                      :to="{ name: 'candidate-job-detail', params: { slug: j.slug ?? j.id } }"
-                      class="block"
-                    >
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0 flex-1">
-                          <h4 class="text-[12.5px] font-semibold text-[#0F172A] truncate">
-                            {{ j.title }}
-                          </h4>
-                          <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-                            <!-- JobLevel badge — color + icon theo meta -->
-                            <span
-                              v-if="getJobLevelMeta(j.jobLevel)"
-                              :class="['inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-medium', getJobLevelMeta(j.jobLevel)!.class]"
-                            >
-                              <component
-                                :is="getJobLevelMeta(j.jobLevel)!.icon"
-                                class="w-3 h-3 shrink-0"
-                              />
-                              {{ formatJobLevel(j.jobLevel) }}
-                            </span>
-                            <!-- JobType badge -->
-                            <span
-                              v-if="getJobTypeMeta(j.jobType)"
-                              :class="['inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-medium', getJobTypeMeta(j.jobType)!.class]"
-                            >
-                              <component
-                                :is="getJobTypeMeta(j.jobType)!.icon"
-                                class="w-3 h-3 shrink-0"
-                              />
-                              {{ formatJobType(j.jobType) }}
-                            </span>
-                            <!-- Location badge -->
-                            <span
-                              v-if="jobLocationCity(j.location)"
-                              :class="['inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-medium', LOCATION_META.class]"
-                            >
-                              <component
-                                :is="LOCATION_META.icon"
-                                class="w-3 h-3 shrink-0"
-                              />
-                              {{ jobLocationCity(j.location) }}
-                            </span>
-                          </div>
-                        </div>
-                        <ChevronRight class="w-4 h-4 text-[#CBD5E1] shrink-0 mt-0.5" />
-                      </div>
-                    </router-link>
-                  </li>
-                </ul>
-              </section>
-            </aside>
-          </div>
+        <!-- Company_test tab — embed TechNovaMockupView để xem nhanh UI mock -->
+        <template v-if="activeTab === 'company'">
+          <TechNovaMockupView :company-id="job?.companyId ?? null" />
+        </template>
         </div>
-        <!-- /Company tab -->
       </main>
 
       <!-- Apply modal — Teleport to body (bên trong component), v-if="open" tự

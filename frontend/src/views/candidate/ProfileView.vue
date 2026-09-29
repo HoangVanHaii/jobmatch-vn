@@ -1,1249 +1,2395 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
-import { storeToRefs } from 'pinia';
-import {
-  UserRound,
-  Mail,
-  Phone,
-  MapPin,
-  Linkedin,
-  Github,
-  Globe,
-  Loader2,
-  AlertCircle,
-  Pencil,
-  X,
-  Save,
-  Sparkles,
-  TrendingUp,
-  BadgeCheck,
-  Plus,
-  ChevronRight,
-  Briefcase,
-  FileText,
-  Building2,
-  Camera,
-  type LucideIcon,
-} from 'lucide-vue-next';
-import { useAuthStore } from '@stores/auth';
-import { useToastStore } from '@stores/toast';
-import { useUploadStore } from '@stores/upload';
-import {
-  candidateApi,
-  type CandidateProfile,
-} from '@services/candidate.api';
-import { userApi } from '@services/user.api';
-import SocialRow from '@components/candidate/SocialRow.vue';
-import LocationAutocomplete, {
-  type LocationOption,
-} from '@components/common/LocationAutocomplete.vue';
-import { useLocations } from '@composables/useLocations';
+/**
+ * ProfileMockupView — Facebook-style profile mockup.
+ *
+ * Sections:
+ *   - Top nav (logo + search bar)
+ *   - Cover photo (gradient overlay with avatar overlay)
+ *   - Profile card (avatar + name + tabs: Timeline / About / Friends / Photos)
+ *   - About card (2-col grid: Work/School, Relationship/Location)
+ *
+ * Mockup only — không call API. Nếu muốn wire thì hỏi thêm.
+ */
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { useAuthStore } from '@stores/auth'
+import { uploadApi } from '@services/upload.api'
+import { useToastStore } from '@stores/toast'
+import { useLocations } from '@composables/useLocations'
+import { candidateApi } from '@services/candidate.api'
+import type { CandidateProfile } from '@services/candidate.api'
+import { Mail, Camera, Phone, User, GraduationCap, Heart, MapPin, Plus as PlusIcon, Globe, Pencil, Check, X, Briefcase, Linkedin, Github, ExternalLink, Calendar, Building2, Navigation, MapPinned, RotateCw, Home, Loader2, Facebook, Twitter, Youtube, Instagram, Share2, Trash2 } from 'lucide-vue-next'
+import SocialRow from '@components/candidate/SocialRow.vue'
 
-/* ============================================================================
- * State
- * ==========================================================================*/
-
-const profile = ref<CandidateProfile | null>(null);
-const loading = ref(false);
-const loadError = ref('');
-const submitting = ref(false);
-
-const toast = useToastStore();
-const isEditing = ref(false);
-
-interface FormState {
-  fullName: string;
-  phone: string;
-  city: string;
-  district: string;
-  linkedin: string;
-  github: string;
-  portfolio: string;
+interface ProfileLink {
+  type: 'link' | 'text'
+  label: string
+  value: string
 }
 
-const form = reactive<FormState>({
-  fullName: '',
-  phone: '',
-  city: '',
-  district: '',
+interface ProfileAboutItem {
+  icon: typeof User | typeof GraduationCap | typeof Heart | typeof MapPin | typeof Mail | typeof Phone | typeof Globe
+  title: string
+  subtitle?: string
+  /** Optional link/text under subtitle (vd "Past: Lambo and BMW") */
+  extra?: string
+  /** Optional list of secondary links (vd Instagram, website) */
+  links?: ProfileLink[]
+  actionIcon?: 'plus' | 'none'
+}
+
+// ===== Wire API — lấy thông tin user hiện tại từ auth store =====
+const auth = useAuthStore()
+
+const profileName = computed(() => auth.user?.fullName?.trim() || 'Người dùng')
+const profileAvatar = computed(() => auth.user?.avatarUrl || '')
+const profileInitial = computed(() => profileName.value.charAt(0).toUpperCase())
+const profileEmail = computed(() => auth.user?.email ?? '')
+
+/** Cover photo + metadata load từ candidate profile (sau khi loadSavedAddress). */
+const profileCoverUrl = computed(() => savedProfile.value?.coverUrl ?? null)
+const profileSchool = ref<string>('')
+const profileWork = ref<string>('')
+/** Số điện thoại — mockup để rỗng để demo flow "Add phone". Có thể lấy từ user_profiles.phone khi backend có. */
+const profilePhone = ref<string>('')
+
+/** Birthday draft (DD / MM / YYYY format khi user nhập). Convert sang ISO YYYY-MM-DD trước khi save. */
+const birthdayDraft = ref<string>('')
+const birthdayError = ref<string>('')
+
+/** Ngày sinh (YYYY-MM-DD) load từ candidate metadata. */
+const profileBirthday = ref<string>('')
+
+/** Province record khớp với location.city từ API (reverse-lookup khi reload). */
+const loadedLocation = ref<{ city: string; district: string; address: string; lat: number | null; lng: number | null } | null>(null)
+
+/** Full profile snapshot — dùng cho coverUrl + metadata. */
+const savedProfile = ref<CandidateProfile | null>(null)
+
+/** Saved social links (load từ API và cập nhật khi lưu). */
+const savedSocial = ref<Record<string, string>>({
   linkedin: '',
   github: '',
   portfolio: '',
-});
+})
 
-const formErrors = reactive<Partial<Record<keyof FormState, string>>>({});
-
-/* ============================================================================
- * Auth bindings — fallback avatar/name khi profile chưa load xong.
- * ==========================================================================*/
-const auth = useAuthStore();
-const { user } = storeToRefs(auth);
-
-/* ============================================================================
- * Display helpers
- * ==========================================================================*/
-
-const displayName = computed(() => {
-  if (profile.value?.fullName) return profile.value.fullName;
-  if (user.value?.fullName) return user.value.fullName;
-  return 'Chưa cập nhật tên';
-});
-
-const displayEmail = computed(
-  () => profile.value?.email ?? user.value?.email ?? '',
-);
-
-const displayAvatar = computed(
-  () => profile.value?.avatarUrl ?? user.value?.avatarUrl ?? null,
-);
-
-/* ============================================================================
- * Avatar upload — click avatar trong overview → file picker → upload MinIO
- *                  → persist qua POST /auth/change-avatar → update local state.
- *
- * Flow chi tiết (xem `userApi.changeAvatar` JSDoc ở services/user.api.ts):
- *   1. View-level guard: kiểu MIME + size → fail-fast với message tiếng Việt.
- *   2. uploadStore.uploadImage(file, 'avatars') → POST /uploads/image → UploadResult.
- *   3. userApi.changeAvatar(url)               → POST /auth/change-avatar → DB update.
- *   4. Update `profile.value.avatarUrl` + `auth.user.avatarUrl` để mọi view
- *      render avatar mới ngay lập tức (sidebar, header, ...) — không cần re-fetch.
- *   5. Toast success → reset input value để chọn lại cùng file cũ vẫn trigger.
- *
- * Lưu ý:
- *   - Dùng `uploadStore.loading` (global) cho spinner vì avatar chỉ là 1 use case
- *     của store. Nếu user upload CV song song thì spinner vẫn đúng trạng thái.
- *   - KHÔNG có endpoint xoá avatar (changeAvatarSchema require URL) → nếu user
- *     muốn xoá avatar, backend cần thêm DELETE /auth/avatar. Để ngoài scope.
- * ==========================================================================*/
-
-const uploadStore = useUploadStore();
-const avatarInputRef = ref<HTMLInputElement | null>(null);
-
-const avatarUploading = computed<boolean>(() => uploadStore.loading);
-const avatarErrorMessage = computed<string | null>(() => uploadStore.error);
-
-/** Validate phía trước để fail-fast với message tiếng Việt cụ thể.
- *  Trả về string error nếu invalid, null nếu OK. */
-const validateAvatarFile = (file: File): string | null => {
-  if (!file.type.startsWith('image/')) {
-    return 'Vui lòng chọn file ảnh (JPG, PNG, WEBP, GIF).';
-  }
-  if (file.size > 5 * 1024 * 1024) {
-    return 'Ảnh tối đa 5MB.';
-  }
-  return null;
-};
-
-const pickAvatar = (): void => {
-  if (avatarUploading.value) return; // tránh click liên tục khi đang upload
-  avatarInputRef.value?.click();
-};
-
-const handleAvatarChange = async (e: Event): Promise<void> => {
-  const target = e.target as HTMLInputElement;
-  const file = target.files?.[0];
-  if (!file) return;
-  uploadStore.clearError();
-
-  // 1. FE guard.
-  const validationError = validateAvatarFile(file);
-  if (validationError) {
-    uploadStore.error = validationError;
-    return;
-  }
-
-  // 2. Upload file lên MinIO qua store → trả `{ url, key, mime, size }`.
-  const uploadResult = await uploadStore.uploadImage(file, 'avatars');
-  if (!uploadResult) return; // store đã set error sẵn
-
-  // 3. Persist URL vào user_profiles qua /auth/change-avatar.
-  try {
-    await userApi.changeAvatar(uploadResult.url);
-  } catch (err: unknown) {
-    const axiosErr = err as { response?: { data?: { error?: { message?: string } } } };
-    uploadStore.error =
-      axiosErr?.response?.data?.error?.message ?? 'Cập nhật avatar thất bại.';
-    return;
-  }
-
-  // 4. Cập nhật local state để mọi view render avatar mới ngay.
-  if (profile.value) {
-    profile.value.avatarUrl = uploadResult.url;
-  }
-  if (user.value) {
-    auth.user = { ...user.value, avatarUrl: uploadResult.url };
-  }
-
-  toast.success('Đã cập nhật ảnh đại diện.');
-
-  // 5. Reset input value để chọn lại cùng file vẫn trigger change event.
-  target.value = '';
-};
-
-/** Location string rút gọn để hiển thị trong overview. */
-const displayLocation = computed(() => {
-  const city = profile.value?.location?.city?.trim();
-  const district = profile.value?.location?.district?.trim();
-  if (city && district) return `${district}, ${city}`;
-  return city || district || '';
-});
-
-/* ============================================================================
- * Locations (tỉnh / quận-huyện)
- *
- * Dùng `useLocations` để fetch provinces + districts từ open-api.vn (depth=2)
- * 1 lần lúc mount. Cache ở module scope → remount không gọi lại.
- *
- * `currentProvince` map free-text city trong form → province code, dùng để
- * lookup districts tương ứng. Match case-insensitive với cả `name` lẫn
- * `shortName` để handle cả "Hà Nội" lẫn "Thành phố Hà Nội".
- *
- * `currentDistricts` reactive — UI sẽ tự update khi cache fill xong (khi
- * fetch xong lần đầu, các quận/huyện sẽ "pop in" trong datalist).
- *
- * Nếu user nhập city không match province nào (vd custom text cũ, hoặc
- * fallback 3 city không có districts) → currentProvince = null → datalist
- * rỗng cho district. Input vẫn cho free-text (datalist = suggestion only,
- * không validate).
- * ==========================================================================*/
-const locations = useLocations();
-
-const currentProvince = computed(() => {
-  return locations.findProvinceByName(form.city);
-});
-
-const currentDistricts = computed(() => {
-  const p = currentProvince.value;
-  if (!p) return [];
-  return locations.getDistricts(p.code);
-});
-
-/**
- * Helper cho template — vue-tsc thỉnh thoảng không auto-unwrap Ref khi truy
- * cập qua object literal return. Computed wrapper giúp infer rõ ràng.
- */
-/**
- * Option list cho LocationAutocomplete — tỉnh/thành.
- *
- * Map từ `LocationItem` của composable sang shape mà LocationAutocomplete cần:
- *   - value:    chuỗi fill vào input khi user chọn → dùng `shortName`
- *               (vd "Hà Nội") để match với data job backend đang lưu.
- *   - label:    full name (vd "Thành phố Hà Nội") — hiện phụ bên phải option
- *               giúp user phân biệt khi search "Bà Rịa" vs "Bắc Ninh".
- *   - icon:     LucideMapPin + brand primary tone.
- */
-const cityAutocompleteOptions = computed<LocationOption[]>(() =>
-  locations.items.value.map((p) => ({
-    value: p.shortName,
-    label: p.name,
-    icon: MapPin,
-    iconClass: 'bg-primary-50 ring-primary-100 text-primary-600',
-  })),
-);
-
-/**
- * Option list cho LocationAutocomplete — quận/huyện.
- *
- * Reactive — sẽ "pop in" khi `currentDistricts` fill xong sau khi location
- * fetch resolve. Trước khi user chọn province (hoặc nhập city không match)
- * thì list rỗng → dropdown panel không mở.
- *
- * `meta` = tên đầy đủ tỉnh cha (giúp user kiểm tra "Quận 1" thuộc HCM hay
- * thuộc Hà Nội — vì tên quận ở các tỉnh có thể trùng).
- */
-const districtAutocompleteOptions = computed<LocationOption[]>(() =>
-  currentDistricts.value.map((d) => ({
-    value: d.name,
-    meta: currentProvince.value?.name,
-    icon: Building2,
-    iconClass: 'bg-emerald-50 ring-emerald-100 text-emerald-700',
-  })),
-);
-
-/**
- * User chọn province từ dropdown → reset district. Lý do:
- *   - User có thể chọn nhầm province → district cũ thuộc tỉnh cũ.
- *   - Reset chủ động tránh payload backend lưu district không khớp city.
- *
- * CHỈ reset khi user chọn từ dropdown (không phải khi gõ tay), vì:
- *   - Khi gõ, user có thể đang cố ý edit city nhưng vẫn muốn giữ district text.
- *   - Khi select option, intent rõ ràng → an toàn reset.
- *
- * LocationAutocomplete emit `select` khi click option / Enter / arrow nav.
- */
-const onCitySelect = (_opt: LocationOption): void => {
-  form.district = '';
-};
-
-/* ============================================================================
- * Profile completion %
- *
- * Tính từ data thật của profile (không hard-code). Mỗi filled field được
- * tính điểm theo trọng số — tổng 100%.
- *
- * Lưu ý:
- *   - Một field optional mà null/rỗng → 0 điểm.
- *   - Social: chỉ cần 1/3 link cũng được +5 điểm khuyến khích.
- *   - Location: city + district mỗi cái 10 điểm.
- * ==========================================================================*/
-const completionBreakdown = computed(() => {
-  const p = profile.value;
-  const items: Array<{ label: string; filled: boolean }> = [];
-  let earned = 0;
-
-  // fullName — 20 điểm (quan trọng nhất).
-  const fullNameFilled = Boolean(p?.fullName?.trim());
-  if (fullNameFilled) earned += 20;
-  items.push({ label: 'Họ và tên', filled: fullNameFilled });
-
-  // phone — 15 điểm.
-  const phoneFilled = Boolean(p?.phone?.trim());
-  if (phoneFilled) earned += 15;
-  items.push({ label: 'Số điện thoại', filled: phoneFilled });
-
-  // avatar — 15 điểm.
-  const avatarFilled = Boolean(p?.avatarUrl?.trim());
-  if (avatarFilled) earned += 15;
-  items.push({ label: 'Ảnh đại diện', filled: avatarFilled });
-
-  // city — 10 điểm.
-  const cityFilled = Boolean(p?.location?.city?.trim());
-  if (cityFilled) earned += 10;
-  items.push({ label: 'Tỉnh / Thành phố', filled: cityFilled });
-
-  // district — 10 điểm.
-  const districtFilled = Boolean(p?.location?.district?.trim());
-  if (districtFilled) earned += 10;
-  items.push({ label: 'Quận / Huyện', filled: districtFilled });
-
-  // social — 10 điểm cho mỗi link (max 30).
-  const linkedinFilled = Boolean(p?.social?.linkedin?.trim());
-  const githubFilled = Boolean(p?.social?.github?.trim());
-  const portfolioFilled = Boolean(p?.social?.portfolio?.trim());
-  if (linkedinFilled) earned += 10;
-  if (githubFilled) earned += 10;
-  if (portfolioFilled) earned += 10;
-  items.push({ label: 'LinkedIn', filled: linkedinFilled });
-  items.push({ label: 'GitHub', filled: githubFilled });
-  items.push({ label: 'Portfolio', filled: portfolioFilled });
-
-  return { percentage: Math.min(100, earned), items };
-});
-
-const completionPercentage = computed(() => completionBreakdown.value.percentage);
-
-const completionHint = computed(() => {
-  const p = completionPercentage.value;
-  if (p >= 90) return 'Hồ sơ rất ấn tượng!';
-  if (p >= 70) return 'Hồ sơ khá tốt — thêm vài mục để hoàn thiện.';
-  if (p >= 40) return 'Hoàn thiện hồ sơ để tăng cơ hội được nhà tuyển dụng chú ý.';
-  return 'Bắt đầu xây dựng hồ sơ chuyên nghiệp của bạn.';
-});
-
-/* ============================================================================
- * Loading + sync
- * ==========================================================================*/
-
-const loadProfile = async (): Promise<void> => {
-  loading.value = true;
-  loadError.value = '';
-  try {
-    const { data } = await candidateApi.getProfile();
-    profile.value = data.data;
-    syncFormFromProfile(data.data);
-  } catch (e: any) {
-    loadError.value =
-      e?.response?.data?.error?.message ?? 'Không thể tải hồ sơ';
-  } finally {
-    loading.value = false;
-  }
-};
-
-const syncFormFromProfile = (p: CandidateProfile): void => {
-  form.fullName = p.fullName ?? '';
-  form.phone = p.phone ?? '';
-  form.city = p.location?.city ?? '';
-  form.district = p.location?.district ?? '';
-  form.linkedin = p.social?.linkedin ?? '';
-  form.github = p.social?.github ?? '';
-  form.portfolio = p.social?.portfolio ?? '';
-};
-
-onMounted(() => {
-  // Locations fetch song song với profile — độc lập nhau, không cần đợi nhau.
-  // useLocations() tự dedupe + cache ở module scope, nên gọi nhiều lần vẫn OK.
-  void locations.fetch();
-  void loadProfile();
-});
-
-/* ============================================================================
- * Edit mode + helpers
- * ==========================================================================*/
-
-const startEdit = (): void => {
-  if (!profile.value) return;
-  isEditing.value = true;
-};
-
-const cancelEdit = (): void => {
-  if (
-    isDirty.value &&
-    !confirm('Bạn có thay đổi chưa lưu. Hủy và quay lại dữ liệu cũ?')
-  ) {
-    return;
-  }
-  if (profile.value) syncFormFromProfile(profile.value);
-  Object.keys(formErrors).forEach((k) => {
-    delete formErrors[k as keyof FormState];
-  });
-  isEditing.value = false;
-};
-
-/**
- * Click CTA "+ Thêm ..." ở view mode → vào edit mode + focus field.
- * Reuse flow chỉnh sửa hiện tại — không tạo flow riêng.
- */
-const focusField = (field: keyof FormState): void => {
-  if (!profile.value) return;
-  isEditing.value = true;
-  void nextTick(() => {
-    const el = document.getElementById(`profile-${field}`) as HTMLInputElement | null;
-    el?.focus();
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
-};
-
-const isDirty = computed(() => {
-  if (!profile.value) return false;
-  return (
-    (form.fullName.trim() || '') !== (profile.value.fullName || '') ||
-    (form.phone.trim() || '') !== (profile.value.phone || '') ||
-    (form.city.trim() || '') !== (profile.value.location?.city || '') ||
-    (form.district.trim() || '') !== (profile.value.location?.district || '') ||
-    (form.linkedin.trim() || '') !== (profile.value.social?.linkedin || '') ||
-    (form.github.trim() || '') !== (profile.value.social?.github || '') ||
-    (form.portfolio.trim() || '') !== (profile.value.social?.portfolio || '')
-  );
-});
-
-/* ============================================================================
- * Validation
- * ==========================================================================*/
-
-const validateForm = (): boolean => {
-  Object.keys(formErrors).forEach((k) => {
-    delete formErrors[k as keyof FormState];
-  });
-
-  const fullName = form.fullName.trim();
-  if (fullName.length === 0) {
-    formErrors.fullName = 'Vui lòng nhập họ tên';
-  } else if (fullName.length < 2) {
-    formErrors.fullName = 'Họ tên phải có ít nhất 2 ký tự';
-  } else if (fullName.length > 100) {
-    formErrors.fullName = 'Họ tên không quá 100 ký tự';
-  }
-
-  const phone = form.phone.trim();
-  if (phone.length > 0 && !/^[\d\s+\-()]+$/.test(phone)) {
-    formErrors.phone = 'Số điện thoại chỉ chứa chữ số và các ký tự + - ( )';
-  }
-
-  const urlFields: Array<['linkedin' | 'github' | 'portfolio', string]> = [
-    ['linkedin', form.linkedin],
-    ['github', form.github],
-    ['portfolio', form.portfolio],
-  ];
-  for (const [key, raw] of urlFields) {
-    const v = raw.trim();
-    if (v.length === 0) continue;
-    try {
-      const u = new URL(v);
-      if (!/^https?:$/.test(u.protocol)) {
-        formErrors[key] = 'URL phải bắt đầu bằng http:// hoặc https://';
-      }
-    } catch {
-      formErrors[key] = 'URL không hợp lệ';
-    }
-  }
-
-  return Object.keys(formErrors).length === 0;
-};
-
-/* ============================================================================
- * Save
- * ==========================================================================*/
-
-const save = async (): Promise<void> => {
-  if (!validateForm()) return;
-  submitting.value = true;
-  try {
-    const payload: Parameters<typeof candidateApi.updateProfile>[0] = {};
-
-    const newFullName = form.fullName.trim();
-    if (newFullName !== (profile.value?.fullName ?? '')) {
-      payload.fullName = newFullName;
-    }
-
-    const newPhone = form.phone.trim();
-    if (newPhone !== (profile.value?.phone ?? '')) {
-      payload.phone = newPhone || undefined;
-    }
-
-    const oldLoc = profile.value?.location ?? null;
-    const newCity = form.city.trim();
-    const newDistrict = form.district.trim();
-    const newLoc: { city?: string; district?: string } = {};
-    let locChanged = false;
-    if (newCity !== (oldLoc?.city ?? '')) {
-      newLoc.city = newCity;
-      locChanged = true;
-    }
-    if (newDistrict !== (oldLoc?.district ?? '')) {
-      newLoc.district = newDistrict;
-      locChanged = true;
-    }
-    if (locChanged) payload.location = newLoc;
-
-    const oldSoc = profile.value?.social ?? null;
-    const newSoc: { linkedin?: string; github?: string; portfolio?: string } = {};
-    let socChanged = false;
-    const socialFields: Array<['linkedin' | 'github' | 'portfolio', string]> = [
-      ['linkedin', form.linkedin],
-      ['github', form.github],
-      ['portfolio', form.portfolio],
-    ];
-    for (const [key, raw] of socialFields) {
-      const v = raw.trim();
-      const oldVal = oldSoc?.[key] ?? '';
-      if (v !== oldVal) {
-        (newSoc[key] as string | undefined) = v || undefined;
-        socChanged = true;
-      }
-    }
-    if (socChanged) payload.social = newSoc;
-
-    if (Object.keys(payload).length === 0) {
-      toast.info('Không có thay đổi nào để lưu.');
-      isEditing.value = false;
-      return;
-    }
-
-    const { data } = await candidateApi.updateProfile(payload);
-    profile.value = data.data;
-    if (data.data.fullName && user.value) {
-      auth.user = { ...user.value, fullName: data.data.fullName };
-    }
-    toast.success('Đã lưu hồ sơ thành công.');
-    isEditing.value = false;
-  } catch (e: any) {
-    toast.error(
-      e?.response?.data?.error?.message ?? 'Lưu hồ sơ thất bại.',
-      { title: 'Lỗi' },
-    );
-  } finally {
-    submitting.value = false;
-  }
-};
-
-/* ============================================================================
- * UI helpers — section header + social row
- * ==========================================================================*/
-
-interface SectionMeta {
-  title: string;
-  description: string;
-  icon: LucideIcon;
-  /** Container bg theo tone primary. */
-  iconWrapClass: string;
+interface SocialItem {
+  key: string
+  label: string
+  placeholder: string
+  value: string
+  icon: any
+  isCustom?: boolean
 }
 
-const SECTION_META: Record<'personal' | 'location' | 'social' | 'career', SectionMeta> = {
-  personal: {
-    title: 'Thông tin cá nhân',
-    description: 'Tên, số điện thoại và email của bạn',
-    icon: UserRound,
-    iconWrapClass: 'bg-primary-50 ring-1 ring-primary-100 text-primary-600',
+/** Tự động chọn icon phù hợp theo tên mạng xã hội */
+const getSocialIcon = (keyOrName: string) => {
+  const k = keyOrName.toLowerCase()
+  if (k.includes('linkedin')) return Linkedin
+  if (k.includes('github') || k.includes('git')) return Github
+  if (k.includes('facebook') || k.includes('fb')) return Facebook
+  if (k.includes('twitter') || k.includes('tweet') || k === 'x') return Twitter
+  if (k.includes('youtube') || k.includes('yt')) return Youtube
+  if (k.includes('instagram') || k.includes('insta')) return Instagram
+  return Globe
+}
+
+/** Format nhãn hiển thị cho mạng xã hội */
+const formatSocialLabel = (key: string): string => {
+  if (key === 'linkedin') return 'LinkedIn'
+  if (key === 'github') return 'GitHub'
+  if (key === 'portfolio') return 'Portfolio / Website'
+  if (key === 'facebook') return 'Facebook'
+  if (key === 'twitter') return 'Twitter / X'
+  if (key === 'youtube') return 'YouTube'
+  if (key === 'instagram') return 'Instagram'
+  if (key === 'tiktok') return 'TikTok'
+  return key
+    .split(/[_-\s]+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+/** Items cho tab Mạng xã hội — gồm các mục mặc định và các mục user tự thêm */
+const socialItems = computed<SocialItem[]>(() => {
+  const baseKeys = ['linkedin', 'github', 'portfolio']
+  const items: SocialItem[] = [
+    {
+      key: 'linkedin',
+      label: 'LinkedIn',
+      placeholder: 'https://linkedin.com/in/ten-cua-ban',
+      value: savedSocial.value.linkedin || '',
+      icon: Linkedin,
+      isCustom: false,
+    },
+    {
+      key: 'github',
+      label: 'GitHub',
+      placeholder: 'https://github.com/ten-cua-ban',
+      value: savedSocial.value.github || '',
+      icon: Github,
+      isCustom: false,
+    },
+    {
+      key: 'portfolio',
+      label: 'Portfolio / Website',
+      placeholder: 'https://trang-cua-ban.com',
+      value: savedSocial.value.portfolio || '',
+      icon: Globe,
+      isCustom: false,
+    },
+  ]
+
+  // Thêm các mạng xã hội tùy chỉnh khác từ savedSocial
+  for (const [k, val] of Object.entries(savedSocial.value)) {
+    if (!baseKeys.includes(k) && val) {
+      items.push({
+        key: k,
+        label: formatSocialLabel(k),
+        placeholder: 'https://...',
+        value: val,
+        icon: getSocialIcon(k),
+        isCustom: true,
+      })
+    }
+  }
+
+  return items
+})
+
+const socialLeft = computed(() => {
+  return socialItems.value.filter((item) => {
+    if (item.key === 'linkedin' || item.key === 'github') return true
+    if (item.key === 'portfolio') return false
+    const customList = socialItems.value.filter((s) => s.isCustom)
+    const customIdx = customList.indexOf(item)
+    return customIdx % 2 === 0
+  })
+})
+
+const socialRight = computed(() => {
+  return socialItems.value.filter((item) => {
+    if (item.key === 'portfolio') return true
+    if (item.key === 'linkedin' || item.key === 'github') return false
+    const customList = socialItems.value.filter((s) => s.isCustom)
+    const customIdx = customList.indexOf(item)
+    return customIdx % 2 === 1
+  })
+})
+
+/** Số lượng tài khoản mạng xã hội đã liên kết. */
+const socialCount = computed(() => {
+  const count = Object.values(savedSocial.value).filter(Boolean).length
+  return count > 0 ? count : undefined
+})
+
+/** Rút gọn URL hiển thị (bỏ protocol + trailing slash). */
+const shortUrl = (url: string): string =>
+  url.replace(/^https?:\/\//, '').replace(/\/$/, '')
+
+// ===== Inline edit cho Mạng xã hội tab =====
+const editingSocialKey = ref<string | null>(null)
+const socialDraft = ref<string>('')
+
+const startEditSingleSocial = (key: string, currentValue?: string): void => {
+  editingSocialKey.value = key
+  socialDraft.value = currentValue ?? ''
+}
+
+const cancelEditSingleSocial = (): void => {
+  editingSocialKey.value = null
+  socialDraft.value = ''
+}
+
+const saveSingleSocial = async (key: string): Promise<void> => {
+  let val = socialDraft.value.trim()
+  if (val && !/^https?:\/\//i.test(val)) {
+    val = `https://${val}`
+  }
+  if (val) {
+    try {
+      new URL(val)
+    } catch {
+      toast.push({
+        variant: 'error',
+        title: 'URL không hợp lệ',
+        body: 'Vui lòng nhập đường dẫn hợp lệ (ví dụ: https://...)',
+      })
+      return
+    }
+  }
+
+  try {
+    await candidateApi.updateProfile({
+      social: {
+        [key]: val,
+      },
+    })
+    if (!val && !['linkedin', 'github', 'portfolio'].includes(key)) {
+      const updated = { ...savedSocial.value }
+      delete updated[key]
+      savedSocial.value = updated
+    } else {
+      savedSocial.value = {
+        ...savedSocial.value,
+        [key]: val,
+      }
+    }
+    cancelEditSingleSocial()
+    toast.push({ variant: 'success', title: 'Đã cập nhật mạng xã hội' })
+    await loadSavedAddress()
+  } catch (err: unknown) {
+    toast.push({
+      variant: 'error',
+      title: 'Cập nhật thất bại',
+      body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+    })
+  }
+}
+
+// ===== Thêm loại mạng xã hội khác (2 ô: Tên mạng xh + Links) =====
+const isAddingSocial = ref(false)
+const newSocialName = ref('')
+const newSocialUrl = ref('')
+const addingSocialLoading = ref(false)
+const socialNameInputRef = ref<HTMLInputElement | null>(null)
+const socialUrlInputRef = ref<HTMLInputElement | null>(null)
+
+const startAddSocial = async (): Promise<void> => {
+  newSocialName.value = ''
+  newSocialUrl.value = ''
+  isAddingSocial.value = true
+  await nextTick()
+  socialNameInputRef.value?.focus()
+}
+
+const onSocialNameEnter = (): void => {
+  if (!newSocialUrl.value.trim()) {
+    socialUrlInputRef.value?.focus()
+  } else {
+    saveNewSocial()
+  }
+}
+
+const cancelAddSocial = (): void => {
+  isAddingSocial.value = false
+  newSocialName.value = ''
+  newSocialUrl.value = ''
+}
+
+const saveNewSocial = async (): Promise<void> => {
+  const name = newSocialName.value.trim()
+  let url = newSocialUrl.value.trim()
+
+  if (!name) {
+    toast.push({
+      variant: 'error',
+      title: 'Thiếu tên mạng xã hội',
+      body: 'Vui lòng nhập tên mạng xã hội (ví dụ: Facebook, TikTok, YouTube...)',
+    })
+    return
+  }
+
+  if (!url) {
+    toast.push({
+      variant: 'error',
+      title: 'Thiếu liên kết',
+      body: 'Vui lòng nhập đường dẫn URL liên kết',
+    })
+    return
+  }
+
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`
+  }
+
+  try {
+    new URL(url)
+  } catch {
+    toast.push({
+      variant: 'error',
+      title: 'URL không hợp lệ',
+      body: 'Vui lòng nhập đường dẫn hợp lệ (ví dụ: https://...)',
+    })
+    return
+  }
+
+  // Chuẩn hóa tên thành key lưu vào social
+  const key = name.toLowerCase().replace(/[\s\-_]+/g, '_').replace(/[^a-z0-9_]/g, '') || `social_${Date.now()}`
+
+  addingSocialLoading.value = true
+  try {
+    await candidateApi.updateProfile({
+      social: {
+        [key]: url,
+      },
+    })
+    savedSocial.value = {
+      ...savedSocial.value,
+      [key]: url,
+    }
+    cancelAddSocial()
+    toast.push({
+      variant: 'success',
+      title: 'Đã thêm mạng xã hội',
+      body: `${name}: ${shortUrl(url)}`,
+    })
+    await loadSavedAddress()
+  } catch (err: unknown) {
+    toast.push({
+      variant: 'error',
+      title: 'Thêm mạng xã hội thất bại',
+      body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+    })
+  } finally {
+    addingSocialLoading.value = false
+  }
+}
+
+/** Xóa mạng xã hội tùy chỉnh */
+const deleteSocial = async (key: string, label: string): Promise<void> => {
+  try {
+    await candidateApi.updateProfile({
+      social: {
+        [key]: '',
+      },
+    })
+    const updated = { ...savedSocial.value }
+    delete updated[key]
+    savedSocial.value = updated
+    toast.push({
+      variant: 'success',
+      title: 'Đã xóa mạng xã hội',
+      body: `Đã xóa liên kết ${label}`,
+    })
+    await loadSavedAddress()
+  } catch (err: unknown) {
+    toast.push({
+      variant: 'error',
+      title: 'Xóa thất bại',
+      body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+    })
+  }
+}
+
+// ===== Inline edit cho Thông tin tab =====
+const editingItemKey = ref<string | null>(null)
+const itemDraft = ref<string>('')
+
+const startEditItem = (column: 'left' | 'right', index: number, currentValue?: string): void => {
+  editingItemKey.value = `${column}-${index}`
+  itemDraft.value = currentValue ?? ''
+  // Birthday (right-2) dùng DD / MM / YYYY → fill cả 2 draft
+  if (column === 'right' && index === 2) {
+    birthdayDraft.value = formatBirthday(currentValue ?? '')
+    birthdayError.value = ''
+  }
+}
+
+const cancelEditItem = (): void => {
+  editingItemKey.value = null
+  itemDraft.value = ''
+  birthdayDraft.value = ''
+  birthdayError.value = ''
+}
+
+const saveItem = async (column: 'left' | 'right', index: number): Promise<void> => {
+  // School (left-1) / Work (left-2) → save via metadata JSONB
+  if (column === 'left' && (index === 1 || index === 2)) {
+    const field = index === 1 ? 'school' : 'work'
+    try {
+      await candidateApi.updateProfile({
+        metadata: { [field]: itemDraft.value.trim() },
+      })
+      cancelEditItem()
+      toast.push({ variant: 'success', title: 'Đã cập nhật' })
+      await loadSavedAddress()
+    } catch (err: unknown) {
+      toast.push({
+        variant: 'error',
+        title: 'Cập nhật thất bại',
+        body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      })
+    }
+    return
+  }
+  // Birthday (right-2) → save via metadata (DD / MM / YYYY → YYYY-MM-DD)
+  if (column === 'right' && index === 2) {
+    const trimmed = birthdayDraft.value.trim()
+    if (!trimmed) {
+      try {
+        await candidateApi.updateProfile({
+          metadata: { birthday: undefined },
+        })
+        cancelEditItem()
+        toast.push({ variant: 'success', title: 'Đã cập nhật' })
+        await loadSavedAddress()
+      } catch (err: unknown) {
+        toast.push({
+          variant: 'error',
+          title: 'Cập nhật thất bại',
+          body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+        })
+      }
+      return
+    }
+    const err = validateBirthdayDraft(trimmed)
+    if (err) {
+      toast.push({ variant: 'error', title: 'Ngày sinh không hợp lệ', body: err })
+      return
+    }
+    const iso = birthdayDraftToIso(trimmed)
+    if (!iso) {
+      toast.push({
+        variant: 'error',
+        title: 'Ngày sinh không hợp lệ',
+        body: 'Định dạng bắt buộc: Ngày / Tháng / Năm (ví dụ: 12 / 06 / 2005)',
+      })
+      return
+    }
+    try {
+      await candidateApi.updateProfile({
+        metadata: { birthday: iso },
+      })
+      cancelEditItem()
+      toast.push({ variant: 'success', title: 'Đã cập nhật' })
+      await loadSavedAddress()
+    } catch (err: unknown) {
+      toast.push({
+        variant: 'error',
+        title: 'Cập nhật thất bại',
+        body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      })
+    }
+    return
+  }
+  try {
+    const payload = updatePayloadForItem(column, index, itemDraft.value.trim())
+    await candidateApi.updateProfile(payload)
+    cancelEditItem()
+    toast.push({ variant: 'success', title: 'Đã cập nhật' })
+    // Reload để sync state từ server (tránh mutate proxy + có data mới nhất)
+    await loadSavedAddress()
+  } catch (err: unknown) {
+    toast.push({
+      variant: 'error',
+      title: 'Cập nhật thất bại',
+      body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+    })
+  }
+}
+
+// ===== Add new item inline =====
+const addingItemKey = ref<string | null>(null)
+const addDraft = ref<string>('')
+
+const startAddItem = (column: 'left' | 'right', index: number): void => {
+  if (column === 'right' && index === 2) {
+    startEditItem('right', 2, '')
+    return
+  }
+  addingItemKey.value = `${column}-${index}`
+  addDraft.value = ''
+}
+
+const cancelAddItem = (): void => {
+  addingItemKey.value = null
+  addDraft.value = ''
+}
+
+/** Lưu item mới — route theo column/index tới API tương ứng. */
+const saveAddItem = async (column: 'left' | 'right', index: number): Promise<void> => {
+  const value = addDraft.value.trim()
+  // left-1 = school, left-2 = work (metadata JSONB)
+  if (column === 'left' && (index === 1 || index === 2)) {
+    const field = index === 1 ? 'school' : 'work'
+    try {
+      await candidateApi.updateProfile({ metadata: { [field]: value } })
+      cancelAddItem()
+      toast.push({ variant: 'success', title: 'Đã thêm' })
+      await loadSavedAddress()
+    } catch (err: unknown) {
+      toast.push({
+        variant: 'error',
+        title: 'Thêm thất bại',
+        body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      })
+    }
+    return
+  }
+  // right-1 = phone
+  if (column === 'right' && index === 1) {
+    try {
+      await candidateApi.updateProfile({ phone: value || undefined })
+      cancelAddItem()
+      toast.push({ variant: 'success', title: 'Đã thêm' })
+      await loadSavedAddress()
+    } catch (err: unknown) {
+      toast.push({
+        variant: 'error',
+        title: 'Thêm thất bại',
+        body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      })
+    }
+    return
+  }
+  // right-2 = birthday (metadata)
+  if (column === 'right' && index === 2) {
+    const iso = birthdayDraftToIso(value)
+    if (value && !iso) {
+      toast.push({
+        variant: 'error',
+        title: 'Ngày sinh không hợp lệ',
+        body: 'Định dạng Ngày / Tháng / Năm (ví dụ: 12 / 06 / 2005)',
+      })
+      return
+    }
+    try {
+      await candidateApi.updateProfile({
+        metadata: { birthday: iso || undefined },
+      })
+      cancelAddItem()
+      toast.push({ variant: 'success', title: 'Đã thêm' })
+      await loadSavedAddress()
+    } catch (err: unknown) {
+      toast.push({
+        variant: 'error',
+        title: 'Thêm thất bại',
+        body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+      })
+    }
+    return
+  }
+  // Các item khác chưa có API
+  toast.push({
+    variant: 'error',
+    title: 'Chưa hỗ trợ',
+    body: 'Tính năng này đang phát triển',
+  })
+  cancelAddItem()
+}
+
+/** Map (column, index) → API payload để cập nhật field đó. */
+const updatePayloadForItem = (
+  column: 'left' | 'right',
+  index: number,
+  value: string,
+): { fullName?: string; phone?: string } => {
+  // Left column items: index 0 = Họ tên (fullName).
+  //                   index 1 = Trường học / index 2 = Nơi làm việc → metadata, xử lý riêng.
+  // Right column items: index 0 = Email (chưa có API update) → skip.
+  //                     index 1 = Phone (phone field).
+  if (column === 'left' && index === 0) {
+    return { fullName: value }
+  }
+  if (column === 'right' && index === 1) {
+    return { phone: value }
+  }
+  // Email + school + work + extras chưa support update payload dạng này
+  toast.push({
+    variant: 'error',
+    title: 'Chưa hỗ trợ',
+    body: 'Tính năng này đang phát triển',
+  })
+  throw new Error('Not implemented')
+}
+
+// ===== Address tab state & handlers =====
+const isEditingAddress = ref(false)
+const savingAddress = ref(false)
+const geocodingLoading = ref(false)
+
+const draftProvinceCode = ref<number | null>(null)
+const draftDistrictCode = ref<number | null>(null)
+const draftStreet = ref<string>('')
+
+const savedProvinceCode = ref<number | null>(79) // Mặc định TP.HCM (code 79)
+const savedDistrictCode = ref<number | null>(null)
+const savedStreet = ref<string>('')
+
+// Tọa độ & Map preview
+const pickedLat = ref<number | null>(null)
+const pickedLng = ref<number | null>(null)
+const previewBbox = ref<string | null>(null)
+const previewMarker = ref<string | null>(null)
+
+// useLocations: fetch provinces + districts qua API provinces.open-api.vn
+const {
+  items: provinces,
+  loading: locationsLoading,
+  fetch: fetchLocations,
+  getDistricts,
+} = useLocations()
+
+const provinceName = (code: number | null): string => {
+  if (!code) return ''
+  return provinces.value.find((p) => p.code === code)?.name ?? ''
+}
+
+const districtName = (provinceCode: number | null, districtCode: number | null): string => {
+  if (!provinceCode || !districtCode) return ''
+  return getDistricts(provinceCode).find((d) => d.code === districtCode)?.name ?? ''
+}
+
+/** Districts thuộc province đang chọn — lấy từ API provinces.open-api.vn/api/v1/d/ */
+const availableDistricts = computed(() => {
+  const code = isEditingAddress.value ? draftProvinceCode.value : savedProvinceCode.value
+  return code ? getDistricts(code) : []
+})
+
+/** Chuỗi địa chỉ đầy đủ ghép từ các trường */
+const fullAddressString = computed(() => {
+  const parts = [
+    savedStreet.value,
+    districtName(savedProvinceCode.value, savedDistrictCode.value),
+    provinceName(savedProvinceCode.value),
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(', ') : ''
+})
+
+/** Bắt đầu chỉnh sửa: call API ngoài provinces.open-api.vn nếu chưa có */
+const startEditAddress = async (): Promise<void> => {
+  if (provinces.value.length === 0) {
+    await fetchLocations()
+  }
+  draftProvinceCode.value = savedProvinceCode.value
+  draftDistrictCode.value = savedDistrictCode.value
+  draftStreet.value = savedStreet.value
+  isEditingAddress.value = true
+}
+
+const cancelEditAddress = (): void => {
+  isEditingAddress.value = false
+  draftProvinceCode.value = savedProvinceCode.value
+  draftDistrictCode.value = savedDistrictCode.value
+  draftStreet.value = savedStreet.value
+}
+
+/** Khi đổi tỉnh/thành phố: reset quận/huyện để user chọn lại từ API */
+const onProvinceChange = (): void => {
+  draftDistrictCode.value = null
+}
+
+/** Gọi Photon Geocoding API để kiểm tra địa chỉ và lấy tọa độ chính xác */
+const previewAddressOnMap = async (): Promise<void> => {
+  if (!draftProvinceCode.value) {
+    toast.push({
+      variant: 'error',
+      title: 'Chưa chọn Tỉnh / Thành phố',
+      body: 'Vui lòng chọn ít nhất Tỉnh / Thành phố để kiểm tra vị trí',
+    })
+    return
+  }
+
+  const province = provinceName(draftProvinceCode.value)
+  const district = districtName(draftProvinceCode.value, draftDistrictCode.value)
+  const street = draftStreet.value.trim()
+
+  const queries = [
+    [street, district, province, 'Vietnam'].filter(Boolean).join(', '),
+    [street, district, province].filter(Boolean).join(', '),
+    [district, province, 'Vietnam'].filter(Boolean).join(', '),
+    [district, province].filter(Boolean).join(', '),
+    [province, 'Vietnam'].filter(Boolean).join(', '),
+  ].filter((q) => q.length > 0)
+
+  geocodingLoading.value = true
+  try {
+    for (const q of queries) {
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1`
+      const res = await fetch(url)
+      if (!res.ok) continue
+      const data = (await res.json()) as {
+        features?: Array<{
+          geometry: { coordinates: [number, number] }
+          properties?: { name?: string; extent?: [number, number, number, number] }
+        }>
+      }
+      const features = data.features ?? []
+      if (features.length === 0) continue
+
+      const f = features[0]
+      const [lon, lat] = f.geometry.coordinates
+      let minLon: number, minLat: number, maxLon: number, maxLat: number
+      if (f.properties?.extent && f.properties.extent.length === 4) {
+        ;[minLon, minLat, maxLon, maxLat] = f.properties.extent
+      } else {
+        const pad = 0.005
+        minLon = lon - pad
+        minLat = lat - pad
+        maxLon = lon + pad
+        maxLat = lat + pad
+      }
+      pickedLat.value = lat
+      pickedLng.value = lon
+      previewBbox.value = `${minLon},${minLat},${maxLon},${maxLat}`
+      previewMarker.value = `${lat},${lon}`
+
+      const locationLabel = [street, district, province].filter(Boolean).join(', ')
+      toast.push({
+        variant: 'success',
+        title: 'Đã tìm thấy tọa độ!',
+        body: `${lat.toFixed(4)}, ${lon.toFixed(4)} — ${f.properties?.name || locationLabel}`,
+      })
+      return
+    }
+
+    toast.push({
+      variant: 'error',
+      title: 'Không tìm thấy tọa độ chính xác',
+      body: 'Không thể định vị được địa chỉ này trên bản đồ. Bạn có thể kiểm tra lại tên đường hoặc quận/huyện.',
+    })
+  } catch (err: unknown) {
+    toast.push({
+      variant: 'error',
+      title: 'Lỗi định vị bản đồ',
+      body: err instanceof Error ? err.message : 'Vui lòng thử lại sau',
+    })
+  } finally {
+    geocodingLoading.value = false
+  }
+}
+
+/** Lưu địa chỉ vào backend sau khi đã chọn tỉnh, quận, đường và lấy tọa độ */
+const saveAddress = async (): Promise<void> => {
+  if (!draftProvinceCode.value) {
+    toast.push({
+      variant: 'error',
+      title: 'Chưa chọn Tỉnh / Thành phố',
+      body: 'Vui lòng chọn Tỉnh / Thành phố trước khi lưu',
+    })
+    return
+  }
+
+  savingAddress.value = true
+  try {
+    const city = provinceName(draftProvinceCode.value)
+    const district = districtName(draftProvinceCode.value, draftDistrictCode.value)
+    const address = draftStreet.value.trim()
+
+    // Nếu chưa có tọa độ, tự động kiểm tra và lấy tọa độ trước khi lưu
+    if (pickedLat.value === null || pickedLng.value === null) {
+      await previewAddressOnMap()
+    }
+
+    // PATCH /candidates/profile — backend lưu vào candidates.location (JSONB)
+    await candidateApi.updateProfile({
+      location: {
+        city,
+        district: district || '',
+        address: address || '',
+        lat: pickedLat.value ?? undefined,
+        lng: pickedLng.value ?? undefined,
+      },
+    })
+
+    savedProvinceCode.value = draftProvinceCode.value
+    savedDistrictCode.value = draftDistrictCode.value
+    savedStreet.value = address
+
+    loadedLocation.value = {
+      city,
+      district,
+      address,
+      lat: pickedLat.value,
+      lng: pickedLng.value,
+    }
+
+    isEditingAddress.value = false
+    toast.push({
+      variant: 'success',
+      title: 'Đã lưu địa chỉ thành công',
+      body: [address, district, city].filter(Boolean).join(', '),
+    })
+  } catch (err: unknown) {
+    toast.push({
+      variant: 'error',
+      title: 'Lưu địa chỉ thất bại',
+      body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+    })
+  } finally {
+    savingAddress.value = false
+  }
+}
+
+/** Định vị lại trên thẻ bản đồ */
+const refreshMapLocation = async (): Promise<void> => {
+  draftProvinceCode.value = savedProvinceCode.value
+  draftDistrictCode.value = savedDistrictCode.value
+  draftStreet.value = savedStreet.value
+  await previewAddressOnMap()
+  if (pickedLat.value !== null && pickedLng.value !== null) {
+    try {
+      await candidateApi.updateProfile({
+        location: {
+          lat: pickedLat.value,
+          lng: pickedLng.value,
+        },
+      })
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Load saved location từ API + reverse-lookup province code từ city name */
+const loadSavedAddress = async (): Promise<void> => {
+  try {
+    const { data } = await candidateApi.getProfile()
+    savedProfile.value = data.data ?? null
+    const meta = data.data?.metadata
+    profileSchool.value = meta?.school ?? ''
+    profileWork.value = meta?.work ?? ''
+    profileBirthday.value = meta?.birthday ?? ''
+    profilePhone.value = data.data?.phone ?? ''
+    const loc = data.data?.location
+    const cityName = loc?.city
+    const districtNameVal = loc?.district ?? ''
+
+    if (cityName !== undefined && cityName !== null) {
+      const cityKey = cityName
+      loadedLocation.value = {
+        city: cityKey,
+        district: districtNameVal,
+        address: loc?.address ?? '',
+        lat: typeof loc?.lat === 'number' ? loc.lat : null,
+        lng: typeof loc?.lng === 'number' ? loc.lng : null,
+      }
+      savedStreet.value = loc?.address ?? ''
+      pickedLat.value = typeof loc?.lat === 'number' ? loc.lat : null
+      pickedLng.value = typeof loc?.lng === 'number' ? loc.lng : null
+
+      if (provinces.value.length === 0) {
+        await fetchLocations()
+      }
+      const matchedProvince = provinces.value.find(
+        (p) => p.name.toLowerCase() === cityKey.toLowerCase(),
+      )
+      if (matchedProvince) {
+        savedProvinceCode.value = matchedProvince.code
+        const matchedDistrict = getDistricts(matchedProvince.code).find(
+          (d) => d.name.toLowerCase() === districtNameVal.toLowerCase(),
+        )
+        if (matchedDistrict) savedDistrictCode.value = matchedDistrict.code
+      }
+    }
+
+    const social = data.data?.social as Record<string, string> | null
+    savedSocial.value = {
+      linkedin: '',
+      github: '',
+      portfolio: '',
+      ...(social || {}),
+    }
+
+    if (pickedLat.value !== null && pickedLng.value !== null) {
+      const pad = 0.005
+      previewBbox.value = `${pickedLng.value - pad},${pickedLat.value - pad},${pickedLng.value + pad},${pickedLat.value + pad}`
+      previewMarker.value = `${pickedLat.value},${pickedLng.value}`
+    }
+  } catch (err) {
+    console.warn('[ProfileMockup] loadSavedAddress failed:', err)
+  }
+}
+
+onMounted(() => {
+  void loadSavedAddress()
+})
+
+/** Role tiếng Việt cho hiển thị */
+const profileRoleLabel = computed(() => {
+  const role = auth.user?.role
+  if (role === 'employer') return 'Nhà tuyển dụng'
+  if (role === 'admin') return 'Quản trị viên'
+  return 'Ứng viên'
+})
+
+// ===== Cover image upload =====
+const DEFAULT_COVER =
+  'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1400&q=80'
+const coverInputEl = ref<HTMLInputElement | null>(null)
+const uploadingCover = ref(false)
+
+/** Click "Edit Cover" → trigger file picker. */
+const onPickCover = (): void => {
+  coverInputEl.value?.click()
+}
+
+const onCoverFileChange = async (e: Event): Promise<void> => {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  uploadingCover.value = true
+  try {
+    const result = await uploadApi.uploadImage(file, 'covers')
+    const coverUrl = result.data.data.url
+    // PATCH /candidates/profile → backend lưu vào user_profiles.cover_url
+    await candidateApi.updateProfile({ coverUrl })
+    // Reload để sync savedProfile → template re-render với ảnh mới
+    await loadSavedAddress()
+    toast.push({ variant: 'success', title: 'Đã cập nhật ảnh bìa' })
+  } catch (err: unknown) {
+    toast.push({
+      variant: 'error',
+      title: 'Upload ảnh bìa thất bại',
+      body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+    })
+  } finally {
+    uploadingCover.value = false
+    target.value = ''
+  }
+}
+
+// ===== Avatar upload (click avatar → file picker → uploadApi → changeAvatar) =====
+const toast = useToastStore()
+
+const uploadingAvatar = ref(false)
+const avatarInputEl = ref<HTMLInputElement | null>(null)
+
+/** Click avatar → trigger file picker. */
+const onPickAvatar = (): void => {
+  avatarInputEl.value?.click()
+}
+
+const onAvatarFileChange = async (e: Event): Promise<void> => {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  uploadingAvatar.value = true
+  try {
+    const result = await uploadApi.uploadImage(file, 'avatars')
+    const avatarUrl = result.data.data.url
+    // Cập nhật auth.user.avatarUrl để mọi view phản ánh thay đổi.
+    if (auth.user) {
+      auth.user = { ...auth.user, avatarUrl }
+    }
+    toast.push({ variant: 'success', title: 'Đã cập nhật ảnh đại diện', body: file.name })
+  } catch (err: unknown) {
+    toast.push({
+      variant: 'error',
+      title: 'Upload ảnh đại diện thất bại',
+      body: err instanceof Error ? err.message : 'Vui lòng thử lại',
+    })
+  } finally {
+    uploadingAvatar.value = false
+    target.value = ''
+  }
+}
+
+/** Reactive aboutLeft items — auto-sync từ profileName/School/Work refs. */
+const aboutLeft = ref<ProfileAboutItem[]>([
+  {
+    icon: User,
+    title: 'Họ tên',
+    subtitle: '',
   },
-  location: {
-    title: 'Địa chỉ',
-    description: 'Nơi bạn đang sinh sống',
-    icon: MapPin,
-    iconWrapClass: 'bg-primary-50 ring-1 ring-primary-100 text-primary-600',
+  {
+    icon: GraduationCap,
+    title: 'Trường học',
+    subtitle: '',
+    actionIcon: 'plus',
   },
-  social: {
-    title: 'Liên kết mạng xã hội',
-    description: 'Giúp nhà tuyển dụng tìm hiểu thêm về bạn',
-    icon: Globe,
-    iconWrapClass: 'bg-primary-50 ring-1 ring-primary-100 text-primary-600',
-  },
-  career: {
-    title: 'Hồ sơ nghề nghiệp',
-    description: 'CV và các thông tin nghề nghiệp',
+  {
     icon: Briefcase,
-    iconWrapClass: 'bg-primary-50 ring-1 ring-primary-100 text-primary-600',
+    title: 'Nơi làm việc',
+    subtitle: '',
+    actionIcon: 'plus',
   },
-};
+])
+
+// Sync aboutLeft items với các ref tương ứng mỗi khi chúng thay đổi.
+watch(
+  [profileName, profileSchool, profileWork],
+  ([name, school, work]: [string, string, string]) => {
+    aboutLeft.value[0].subtitle = name
+    aboutLeft.value[1].subtitle = school
+    aboutLeft.value[2].subtitle = work
+  },
+  { immediate: true },
+)
+
+const aboutRight = ref<ProfileAboutItem[]>([
+  {
+    icon: Mail,
+    title: 'Email',
+    subtitle: profileEmail.value,
+  },
+  {
+    icon: Phone,
+    title: "Số điện thoại",
+    subtitle: profilePhone.value,
+    actionIcon: profilePhone.value ? undefined : 'plus',
+  },
+  {
+    icon: Calendar,
+    title: 'Ngày sinh',
+    subtitle: profileBirthday.value,
+    actionIcon: 'plus',
+  },
+])
+
+// Sync phone vào aboutRight (index 1) — giữ title "Số điện thoại" cố định.
+watch(
+  profilePhone,
+  (phone) => {
+    if (aboutRight.value[1]) {
+      aboutRight.value[1].subtitle = phone
+      aboutRight.value[1].actionIcon = phone ? undefined : 'plus'
+    }
+  },
+  { immediate: true },
+)
+
+/** Format YYYY-MM-DD → DD / MM / YYYY cho hiển thị tiếng Việt. */
+const formatBirthday = (iso: string): string => {
+  if (!iso) return ''
+  const trimmed = iso.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split('-')
+    return `${d} / ${m} / ${y}`
+  }
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits.length === 8) {
+    if (/^(19|20)\d{6}$/.test(digits) && !trimmed.includes('/')) {
+      return `${digits.slice(6, 8)} / ${digits.slice(4, 6)} / ${digits.slice(0, 4)}`
+    }
+    return `${digits.slice(0, 2)} / ${digits.slice(2, 4)} / ${digits.slice(4, 8)}`
+  }
+  return iso
+}
+
+/** Kiểm tra tính hợp lệ của ngày sinh theo định dạng Ngày / Tháng / Năm */
+const validateBirthdayDraft = (draft: string): string => {
+  const digits = draft.replace(/\D/g, '')
+  if (!digits) return ''
+
+  if (digits.length >= 2) {
+    const day = parseInt(digits.slice(0, 2), 10)
+    if (day < 1 || day > 31) return 'Ngày không hợp lệ (từ 01 đến 31)'
+  }
+
+  if (digits.length >= 4) {
+    const day = parseInt(digits.slice(0, 2), 10)
+    const month = parseInt(digits.slice(2, 4), 10)
+    if (month < 1 || month > 12) {
+      return 'Tháng không thể lớn hơn 12. Định dạng: Ngày / Tháng / Năm'
+    }
+    if ([4, 6, 9, 11].includes(month) && day > 30) {
+      return `Tháng ${month} chỉ có tối đa 30 ngày`
+    }
+    if (month === 2 && day > 29) {
+      return 'Tháng 2 chỉ có tối đa 29 ngày'
+    }
+  }
+
+  if (digits.length === 8) {
+    const day = parseInt(digits.slice(0, 2), 10)
+    const month = parseInt(digits.slice(2, 4), 10)
+    const year = parseInt(digits.slice(4, 8), 10)
+    const currentYear = new Date().getFullYear()
+    if (year < 1900) return 'Năm sinh không hợp lệ (từ 1900 trở đi)'
+    if (year > currentYear) return `Năm sinh không thể lớn hơn ${currentYear}`
+    const daysInMonth = new Date(year, month, 0).getDate()
+    if (day > daysInMonth) {
+      return `Tháng ${month}/${year} chỉ có ${daysInMonth} ngày`
+    }
+  }
+  return ''
+}
+
+/** Auto-format DD / MM / YYYY khi user nhập:
+ *  - Tự động chèn ' / ' sau ngày và tháng (ví dụ: 12 / 06 / 2005)
+ *  - Chỉ cho phép nhập số
+ *  - Giới hạn tối đa 8 số
+ */
+const onBirthdayInput = (e: Event): void => {
+  const target = e.target as HTMLInputElement
+  const raw = target.value.replace(/\D/g, '').slice(0, 8)
+
+  let formatted = ''
+  if (raw.length === 0) {
+    formatted = ''
+  } else if (raw.length <= 2) {
+    formatted = raw
+  } else if (raw.length <= 4) {
+    formatted = `${raw.slice(0, 2)} / ${raw.slice(2)}`
+  } else {
+    formatted = `${raw.slice(0, 2)} / ${raw.slice(2, 4)} / ${raw.slice(4)}`
+  }
+
+  target.value = formatted
+  birthdayDraft.value = formatted
+  birthdayError.value = validateBirthdayDraft(formatted)
+}
+
+/** Hỗ trợ gõ phím '/' hoặc '-' tiện lợi:
+ *  Ví dụ gõ '5' rồi gõ '/' -> tự chuyển thành '05 / '
+ *  Ví dụ gõ '12 / 6' rồi gõ '/' -> tự chuyển thành '12 / 06 / '
+ */
+const onBirthdayKeydown = (e: KeyboardEvent): void => {
+  if (e.key === '/' || e.key === '-') {
+    const target = e.target as HTMLInputElement
+    const raw = target.value.replace(/\D/g, '')
+    if (raw.length === 1) {
+      e.preventDefault()
+      const val = `0${raw} / `
+      target.value = val
+      birthdayDraft.value = val
+      birthdayError.value = ''
+    } else if (raw.length === 3) {
+      e.preventDefault()
+      const val = `${raw.slice(0, 2)} / 0${raw.slice(2)} / `
+      target.value = val
+      birthdayDraft.value = val
+      birthdayError.value = ''
+    }
+  }
+}
+
+/** Convert DD / MM / YYYY → YYYY-MM-DD (ISO). Trả về '' nếu invalid. */
+const birthdayDraftToIso = (draft: string): string => {
+  const digits = draft.replace(/\D/g, '')
+  if (digits.length !== 8) return ''
+  const err = validateBirthdayDraft(draft)
+  if (err) return ''
+  const dd = digits.slice(0, 2)
+  const mm = digits.slice(2, 4)
+  const yyyy = digits.slice(4, 8)
+  return `${yyyy}-${mm}-${dd}`
+}
+
+// Sync birthday vào aboutRight (index 2) — title "Ngày sinh" cố định.
+watch(
+  profileBirthday,
+  (birthday) => {
+    if (aboutRight.value[2]) {
+      aboutRight.value[2].subtitle = formatBirthday(birthday)
+      aboutRight.value[2].actionIcon = birthday ? undefined : 'plus'
+    }
+  },
+  { immediate: true },
+)
+
+type ProfileTab = 'Thông tin' | 'Địa chỉ' | 'Mạng xã hội' | 'Hồ sơ nghề nghiệp'
+const activeProfileTab = ref<ProfileTab>('Thông tin')
+const profileTabs: readonly ProfileTab[] = [
+  'Thông tin',
+  'Địa chỉ',
+  'Mạng xã hội',
+  'Hồ sơ nghề nghiệp',
+]
+
+/** Mức độ hoàn thiện hồ sơ — tham khảo ProfileView để đồng bộ trọng số.
+ *  Tổng 100%: fullName (20) + phone (15) + avatar (15) + city (10) + district (10) + social (10 mỗi, max 30). */
+const completionPercentage = computed(() => {
+  const p = savedProfile.value
+  let earned = 0
+  if (p?.fullName?.trim()) earned += 20
+  if (p?.phone?.trim()) earned += 15
+  if (profileAvatar.value) earned += 15
+  if (p?.location?.city?.trim()) earned += 10
+  if (p?.location?.district?.trim()) earned += 10
+  if (p?.social?.linkedin?.trim()) earned += 10
+  if (p?.social?.github?.trim()) earned += 10
+  if (p?.social?.portfolio?.trim()) earned += 10
+  return Math.min(100, earned)
+})
+
+/** Tone màu theo mức hoàn thiện: <30 đỏ, 30-69 cam, 70-89 vàng, ≥90 xanh lá.
+ *  Bám theo displayedCompletion (số đang chạy) để đổi màu mượt khi count-up đi qua ngưỡng. */
+const completionColorClass = computed(() => {
+  const p = displayedCompletion.value
+  if (p < 30) {
+    return { text: 'text-rose-600', bar: 'bg-rose-500' }
+  }
+  if (p < 70) {
+    return { text: 'text-orange-600', bar: 'bg-orange-500' }
+  }
+  if (p < 90) {
+    return { text: 'text-amber-600', bar: 'bg-amber-500' }
+  }
+  return { text: 'text-emerald-600', bar: 'bg-emerald-500' }
+})
+
+/** Số % hiển thị — chạy count-up animation từ giá trị cũ → giá trị mới khi load/reload. */
+const displayedCompletion = ref(0)
+let completionRafId: number | null = null
+
+const animateCompletion = (from: number, to: number): void => {
+  if (completionRafId !== null) {
+    cancelAnimationFrame(completionRafId)
+    completionRafId = null
+  }
+  const start = performance.now()
+  const duration = 1500
+  const tick = (now: number): void => {
+    const t = Math.min(1, (now - start) / duration)
+    // easeOutCubic cho cảm giác mượt
+    const eased = 1 - Math.pow(1 - t, 3)
+    displayedCompletion.value = Math.round(from + (to - from) * eased)
+    if (t < 1) {
+      completionRafId = requestAnimationFrame(tick)
+    } else {
+      completionRafId = null
+    }
+  }
+  completionRafId = requestAnimationFrame(tick)
+}
+
+watch(completionPercentage, (next, prev) => {
+  animateCompletion(prev ?? 0, next)
+})
+
+onBeforeUnmount(() => {
+  if (completionRafId !== null) {
+    cancelAnimationFrame(completionRafId)
+    completionRafId = null
+  }
+})
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#F7F8FA]">
-    <div class="mx-auto max-w-5xl px-4 sm:px-6 py-8 md:py-11">
-
-      <!-- ============================== PAGE HEADER ============================== -->
-      <header
-        class="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
-      >
-        <div class="flex items-center gap-3.5">
+  <div class="font-poppins min-h-screen bg-white">
+    <!-- ============== TOP NAV ============== -->
+ 
+    <!-- ============== BODY ============== -->
+    <main class="mx-auto border border-slate-200 max-w-[1200px]">
+      <!-- ===== Cover + Profile card ===== -->
+      <div class="border-b border-slate-200 bg-white shadow-sm">
+        <!-- Cover image container -->
+        <div class="relative h-72">
+          <!-- Background cover image (clipped to top rounded corners) -->
           <div
-            class="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 shadow-sm shrink-0"
+            class="absolute inset-0 overflow-hidden bg-cover bg-center"
+            :style="{
+              backgroundImage: `url('${profileCoverUrl || DEFAULT_COVER}')`,
+            }"
           >
-            <UserRound class="h-5 w-5 text-white" />
+            <!-- Bottom fade overlay -->
+            <div class="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/70 to-transparent" />
           </div>
-          <div class="min-w-0">
-            <h1 class="text-2xl md:text-[26px] font-bold tracking-tight text-slate-900 leading-tight">
-              Hồ sơ của tôi
-            </h1>
-            <p class="text-sm text-slate-500 mt-0.5">
-              Quản lý thông tin cá nhân và hồ sơ nghề nghiệp.
-            </p>
-          </div>
-        </div>
 
-        <div class="flex items-center gap-2 self-stretch md:self-auto">
+          <!-- Nút "Edit Cover" ở góc phải-dưới -->
           <button
-            v-if="!isEditing"
             type="button"
-            class="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-primary-600 text-sm font-semibold text-white shadow-sm shadow-primary-600/20 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!profile"
-            @click="startEdit"
+            class="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-md bg-black/60 px-3 py-2 text-sm font-medium text-white transition hover:bg-black/80 shadow"
+            aria-label="Đổi ảnh bìa"
+            :disabled="uploadingCover"
+            @click="onPickCover"
           >
-            <Pencil class="h-4 w-4" />
-            Chỉnh sửa
+            <Camera :size="16" />
+            {{ uploadingCover ? 'Đang tải...' : 'Đổi ảnh bìa' }}
           </button>
-          <template v-else>
-            <button
-              type="button"
-              class="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 transition disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="submitting"
-              @click="cancelEdit"
-            >
-              <X class="h-4 w-4" />
-              Huỷ
-            </button>
-            <button
-              type="button"
-              class="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-primary-600 text-sm font-semibold text-white shadow-sm shadow-primary-600/20 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="submitting || !isDirty"
-              @click="save"
-            >
-              <Loader2 v-if="submitting" class="h-4 w-4 animate-spin" />
-              <Save v-else class="h-4 w-4" />
-              {{ submitting ? 'Đang lưu...' : 'Lưu thay đổi' }}
-            </button>
-          </template>
-        </div>
-      </header>
 
-      <!-- ============================== LOADING STATE ============================== -->
-      <div
-        v-if="loading && !profile"
-        class="bg-white rounded-2xl border border-slate-200/70 flex flex-col items-center justify-center gap-3 min-h-[60vh]"
-        role="status"
-        aria-live="polite"
-      >
-        <div
-          class="h-12 w-12 rounded-full bg-primary-50 ring-1 ring-primary-100 inline-flex items-center justify-center"
-        >
-          <Loader2 class="h-6 w-6 text-primary-600 animate-spin" />
-        </div>
-        <p class="text-sm font-medium text-slate-600">Đang tải hồ sơ…</p>
-      </div>
-
-      <!-- ============================== LOAD ERROR ============================== -->
-      <div
-        v-else-if="loadError && !profile"
-        class="bg-white rounded-2xl border border-slate-200/70 p-8 text-center"
-      >
-        <div
-          class="mx-auto h-12 w-12 rounded-full bg-red-50 ring-1 ring-red-100 inline-flex items-center justify-center mb-3"
-        >
-          <AlertCircle class="h-6 w-6 text-red-500" />
-        </div>
-        <p class="text-sm text-red-700 mb-4">{{ loadError }}</p>
-        <button
-          type="button"
-          class="inline-flex items-center justify-center gap-1.5 h-9 px-4 text-sm font-medium rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition"
-          @click="loadProfile"
-        >
-          Thử lại
-        </button>
-      </div>
-
-      <!-- ============================== PROFILE CONTENT ============================== -->
-      <div v-else-if="profile" class="space-y-5">
-
-        <!-- ====== PROFILE OVERVIEW ====== -->
-        <section
-          class="bg-white rounded-2xl border border-slate-200/70 shadow-sm shadow-slate-900/[0.02] overflow-hidden"
-        >
-          <div class="p-6 sm:p-7">
-            <div class="flex flex-col sm:flex-row sm:items-start gap-5">
-              <!-- Avatar — click để upload (max 5MB, image/*, folder='avatars') -->
-              <div class="shrink-0 group relative">
-                <button
-                  type="button"
-                  class="relative flex items-center justify-center h-20 w-20 sm:h-24 sm:w-24 rounded-2xl bg-gradient-to-br from-primary-100 to-primary-50 ring-1 ring-primary-100 overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition disabled:cursor-not-allowed disabled:opacity-70"
-                  :disabled="avatarUploading"
-                  :aria-label="displayAvatar ? 'Đổi ảnh đại diện' : 'Thêm ảnh đại diện'"
-                  @click="pickAvatar"
-                >
-                  <img
-                    v-if="displayAvatar"
-                    :src="displayAvatar"
-                    :alt="displayName"
-                    class="h-full w-full object-cover transition"
-                    :class="{ 'opacity-60': avatarUploading }"
-                    @error="($event.target as HTMLImageElement).style.display = 'none'"
-                  />
-                  <UserRound v-else class="h-9 w-9 sm:h-11 sm:w-11 text-primary-600" />
-                </button>
-
-                <!-- Hover overlay (idle) — gợi ý "Đổi ảnh" -->
-                <span
-                  v-if="!avatarUploading"
-                  class="absolute inset-0 flex items-center justify-center gap-1.5 rounded-2xl bg-slate-900/55 text-white opacity-0 group-hover:opacity-100 transition pointer-events-none"
-                >
-                  <Camera class="h-4 w-4" aria-hidden="true" />
-                  <span class="text-xs font-medium">Đổi ảnh</span>
-                </span>
-
-                <!-- Upload overlay (active) — spinner, luôn hiển thị -->
-                <span
-                  v-if="avatarUploading"
-                  class="absolute inset-0 flex items-center justify-center rounded-2xl bg-slate-900/65 text-white pointer-events-none"
-                >
-                  <Loader2 class="h-5 w-5 animate-spin" aria-hidden="true" />
-                </span>
-
-                <!-- Hidden file input — trigger bằng JS qua pickAvatar() -->
-                <input
-                  ref="avatarInputRef"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  class="hidden"
-                  @change="handleAvatarChange"
+          <!-- Avatar & Name: Avatar nằm 70% trên cover và 30% nằm dưới phần tabs -->
+          <div class="absolute inset-x-0 bottom-0 flex items-end gap-5 px-8 z-20 pointer-events-none">
+            <!-- Avatar wrapper: translateY(30%) để 70% nằm trên cover, 30% nằm dưới -->
+            <div class="pointer-events-auto" style="transform: translateY(30%);">
+              <button
+                type="button"
+                class="group relative h-36 w-36 shrink-0 cursor-pointer rounded-full border-2 border-white bg-white shadow-lg transition hover:brightness-95"
+                aria-label="Đổi ảnh đại diện"
+                @click="onPickAvatar"
+              >
+                <div
+                  v-if="profileAvatar"
+                  class="h-full w-full rounded-full bg-cover bg-center object-cover"
+                  :style="{
+                    backgroundImage: `url('${profileAvatar}')`,
+                  }"
                 />
 
-                <!-- Inline error message dưới avatar (chỉ hiện khi upload fail) -->
-                <p
-                  v-if="avatarErrorMessage"
-                  role="alert"
-                  class="mt-1.5 ml-1 max-w-[6rem] sm:max-w-[7rem] text-[11px] leading-tight text-red-600 inline-flex items-start gap-1"
+                <div
+                  v-else
+                  class="flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br from-pink-300 via-purple-300 to-blue-300 text-3xl font-bold text-white"
                 >
-                  <AlertCircle class="h-3 w-3 mt-0.5 shrink-0" />
-                  <span class="break-words">{{ avatarErrorMessage }}</span>
+                  {{ profileInitial }}
+                </div>
+
+                <!-- Hover overlay -->
+                <div
+                  class="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition group-hover:opacity-100"
+                >
+                  <Camera :size="22" class="text-white" />
+                </div>
+
+                <!-- Loading state -->
+                <div
+                  v-if="uploadingAvatar"
+                  class="absolute inset-0 flex items-center justify-center rounded-full bg-black/60"
+                >
+                  <span class="text-xs font-medium text-white">Đang tải...</span>
+                </div>
+              </button>
+            </div>
+
+            <!-- Profile Name nằm trên cover -->
+            <div class="pointer-events-auto mb-3">
+              <h1 class="text-3xl font-semibold text-white drop-shadow-md">
+                {{ profileName }}
+              </h1>
+            </div>
+          </div>
+        </div>
+
+        <!-- Profile header: tabs + More button -->
+        <div class="relative px-6">
+          <!-- Tabs container: spacer bên trái chừa chỗ cho avatar, danh sách tab căn ra gần giữa -->
+          <div class="flex items-center justify-between">
+            <!-- Left spacer chừa chỗ cho Avatar (w-48 = 192px) -->
+            <div class="hidden sm:block w-48 shrink-0" />
+
+            <!-- Danh sách tab căn ra gần giữa -->
+            <div class="flex gap-6 md:gap-8 flex-1">
+              <button
+                v-for="(tab, idx) in profileTabs"
+                :key="idx"
+                class="relative -mb-px whitespace-nowrap py-3.5 text-sm font-medium transition"
+                :class="
+                  activeProfileTab === profileTabs[idx]
+                    ? 'text-blue-600 font-semibold'
+                    : 'text-slate-500 hover:text-slate-700'
+                "
+                @click="activeProfileTab = profileTabs[idx]"
+              >
+                <span class="capitalize">{{ profileTabs[idx] }}</span>
+
+                <span
+                  v-if="profileTabs[idx] === 'Mạng xã hội' && socialCount !== undefined"
+                  class="ml-1 text-xs text-slate-400"
+                >
+                  {{ socialCount }}
+                </span>
+
+                <span
+                  v-if="activeProfileTab === tab"
+                  class="absolute bottom-0 left-0 right-0 h-[2px] rounded-full bg-blue-600"
+                />
+              </button>
+            </div>
+
+            <!-- Right: Mức độ hoàn thiện hồ sơ (cân xứng với bên trái w-48) -->
+            <div class="shrink-0 sm:w-48">
+              <div class="flex items-center justify-between gap-2">
+                <span class="truncate text-xs font-medium text-slate-600">
+                  Hoàn thiện hồ sơ
+                </span>
+                <span
+                  class="shrink-0 text-xs font-bold tabular-nums transition-colors duration-700 ease-out"
+                  :class="completionColorClass.text"
+                >
+                  {{ displayedCompletion }}%
+                </span>
+              </div>
+              <div
+                class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200"
+                role="progressbar"
+                :aria-valuenow="completionPercentage"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-label="`Mức độ hoàn thiện hồ sơ ${completionPercentage}%`"
+              >
+                <div
+                  class="h-full rounded-full transition-[width,background-color] duration-700 ease-out"
+                  :class="completionColorClass.bar"
+                  :style="{ width: displayedCompletion + '%' }"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Tab content ===== -->
+      <!-- Thông tin tab -->
+      <section
+        v-if="activeProfileTab === 'Thông tin'"
+        class="bg-white p-6"
+      >
+        <h2 class="text-2xl font-bold text-slate-900">
+          Thông tin cá nhân
+        </h2>
+
+        <hr class="my-4 border-slate-200" />
+
+        <div class="grid grid-cols-1 gap-x-12 gap-y-5 md:grid-cols-2">
+          <!-- LEFT column -->
+          <div class="space-y-5">
+            <div
+              v-for="(item, idx) in aboutLeft"
+              :key="`l-${idx}`"
+              class="flex items-start gap-3"
+            >
+              <div
+                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+              >
+                <component :is="item.icon" :size="20" />
+              </div>
+
+              <div class="min-w-0 flex-1">
+                <!-- Title row (label — plain text) -->
+                <p class="text-sm text-slate-700">
+                  {{ item.title }}
+                </p>
+
+                <!-- Subtitle row: edit input hoặc value + pencil inline -->
+                <div class="mt-0.5 flex items-center">
+                  <!-- Đang edit: input + ✓ + ✕ -->
+                  <template v-if="editingItemKey === `left-${idx}`">
+                    <input
+                      v-model="itemDraft"
+                      type="text"
+                      class="flex-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none focus:border-blue-500"
+                      @keyup.enter="saveItem('left', idx)"
+                      @keyup.escape="cancelEditItem"
+                    />
+                    <button
+                     
+                      type="button"
+                      class="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                      aria-label="Lưu"
+                      @click="saveItem('left', idx)"
+                    >
+                      <Check :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      aria-label="Hủy"
+                      @click="cancelEditItem"
+                    >
+                      <X :size="14" />
+                    </button>
+                  </template>
+
+                  <!-- Không edit: pencil chỉ khi có value, + Thêm khi chưa có -->
+                  <template v-else>
+                    <!-- Đã có value → pencil + value -->
+                    <template v-if="item.subtitle">
+                      
+                      <p class="text-sm font-medium text-slate-900">
+                        {{ item.subtitle }}
+                      </p>
+                      <button
+                        type="button"
+                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-blue-600 transition"
+                        aria-label="Sửa"
+                        @click="startEditItem('left', idx, item.subtitle)"
+                      >
+                        <Pencil :size="12" class="text-slate-400" />
+                      </button>
+                    </template>
+                    <!-- Chưa có → + Thêm (ẩn khi đang trong add mode) -->
+                    <button
+                      v-if="!item.subtitle && item.actionIcon === 'plus' && addingItemKey !== `left-${idx}`"
+                      type="button"
+                      class="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                      aria-label="Add"
+                      @click="startAddItem('left', idx)"
+                    >
+                      <PlusIcon :size="14" />
+
+                      Thêm
+                    </button>
+                  </template>
+                </div>
+
+                <p
+                  v-if="item.extra"
+                  class="mt-0.5 text-xs text-slate-500"
+                >
+                  {{ item.extra }}
+                </p>
+
+                <!-- "+ Thêm" — click → input + ✓ inline -->
+                <div v-if="addingItemKey === `left-${idx}`" class="mt-2 flex items-center">
+                  <input
+                    v-model="addDraft"
+                    type="text"
+                    placeholder="Nhập thông tin..."
+                    class="flex-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-500"
+                    @keyup.enter="saveAddItem('left', idx)"
+                    @keyup.escape="cancelAddItem"
+                  />
+                  <button
+                    type="button"
+                    class="ml-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                    aria-label="Lưu"
+                    @click="saveAddItem('left', idx)"
+                  >
+                    <Check :size="14" />
+                  </button>
+                  <button
+                    type="button"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                    aria-label="Hủy"
+                    @click="cancelAddItem"
+                  >
+                    <X :size="14" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT column -->
+          <div class="space-y-5">
+            <div
+              v-for="(item, idx) in aboutRight"
+              :key="`r-${idx}`"
+              class="group flex items-start gap-3"
+            >
+              <div
+                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+              >
+                <component :is="item.icon" :size="20" />
+              </div>
+
+              <div class="min-w-0 flex-1">
+                <!-- Title row (label — plain text) -->
+                <p class="text-sm text-slate-700">
+                  {{ item.title }}
+                </p>
+
+                <!-- Subtitle row: pencil TRƯỚC value + pencil inline -->
+                <div v-if="item.subtitle" class="mt-0.5 flex items-center gap-1">
+                  <p class="text-xs text-slate-500">
+                    {{ item.subtitle }}
+                  </p>
+                  <button
+                    v-if="editingItemKey !== `right-${idx}` && idx !== 0"
+                    type="button"
+                    class="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-blue-600 transition"
+                    aria-label="Sửa"
+                    @click="startEditItem('right', idx, item.subtitle)"
+                  >
+                    <Pencil :size="12" />
+                  </button>
+                </div>
+
+                <div v-if="item.links" class="mt-1 space-y-0.5">
+                  <a
+                    v-for="(link, li) in item.links"
+                    :key="li"
+                    :href="link.value.startsWith('http') ? link.value : '#'"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="block text-xs text-slate-400 hover:text-blue-600"
+                  >
+                    {{ link.value.replace('https://', '') }}
+                  </a>
+                </div>
+
+                <!-- Edit input cho Phone (right-1) hoặc Birthday (right-2) — Birthday dùng DD / MM / YYYY -->
+                <div v-if="editingItemKey === `right-${idx}`" class="mt-2">
+                  <div class="flex items-center gap-2">
+                    <input
+                      v-if="idx === 2"
+                      v-model="birthdayDraft"
+                      type="text"
+                      inputmode="numeric"
+                      placeholder="12 / 06 / 2005"
+                      maxlength="14"
+                      class="flex-1 rounded-md border bg-white px-2 py-1 text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                      :class="birthdayError ? 'border-rose-400 focus:border-rose-500' : 'border-blue-300 focus:border-blue-500'"
+                      @input="onBirthdayInput"
+                      @keydown="onBirthdayKeydown"
+                      @keyup.enter="saveItem('right', idx)"
+                      @keyup.escape="cancelEditItem"
+                    />
+                    <input
+                      v-else
+                      v-model="itemDraft"
+                      type="tel"
+                      class="flex-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none focus:border-blue-500"
+                      @keyup.enter="saveItem('right', idx)"
+                      @keyup.escape="cancelEditItem"
+                    />
+                    <button
+                      type="button"
+                      class="flex h-7 w-7 items-center justify-center rounded-md text-white transition-colors"
+                      :class="idx === 2 && (!!birthdayError || (birthdayDraft.trim().length > 0 && birthdayDraft.replace(/\D/g, '').length !== 8)) ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
+                      
+                      aria-label="Lưu"
+                      @click="saveItem('right', idx)"
+                    >
+                      <Check :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      aria-label="Hủy"
+                      @click="cancelEditItem"
+                    >
+                      <X :size="14" />
+                    </button>
+                  </div>
+                  <!-- Helper / Error message cho Ngày sinh -->
+                  <template v-if="idx === 2">
+                    <p v-if="birthdayError" class="mt-1 text-xs font-medium text-rose-500">
+                      {{ birthdayError }}
+                    </p>
+                    <p v-else class="mt-1 text-xs text-slate-400">
+                      Định dạng: Ngày / Tháng / Năm (ví dụ: 12 / 06 / 2005)
+                    </p>
+                  </template>
+                </div>
+
+                <div class="mt-2 flex items-center">
+                  <!-- Add mode: input + ✓ + ✕ -->
+                  <div v-if="addingItemKey === `right-${idx}`" class="flex flex-1 items-center">
+                    <input
+                      v-model="addDraft"
+                      type="text"
+                      placeholder="Nhập thông tin..."
+                      class="flex-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-500"
+                      @keyup.enter="saveAddItem('right', idx)"
+                      @keyup.escape="cancelAddItem"
+                    />
+                    <button
+                      type="button"
+                      class="ml-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                      aria-label="Lưu"
+                      @click="saveAddItem('right', idx)"
+                    >
+                      <Check :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      aria-label="Hủy"
+                      @click="cancelAddItem"
+                    >
+                      <X :size="14" />
+                    </button>
+                  </div>
+
+                  <button
+                    v-else-if="item.actionIcon === 'plus' && editingItemKey !== `right-${idx}`"
+                    type="button"
+                    class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                    aria-label="Add"
+                    @click="startAddItem('right', idx)"
+                  >
+                    <PlusIcon :size="14" />
+
+                    Thêm
+                  </button>
+
+                  <!-- (pencil cũ đã chuyển lên subtitle row — bỏ duplicate ở đây) -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Địa chỉ tab (tương tự pattern tab Thông tin & Mạng xã hội) -->
+      <section
+        v-else-if="activeProfileTab === 'Địa chỉ'"
+        class="bg-white p-6"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-2xl font-bold text-slate-900">
+              Địa chỉ
+            </h2>
+            <p class="mt-1 text-sm text-slate-500">
+              Nơi bạn đang sinh sống và làm việc.
+            </p>
+          </div>
+
+          <button
+            v-if="!isEditingAddress"
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-blue-600 hover:border-blue-200"
+            @click="startEditAddress"
+          >
+            <Pencil :size="13" />
+            <span>Chỉnh sửa</span>
+          </button>
+        </div>
+
+        <hr class="my-4 border-slate-200" />
+
+        <div class="grid grid-cols-1 gap-x-12 gap-y-6 md:grid-cols-2">
+          <!-- LEFT column: Chế độ Xem (View) hoặc Chế độ Sửa (Edit) -->
+          <div>
+            <!-- VIEW MODE: Hiển thị các trường đồng bộ pattern tab Thông tin -->
+            <div v-if="!isEditingAddress" class="space-y-5">
+              <!-- 1. Tỉnh / Thành phố -->
+              <div class="group flex items-start gap-3">
+                <div
+                  class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+                >
+                  <Building2 :size="20" />
+                </div>
+
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm text-slate-700">
+                    Tỉnh / Thành phố
+                  </p>
+                  <div class="mt-0.5 flex items-center gap-1.5">
+                    <template v-if="savedProvinceCode && provinceName(savedProvinceCode)">
+                      <p class="text-sm font-medium text-slate-900">
+                        {{ provinceName(savedProvinceCode) }}
+                      </p>
+                      <button
+                        type="button"
+                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-blue-600 transition"
+                        aria-label="Sửa Tỉnh/Thành phố"
+                        @click="startEditAddress"
+                      >
+                        <Pencil :size="12" />
+                      </button>
+                    </template>
+                    <button
+                      v-else
+                      type="button"
+                      class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                      aria-label="Thêm Tỉnh/Thành phố"
+                      @click="startEditAddress"
+                    >
+                      <PlusIcon :size="14" />
+                      Thêm
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 2. Quận / Huyện -->
+              <div class="group flex items-start gap-3">
+                <div
+                  class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+                >
+                  <Navigation :size="20" />
+                </div>
+
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm text-slate-700">
+                    Quận / Huyện
+                  </p>
+                  <div class="mt-0.5 flex items-center gap-1.5">
+                    <template v-if="savedDistrictCode && districtName(savedProvinceCode, savedDistrictCode)">
+                      <p class="text-sm font-medium text-slate-900">
+                        {{ districtName(savedProvinceCode, savedDistrictCode) }}
+                      </p>
+                      <button
+                        type="button"
+                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-blue-600 transition"
+                        aria-label="Sửa Quận/Huyện"
+                        @click="startEditAddress"
+                      >
+                        <Pencil :size="12" />
+                      </button>
+                    </template>
+                    <button
+                      v-else
+                      type="button"
+                      class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                      aria-label="Thêm Quận/Huyện"
+                      @click="startEditAddress"
+                    >
+                      <PlusIcon :size="14" />
+                      Thêm
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 3. Địa chỉ chi tiết (số nhà, đường) -->
+              <div class="group flex items-start gap-3">
+                <div
+                  class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+                >
+                  <Home :size="20" />
+                </div>
+
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm text-slate-700">
+                    Địa chỉ chi tiết (số nhà, đường)
+                  </p>
+                  <div class="mt-0.5 flex items-center gap-1.5">
+                    <template v-if="savedStreet">
+                      <p class="text-sm font-medium text-slate-900 truncate max-w-[280px]">
+                        {{ savedStreet }}
+                      </p>
+                      <button
+                        type="button"
+                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-blue-600 transition"
+                        aria-label="Sửa địa chỉ chi tiết"
+                        @click="startEditAddress"
+                      >
+                        <Pencil :size="12" />
+                      </button>
+                    </template>
+                    <button
+                      v-else
+                      type="button"
+                      class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                      aria-label="Thêm địa chỉ chi tiết"
+                      @click="startEditAddress"
+                    >
+                      <PlusIcon :size="14" />
+                      Thêm
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4. Địa chỉ hoàn chỉnh & Trạng thái định vị -->
+              <div class="flex items-start gap-3">
+                <div
+                  class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+                >
+                  <MapPinned :size="20" />
+                </div>
+
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm text-slate-700">
+                    Địa chỉ hoàn chỉnh
+                  </p>
+                  <p v-if="fullAddressString" class="mt-0.5 text-xs text-slate-600 leading-relaxed font-medium">
+                    {{ fullAddressString }}
+                  </p>
+                  <p v-else class="mt-0.5 text-xs text-slate-400">
+                    Chưa thiết lập địa chỉ
+                  </p>
+
+                  <div class="mt-1 flex items-center gap-1.5 text-[11px]">
+                    <template v-if="pickedLat !== null && pickedLng !== null">
+                      <span class="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+                      <span class="text-emerald-700 font-medium">
+                        Đã định vị tọa độ ({{ pickedLat.toFixed(4) }}, {{ pickedLng.toFixed(4) }})
+                      </span>
+                    </template>
+                    <template v-else>
+                      <span class="inline-block h-2 w-2 rounded-full bg-amber-500" />
+                      <span class="text-amber-700 font-medium">
+                        Chưa xác định tọa độ bản đồ
+                      </span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- EDIT MODE: Gọi API ngoài cho Tỉnh/Quận + Ô nhập địa chỉ chi tiết có nút Kiểm tra & Lấy tọa độ -->
+            <div v-else class="space-y-4 rounded-xl border border-blue-200 bg-blue-50/30 p-5 shadow-sm">
+              <div class="flex items-center justify-between pb-2 border-b border-blue-100">
+                <div class="flex items-center gap-2">
+                  <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white">
+                    <Pencil :size="15" />
+                  </div>
+                  <div>
+                    <h3 class="text-sm font-semibold text-slate-900">Chỉnh sửa địa chỉ</h3>
+                    <p class="text-xs text-slate-500">Tải danh sách tỉnh/huyện từ API và định vị tọa độ</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  class="rounded-lg p-1.5 text-slate-400 hover:bg-white hover:text-slate-600 transition"
+                  aria-label="Đóng"
+                  @click="cancelEditAddress"
+                >
+                  <X :size="16" />
+                </button>
+              </div>
+
+              <!-- 1. Tỉnh / Thành phố (API call ngoài) -->
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">
+                  Tỉnh / Thành phố
+                  <span v-if="locationsLoading" class="ml-1 text-[11px] font-normal text-blue-600 animate-pulse">(Đang gọi API tải danh sách...)</span>
+                </label>
+                <select
+                  v-model.number="draftProvinceCode"
+                  class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  :disabled="locationsLoading && provinces.length === 0"
+                  @change="onProvinceChange"
+                >
+                  <option :value="null">-- Chọn tỉnh/thành --</option>
+                  <option v-for="p in provinces" :key="p.code" :value="p.code">
+                    {{ p.name }}
+                  </option>
+                </select>
+              </div>
+
+              <!-- 2. Quận / Huyện (API call ngoài theo tỉnh) -->
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">
+                  Quận / Huyện
+                  <span v-if="!draftProvinceCode" class="ml-1 text-[11px] font-normal text-slate-400">(Vui lòng chọn Tỉnh/Thành trước)</span>
+                </label>
+                <select
+                  v-model.number="draftDistrictCode"
+                  class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+                  :disabled="!draftProvinceCode"
+                >
+                  <option :value="null">-- Chọn quận/huyện --</option>
+                  <option v-for="d in availableDistricts" :key="d.code" :value="d.code">
+                    {{ d.name }}
+                  </option>
+                </select>
+              </div>
+
+              <!-- 3. Địa chỉ chi tiết (số nhà, đường) + Nút Kiểm tra và Lấy tọa độ -->
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">
+                  Địa chỉ chi tiết (số nhà, đường, phường)
+                </label>
+                <div class="flex gap-2">
+                  <input
+                    v-model="draftStreet"
+                    type="text"
+                    placeholder="Vd: 12 Nguyễn Huệ, Phường Bến Nghé"
+                    class="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none placeholder:text-slate-400 transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                    @keyup.enter="previewAddressOnMap"
+                  />
+
+                  <button
+                    type="button"
+                    class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-blue-300 bg-white px-3.5 py-2 text-xs font-medium text-blue-700 shadow-sm transition hover:bg-blue-50 hover:border-blue-400 disabled:opacity-50"
+                    :disabled="geocodingLoading || !draftProvinceCode"
+                    title="Kiểm tra địa chỉ và lấy tọa độ ghim bản đồ"
+                    @click="previewAddressOnMap"
+                  >
+                    <Loader2 v-if="geocodingLoading" :size="14" class="animate-spin text-blue-600" />
+                    <MapPin v-else :size="14" class="text-blue-600" />
+                    <span>{{ geocodingLoading ? 'Đang tìm...' : 'Kiểm tra' }}</span>
+                  </button>
+                </div>
+                <p class="mt-1 text-[11px] text-slate-500">
+                  Bấm <strong>"Kiểm tra"</strong> để tìm và ghim tọa độ chính xác lên bản đồ bên phải trước khi lưu.
                 </p>
               </div>
 
-              <!-- Identity -->
-              <div class="flex-1 min-w-0">
-                <div class="flex items-start justify-between gap-3 flex-wrap">
-                  <div class="min-w-0">
-                    <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 truncate">
-                      {{ displayName }}
-                    </h2>
-                    <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-                      <span class="inline-flex items-center gap-1.5 text-slate-600 min-w-0">
-                        <Mail class="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                        <span class="truncate">{{ displayEmail }}</span>
-                      </span>
-                      <span
-                        class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100"
-                      >
-                        <BadgeCheck class="h-3 w-3" />
-                        Đã xác thực
-                      </span>
-                    </div>
-                    <p
-                      v-if="displayLocation"
-                      class="mt-1.5 inline-flex items-center gap-1.5 text-sm text-slate-500"
+              <!-- Actions: Hủy + Lưu địa chỉ -->
+              <div class="flex items-center justify-end gap-2 pt-2 border-t border-blue-100">
+                <button
+                  type="button"
+                  class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
+                  @click="cancelEditAddress"
+                >
+                  Hủy
+                </button>
+
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition shadow-sm disabled:opacity-50"
+                  :disabled="savingAddress"
+                  @click="saveAddress"
+                >
+                  <Loader2 v-if="savingAddress" :size="14" class="animate-spin" />
+                  <Check v-else :size="14" />
+                  <span>{{ savingAddress ? 'Đang lưu...' : 'Lưu địa chỉ' }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT column: Bản đồ xem trước OpenStreetMap -->
+          <div class="space-y-2">
+            <div class="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+              <div class="mb-3 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-600">
+                    <MapPin :size="16" />
+                  </div>
+                  <div>
+                    <h4 class="text-sm font-semibold text-slate-900">Bản đồ vị trí</h4>
+                    <p class="text-[11px] text-slate-500">Xem trước vị trí trên OpenStreetMap</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-blue-600 disabled:opacity-50"
+                  :disabled="geocodingLoading"
+                  title="Tìm lại tọa độ theo địa chỉ hiện tại"
+                  @click="refreshMapLocation"
+                >
+                  <RotateCw :size="13" :class="{ 'animate-spin': geocodingLoading }" />
+                  <span>{{ geocodingLoading ? 'Đang tìm...' : 'Định vị lại' }}</span>
+                </button>
+              </div>
+
+              <!-- Map iframe -->
+              <div class="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-inner">
+                <!-- Location badge overlay on map -->
+                <div
+                  v-if="fullAddressString"
+                  class="pointer-events-none absolute left-2 top-2 z-10 max-w-[85%] truncate rounded-md bg-white/95 px-2 py-1 text-[11px] font-medium text-slate-800 shadow backdrop-blur-sm"
+                >
+                  📍 {{ fullAddressString }}
+                </div>
+
+                <iframe
+                  :src="previewBbox
+                    ? `https://www.openstreetmap.org/export/embed.html?bbox=${previewBbox}&layer=mapnik&marker=${previewMarker}`
+                    : 'https://www.openstreetmap.org/export/embed.html?bbox=106.65,10.73,106.78,10.82&layer=mapnik&marker=10.775,10.775'"
+                  class="h-64 w-full"
+                  style="border: 0"
+                  loading="lazy"
+                  referrerpolicy="no-referrer-when-downgrade"
+                  title="OpenStreetMap preview"
+                />
+
+                <!-- Overlay che watermark OSM ở góc dưới-phải -->
+                <div
+                  class="pointer-events-none absolute bottom-0 right-0 h-6 w-24 bg-white"
+                  aria-hidden="true"
+                />
+              </div>
+
+              <!-- Bottom info bar -->
+              <div class="mt-2.5 flex items-center justify-between text-[11px] text-slate-500">
+                <span v-if="pickedLat !== null && pickedLng !== null">
+                  Tọa độ: <span class="font-mono text-slate-700">{{ pickedLat.toFixed(5) }}, {{ pickedLng.toFixed(5) }}</span>
+                </span>
+                <span v-else class="text-amber-600">
+                  Chưa xác định tọa độ chính xác
+                </span>
+
+                <span class="text-slate-400">© OpenStreetMap</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- Mạng xã hội tab (tương tự pattern tab Thông tin) -->
+      <section
+        v-else-if="activeProfileTab === 'Mạng xã hội'"
+        class="bg-white p-6"
+      >
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">
+            Mạng xã hội
+          </h2>
+          <p class="mt-1 text-sm text-slate-500">
+            Liên kết mạng xã hội và tài khoản trực tuyến của bạn.
+          </p>
+        </div>
+
+        <hr class="my-4 border-slate-200" />
+
+        <div class="grid grid-cols-1 gap-x-12 gap-y-5 md:grid-cols-2">
+          <!-- LEFT column -->
+          <div class="space-y-5">
+            <div
+              v-for="item in socialLeft"
+              :key="item.key"
+              class="group flex items-start gap-3"
+            >
+              <div
+                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+              >
+                <component :is="item.icon" :size="20" />
+              </div>
+
+              <div class="min-w-0 flex-1">
+                <!-- Title row (label — plain text) -->
+                <div class="flex items-center justify-between">
+                  <p class="text-sm text-slate-700">
+                    {{ item.label }}
+                  </p>
+                  <button
+                    v-if="item.isCustom"
+                    type="button"
+                    class="flex h-5 w-5 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 transition"
+                    title="Xóa mạng xã hội này"
+                    @click="deleteSocial(item.key, item.label)"
+                  >
+                    <Trash2 :size="12" />
+                  </button>
+                </div>
+
+                <!-- Subtitle row: edit input hoặc value + pencil inline -->
+                <div class="mt-0.5 flex items-center">
+                  <!-- Đang edit: input + ✓ + ✕ -->
+                  <template v-if="editingSocialKey === item.key">
+                    <input
+                      v-model="socialDraft"
+                      type="text"
+                      :placeholder="item.placeholder"
+                      class="flex-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-500"
+                      @keyup.enter="saveSingleSocial(item.key)"
+                      @keyup.escape="cancelEditSingleSocial"
+                    />
+                    <button
+                      type="button"
+                      class="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                      aria-label="Lưu"
+                      @click="saveSingleSocial(item.key)"
                     >
-                      <MapPin class="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                      {{ displayLocation }}
+                      <Check :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      aria-label="Hủy"
+                      @click="cancelEditSingleSocial"
+                    >
+                      <X :size="14" />
+                    </button>
+                  </template>
+
+                  <!-- Không edit: link/value + pencil inline, hoặc + Thêm -->
+                  <template v-else>
+                    <!-- Đã có value → link + pencil -->
+                    <template v-if="item.value">
+                      <a
+                        :href="item.value"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline truncate max-w-[260px]"
+                      >
+                        <span class="truncate">{{ shortUrl(item.value) }}</span>
+                        <ExternalLink :size="12" class="shrink-0 text-slate-400" />
+                      </a>
+                      <button
+                        type="button"
+                        class="ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-blue-600 transition"
+                        aria-label="Sửa"
+                        @click="startEditSingleSocial(item.key, item.value)"
+                      >
+                        <Pencil :size="12" />
+                      </button>
+                    </template>
+
+                    <!-- Chưa có → + Thêm -->
+                    <button
+                      v-else
+                      type="button"
+                      class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                      aria-label="Thêm"
+                      @click="startEditSingleSocial(item.key, '')"
+                    >
+                      <PlusIcon :size="14" />
+                      Thêm
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT column -->
+          <div class="space-y-5">
+            <div
+              v-for="item in socialRight"
+              :key="item.key"
+              class="group flex items-start gap-3"
+            >
+              <div
+                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+              >
+                <component :is="item.icon" :size="20" />
+              </div>
+
+              <div class="min-w-0 flex-1">
+                <!-- Title row (label — plain text) -->
+                <div class="flex items-center justify-between">
+                  <p class="text-sm text-slate-700">
+                    {{ item.label }}
+                  </p>
+                  <button
+                    v-if="item.isCustom"
+                    type="button"
+                    class="flex h-5 w-5 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 transition"
+                    title="Xóa mạng xã hội này"
+                    @click="deleteSocial(item.key, item.label)"
+                  >
+                    <Trash2 :size="12" />
+                  </button>
+                </div>
+
+                <!-- Subtitle row: edit input hoặc value + pencil inline -->
+                <div class="mt-0.5 flex items-center">
+                  <!-- Đang edit: input + ✓ + ✕ -->
+                  <template v-if="editingSocialKey === item.key">
+                    <input
+                      v-model="socialDraft"
+                      type="text"
+                      :placeholder="item.placeholder"
+                      class="flex-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-500"
+                      @keyup.enter="saveSingleSocial(item.key)"
+                      @keyup.escape="cancelEditSingleSocial"
+                    />
+                    <button
+                      type="button"
+                      class="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                      aria-label="Lưu"
+                      @click="saveSingleSocial(item.key)"
+                    >
+                      <Check :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      aria-label="Hủy"
+                      @click="cancelEditSingleSocial"
+                    >
+                      <X :size="14" />
+                    </button>
+                  </template>
+
+                  <!-- Không edit: link/value + pencil inline, hoặc + Thêm -->
+                  <template v-else>
+                    <!-- Đã có value → link + pencil -->
+                    <template v-if="item.value">
+                      <a
+                        :href="item.value"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline truncate max-w-[260px]"
+                      >
+                        <span class="truncate">{{ shortUrl(item.value) }}</span>
+                        <ExternalLink :size="12" class="shrink-0 text-slate-400" />
+                      </a>
+                      <button
+                        type="button"
+                        class="ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-blue-600 transition"
+                        aria-label="Sửa"
+                        @click="startEditSingleSocial(item.key, item.value)"
+                      >
+                        <Pencil :size="12" />
+                      </button>
+                    </template>
+
+                    <!-- Chưa có → + Thêm -->
+                    <button
+                      v-else
+                      type="button"
+                      class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                      aria-label="Thêm"
+                      @click="startEditSingleSocial(item.key, '')"
+                    >
+                      <PlusIcon :size="14" />
+                      Thêm
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Mục Thêm mạng xã hội khác (nằm ở dưới Portfolio / Website) -->
+            <div class="flex items-start gap-3">
+              <div
+                class="flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition"
+                @click="!isAddingSocial && startAddSocial()"
+              >
+                <PlusIcon :size="20" />
+              </div>
+
+              <div class="min-w-0 flex-1">
+                <!-- Chế độ bình thường -->
+                <template v-if="!isAddingSocial">
+                  <div class="flex items-center justify-between">
+                    <p class="text-sm text-slate-700">
+                      Mạng xã hội khác
                     </p>
                   </div>
-                </div>
 
-                <!-- Completion -->
-                <div class="mt-5">
-                  <div class="flex items-center justify-between mb-1.5">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      Mức độ hoàn thiện hồ sơ
-                    </span>
-                    <span class="text-sm font-bold text-primary-700 tabular-nums">
-                      {{ completionPercentage }}%
-                    </span>
+                  <div class="mt-0.5 flex items-center">
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                      aria-label="Thêm mạng xã hội khác"
+                      @click="startAddSocial"
+                    >
+                      <PlusIcon :size="14" />
+                      Thêm
+                    </button>
                   </div>
-                  <div
-                    class="h-2 w-full rounded-full bg-slate-100 overflow-hidden"
-                    :aria-label="`Mức độ hoàn thiện hồ sơ ${completionPercentage}%`"
-                    role="progressbar"
-                    :aria-valuenow="completionPercentage"
-                    aria-valuemin="0"
-                    aria-valuemax="100"
-                  >
-                    <div
-                      class="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-600 shadow-[0_0_8px_rgba(37,99,235,0.35)] transition-[width] duration-700 ease-out"
-                      :style="{ width: completionPercentage + '%' }"
+                </template>
+
+                <!-- Chế độ edit/thêm: 2 ô như pattern edit ở trên (tên mạng xã hội ở trên, ở dưới là links) -->
+                <template v-else>
+                  <div class="space-y-1.5">
+                    <!-- Ô trên: Tên mạng xã hội -->
+                    <input
+                      ref="socialNameInputRef"
+                      v-model="newSocialName"
+                      type="text"
+                      placeholder="Tên mạng xã hội"
+                      class="w-full rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-500"
+                      @keyup.enter="onSocialNameEnter"
+                      @keyup.escape="cancelAddSocial"
                     />
+
+                    <!-- Ô dưới: links + ✓ + ✕ -->
+                    <div class="flex items-center">
+                      <input
+                        ref="socialUrlInputRef"
+                        v-model="newSocialUrl"
+                        type="text"
+                        placeholder="links"
+                        class="flex-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-500"
+                        @keyup.enter="saveNewSocial"
+                        @keyup.escape="cancelAddSocial"
+                      />
+                      <button
+                        type="button"
+                        class="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                        aria-label="Lưu"
+                        :disabled="addingSocialLoading"
+                        @click="saveNewSocial"
+                      >
+                        <Loader2 v-if="addingSocialLoading" :size="14" class="animate-spin" />
+                        <Check v-else :size="14" />
+                      </button>
+                      <button
+                        type="button"
+                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                        aria-label="Hủy"
+                        @click="cancelAddSocial"
+                      >
+                        <X :size="14" />
+                      </button>
+                    </div>
                   </div>
-                  <p
-                    class="mt-2 text-xs text-slate-500 inline-flex items-center gap-1.5"
-                  >
-                    <Sparkles class="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                    {{ completionHint }}
-                  </p>
-                </div>
+                </template>
               </div>
             </div>
           </div>
-        </section>
+        </div>
+      </section>
+      <!-- Hồ sơ nghề nghiệp tab -->
+      <section
+        v-else-if="activeProfileTab === 'Hồ sơ nghề nghiệp'"
+        class="bg-white p-6"
+      >
+        <h2 class="text-2xl font-bold text-slate-900">
+          Hồ sơ nghề nghiệp
+        </h2>
 
-        <!-- ============================== PERSONAL INFO ============================== -->
-        <section
-          class="bg-white rounded-2xl border border-slate-200/70 shadow-sm shadow-slate-900/[0.02] overflow-hidden"
-        >
-          <header
-            class="px-6 sm:px-7 pt-6 pb-4 flex items-center gap-3 border-b border-slate-100"
-          >
-            <span
-              :class="[
-                'inline-flex h-9 w-9 items-center justify-center rounded-lg shrink-0',
-                SECTION_META.personal.iconWrapClass,
-              ]"
-            >
-              <component :is="SECTION_META.personal.icon" class="h-4 w-4" />
-            </span>
-            <div class="flex-1 min-w-0">
-              <h3 class="text-base font-semibold text-slate-900">
-                {{ SECTION_META.personal.title }}
-              </h3>
-              <p class="text-xs text-slate-500 mt-0.5">
-                {{ SECTION_META.personal.description }}
-              </p>
-            </div>
-          </header>
+        <p class="mt-1 text-sm text-slate-500">
+          Thông tin kinh nghiệm làm việc và học vấn của bạn.
+        </p>
 
-          <div class="px-6 sm:px-7 py-6 space-y-5">
-            <!-- Họ và tên -->
-            <div>
-              <label
-                for="profile-fullName"
-                class="block text-sm font-medium text-slate-700 mb-1.5"
-              >
-                Họ và tên
-                <span class="text-red-500">*</span>
-              </label>
-              <div v-if="!isEditing">
-                <p class="text-[15px] font-medium text-slate-900">
-                  {{ profile.fullName || '—' }}
-                </p>
-                <button
-                  v-if="!profile.fullName"
-                  type="button"
-                  class="mt-1.5 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 transition"
-                  @click="focusField('fullName')"
-                >
-                  <Plus class="h-3.5 w-3.5" />
-                  Thêm họ và tên
-                </button>
-              </div>
-              <template v-else>
-                <input
-                  id="profile-fullName"
-                  v-model="form.fullName"
-                  type="text"
-                  maxlength="100"
-                  autocomplete="name"
-                  class="block w-full rounded-lg border bg-white px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:outline-none focus:ring-2"
-                  :class="formErrors.fullName
-                    ? 'border-red-300 focus:border-red-500 focus:ring-red-500/30'
-                    : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500/30'"
-                  placeholder="Nguyễn Văn A"
-                />
-                <p v-if="formErrors.fullName" class="mt-1 text-xs text-red-600">
-                  {{ formErrors.fullName }}
-                </p>
-              </template>
-            </div>
+        <hr class="my-4 border-slate-200" />
 
-            <!-- Số điện thoại -->
-            <div>
-              <label
-                for="profile-phone"
-                class="block text-sm font-medium text-slate-700 mb-1.5"
-              >
-                Số điện thoại
-              </label>
-              <div v-if="!isEditing">
-                <div v-if="profile.phone" class="flex items-center gap-2 text-[15px] font-medium text-slate-900">
-                  <Phone class="h-4 w-4 text-slate-400 shrink-0" />
-                  {{ profile.phone }}
-                </div>
-                <button
-                  v-else
-                  type="button"
-                  class="inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 transition"
-                  @click="focusField('phone')"
-                >
-                  <Plus class="h-3.5 w-3.5" />
-                  Thêm số điện thoại
-                </button>
-              </div>
-              <template v-else>
-                <div class="relative">
-                  <span
-                    class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-                  >
-                    <Phone class="h-4 w-4" />
-                  </span>
-                  <input
-                    id="profile-phone"
-                    v-model="form.phone"
-                    type="tel"
-                    maxlength="20"
-                    autocomplete="tel"
-                    class="block w-full rounded-lg border bg-white pl-9 pr-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:outline-none focus:ring-2"
-                    :class="formErrors.phone
-                      ? 'border-red-300 focus:border-red-500 focus:ring-red-500/30'
-                      : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500/30'"
-                    placeholder="0901234567"
-                  />
-                </div>
-                <p v-if="formErrors.phone" class="mt-1 text-xs text-red-600">
-                  {{ formErrors.phone }}
-                </p>
-              </template>
-            </div>
+        <p class="text-sm text-slate-500">
+          Tính năng đang phát triển. Vui lòng quay lại sau.
+        </p>
+      </section>
+    </main>
 
-            <!-- Email (read-only) -->
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1.5">
-                Email
-              </label>
-              <div
-                class="flex items-center gap-2 rounded-lg bg-slate-50 border border-slate-200/60 px-3.5 py-2 text-sm"
-              >
-                <Mail class="h-4 w-4 text-slate-400 shrink-0" />
-                <span class="text-slate-700 truncate flex-1">{{ displayEmail }}</span>
-                <span
-                  class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100 shrink-0"
-                >
-                  <BadgeCheck class="h-3 w-3" />
-                  Đã xác thực
-                </span>
-              </div>
-              <p class="mt-1.5 text-[11px] text-slate-400 inline-flex items-center gap-1">
-                <Sparkles class="h-3 w-3 text-amber-500" />
-                Email là bất biến — đổi email cần xác thực OTP riêng.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <!-- ============================== LOCATION ============================== -->
-        <section
-          class="bg-white rounded-2xl border border-slate-200/70 shadow-sm shadow-slate-900/[0.02] overflow-hidden"
-        >
-          <header
-            class="px-6 sm:px-7 pt-6 pb-4 flex items-center gap-3 border-b border-slate-100"
-          >
-            <span
-              :class="[
-                'inline-flex h-9 w-9 items-center justify-center rounded-lg shrink-0',
-                SECTION_META.location.iconWrapClass,
-              ]"
-            >
-              <component :is="SECTION_META.location.icon" class="h-4 w-4" />
-            </span>
-            <div class="flex-1 min-w-0">
-              <h3 class="text-base font-semibold text-slate-900">
-                {{ SECTION_META.location.title }}
-              </h3>
-              <p class="text-xs text-slate-500 mt-0.5">
-                {{ SECTION_META.location.description }}
-              </p>
-            </div>
-          </header>
-
-          <div class="px-6 sm:px-7 py-6">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <!-- Tỉnh/Thành phố -->
-              <div>
-                <label
-                  for="profile-city"
-                  class="block text-sm font-medium text-slate-700 mb-1.5"
-                >
-                  Tỉnh / Thành phố
-                </label>
-                <div v-if="!isEditing">
-                  <p class="text-[15px] font-medium text-slate-900">
-                    {{ profile.location?.city || '—' }}
-                  </p>
-                  <button
-                    v-if="!profile.location?.city"
-                    type="button"
-                    class="mt-1.5 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 transition"
-                    @click="focusField('city')"
-                  >
-                    <Plus class="h-3.5 w-3.5" />
-                    Thêm tỉnh / thành phố
-                  </button>
-                </div>
-                <LocationAutocomplete
-                  v-else
-                  id="profile-city"
-                  v-model="form.city"
-                  :options="cityAutocompleteOptions"
-                  placeholder="TP. Hồ Chí Minh"
-                  :max-options="80"
-                  @select="onCitySelect"
-                />
-              </div>
-
-              <!-- Quận/Huyện -->
-              <div>
-                <label
-                  for="profile-district"
-                  class="block text-sm font-medium text-slate-700 mb-1.5"
-                >
-                  Quận / Huyện
-                </label>
-                <div v-if="!isEditing">
-                  <p class="text-[15px] font-medium text-slate-900">
-                    {{ profile.location?.district || '—' }}
-                  </p>
-                  <button
-                    v-if="!profile.location?.district"
-                    type="button"
-                    class="mt-1.5 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 transition"
-                    @click="focusField('district')"
-                  >
-                    <Plus class="h-3.5 w-3.5" />
-                    Thêm quận / huyện
-                  </button>
-                </div>
-                <LocationAutocomplete
-                  v-else
-                  id="profile-district"
-                  v-model="form.district"
-                  :options="districtAutocompleteOptions"
-                  :placeholder="currentProvince ? 'Chọn hoặc nhập quận/huyện' : 'Nhập quận/huyện'"
-                  :disabled="locations.loading && districtAutocompleteOptions.length === 0"
-                  :max-options="80"
-                />
-                <p
-                  v-if="!currentProvince && form.city"
-                  class="mt-1 text-[11px] text-slate-400"
-                >
-                  Chọn tỉnh/thành để xem gợi ý quận/huyện.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ============================== SOCIAL LINKS ============================== -->
-        <section
-          class="bg-white rounded-2xl border border-slate-200/70 shadow-sm shadow-slate-900/[0.02] overflow-hidden"
-        >
-          <header
-            class="px-6 sm:px-7 pt-6 pb-4 flex items-center gap-3 border-b border-slate-100"
-          >
-            <span
-              :class="[
-                'inline-flex h-9 w-9 items-center justify-center rounded-lg shrink-0',
-                SECTION_META.social.iconWrapClass,
-              ]"
-            >
-              <component :is="SECTION_META.social.icon" class="h-4 w-4" />
-            </span>
-            <div class="flex-1 min-w-0">
-              <h3 class="text-base font-semibold text-slate-900">
-                {{ SECTION_META.social.title }}
-              </h3>
-              <p class="text-xs text-slate-500 mt-0.5">
-                {{ SECTION_META.social.description }}
-              </p>
-            </div>
-          </header>
-
-          <div class="px-6 sm:px-7 py-6 space-y-3">
-            <!-- LinkedIn -->
-            <SocialRow
-              v-if="!isEditing"
-              icon="linkedin"
-              label="LinkedIn"
-              :value="profile.social?.linkedin"
-              empty-cta="Thêm LinkedIn"
-              @add="focusField('linkedin')"
-            />
-            <div v-else>
-              <label for="profile-linkedin" class="sr-only">LinkedIn</label>
-              <div class="relative">
-                <span
-                  class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-                >
-                  <Linkedin class="h-4 w-4" />
-                </span>
-                <input
-                  id="profile-linkedin"
-                  v-model="form.linkedin"
-                  type="url"
-                  maxlength="500"
-                  class="block w-full rounded-lg border bg-white pl-9 pr-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:outline-none focus:ring-2"
-                  :class="formErrors.linkedin
-                    ? 'border-red-300 focus:border-red-500 focus:ring-red-500/30'
-                    : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500/30'"
-                  placeholder="https://linkedin.com/in/username"
-                />
-              </div>
-              <p v-if="formErrors.linkedin" class="mt-1 text-xs text-red-600">
-                {{ formErrors.linkedin }}
-              </p>
-            </div>
-
-            <!-- GitHub -->
-            <SocialRow
-              v-if="!isEditing"
-              icon="github"
-              label="GitHub"
-              :value="profile.social?.github"
-              empty-cta="Thêm GitHub"
-              @add="focusField('github')"
-            />
-            <div v-else>
-              <label for="profile-github" class="sr-only">GitHub</label>
-              <div class="relative">
-                <span
-                  class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-                >
-                  <Github class="h-4 w-4" />
-                </span>
-                <input
-                  id="profile-github"
-                  v-model="form.github"
-                  type="url"
-                  maxlength="500"
-                  class="block w-full rounded-lg border bg-white pl-9 pr-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:outline-none focus:ring-2"
-                  :class="formErrors.github
-                    ? 'border-red-300 focus:border-red-500 focus:ring-red-500/30'
-                    : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500/30'"
-                  placeholder="https://github.com/username"
-                />
-              </div>
-              <p v-if="formErrors.github" class="mt-1 text-xs text-red-600">
-                {{ formErrors.github }}
-              </p>
-            </div>
-
-            <!-- Portfolio -->
-            <SocialRow
-              v-if="!isEditing"
-              icon="portfolio"
-              label="Portfolio"
-              :value="profile.social?.portfolio"
-              empty-cta="Thêm Portfolio"
-              @add="focusField('portfolio')"
-            />
-            <div v-else>
-              <label for="profile-portfolio" class="sr-only">Portfolio</label>
-              <div class="relative">
-                <span
-                  class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-                >
-                  <Globe class="h-4 w-4" />
-                </span>
-                <input
-                  id="profile-portfolio"
-                  v-model="form.portfolio"
-                  type="url"
-                  maxlength="500"
-                  class="block w-full rounded-lg border bg-white pl-9 pr-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:outline-none focus:ring-2"
-                  :class="formErrors.portfolio
-                    ? 'border-red-300 focus:border-red-500 focus:ring-red-500/30'
-                    : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500/30'"
-                  placeholder="https://yourportfolio.com"
-                />
-              </div>
-              <p v-if="formErrors.portfolio" class="mt-1 text-xs text-red-600">
-                {{ formErrors.portfolio }}
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <!-- ============================== CAREER ============================== -->
-        <section
-          class="bg-white rounded-2xl border border-slate-200/70 shadow-sm shadow-slate-900/[0.02] overflow-hidden"
-        >
-          <header
-            class="px-6 sm:px-7 pt-6 pb-4 flex items-center gap-3 border-b border-slate-100"
-          >
-            <span
-              :class="[
-                'inline-flex h-9 w-9 items-center justify-center rounded-lg shrink-0',
-                SECTION_META.career.iconWrapClass,
-              ]"
-            >
-              <component :is="SECTION_META.career.icon" class="h-4 w-4" />
-            </span>
-            <div class="flex-1 min-w-0">
-              <h3 class="text-base font-semibold text-slate-900">
-                {{ SECTION_META.career.title }}
-              </h3>
-              <p class="text-xs text-slate-500 mt-0.5">
-                {{ SECTION_META.career.description }}
-              </p>
-            </div>
-          </header>
-
-          <div class="px-6 sm:px-7 py-6 space-y-3">
-            <RouterLink
-              :to="{ name: 'my-resumes' }"
-              class="group flex items-center gap-3.5 rounded-xl border border-slate-200/70 bg-white p-3.5 transition-all hover:border-primary-300 hover:shadow-sm hover:bg-primary-50/30 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-            >
-              <span
-                class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-50 ring-1 ring-primary-100 text-primary-600 transition group-hover:bg-primary-100"
-              >
-                <FileText class="h-5 w-5" />
-              </span>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold text-slate-900">CV của tôi</p>
-                <p class="text-xs text-slate-500 mt-0.5">
-                  Tạo và quản lý CV chuyên nghiệp
-                </p>
-              </div>
-              <ChevronRight
-                class="h-4 w-4 text-slate-400 transition group-hover:text-primary-600 group-hover:translate-x-0.5"
-              />
-            </RouterLink>
-
-            <p class="text-xs text-slate-400 inline-flex items-center gap-1.5 pt-1">
-              <TrendingUp class="h-3.5 w-3.5" />
-              Tạo CV đầu tiên để nhà tuyển dụng dễ dàng tìm thấy bạn.
-            </p>
-          </div>
-        </section>
-
-      </div>
-    </div>
+    <!-- Hidden inputs cho upload — click vào avatar/cover mới trigger -->
+    <input
+      ref="avatarInputEl"
+      type="file"
+      accept="image/jpeg,image/png,image/webp,image/gif"
+      class="hidden"
+      @change="onAvatarFileChange"
+    />
+    <input
+      ref="coverInputEl"
+      type="file"
+      accept="image/jpeg,image/png,image/webp,image/gif"
+      class="hidden"
+      @change="onCoverFileChange"
+    />
   </div>
 </template>
-
-<!-- ============================================================================
- * Inline component SocialRow đã được tách ra file riêng
- * @/components/candidate/SocialRow.vue — import ở <script setup> trên đầu file.
- * Tách riêng để tránh duplicate-import giữa <script setup> và <script> thường.
- * ==========================================================================-->

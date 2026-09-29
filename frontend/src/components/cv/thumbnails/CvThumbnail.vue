@@ -1,3 +1,27 @@
+<script lang="ts">
+/* ============================================================================
+ * Module scope — chạy 1 lần khi module load (KHÔNG phải per-instance như
+ * <script setup>). Dùng cho bitmap cache chia sẻ mọi instance CvThumbnail:
+ * card remount (đổi filter / pagination / quay lại trang) vẽ lại từ cache
+ * thay vì fetch + parse + render pdf.js lần nữa.
+ * ==========================================================================*/
+
+/** Bitmap đã render của trang 1 — PNG blob URL (lossless) + dims bitmap. */
+type PdfThumbBitmap = { blobUrl: string; width: number; height: number };
+
+/** Key = `${fileUrl}|${displayWidth}|${dpr}` — displayWidth biết ngay từ DOM. */
+const pdfThumbCache = new Map<string, PdfThumbBitmap>();
+
+/** Số entry tối đa — evict cũ nhất (Map giữ insertion order) + revoke blob. */
+const PDF_THUMB_CACHE_MAX = 16;
+
+/** Ngưỡng lệch chiều rộng hiển thị (px) để re-render khi container resize. */
+const PDF_RERENDER_DELTA_PX = 32;
+
+/** Debounce re-render khi resize (ms) — tránh render liên tục khi drag window. */
+const PDF_RERENDER_DEBOUNCE_MS = 200;
+</script>
+
 <script setup lang="ts">
 /**
  * CvThumbnail — wrapper chọn thumbnail mini theo `cv.source` + `templateId`.
@@ -28,6 +52,10 @@
  *   - Outer container: fill 100% width/height của parent. Parent phải có
  *     aspectRatio 850/1100 (set ở MyResumesView hiện tại).
  *   - Có thể dùng nơi khác (dashboard widget, picker) với wrapper sized khác.
+ *   - Branch PDF: canvas bitmap render đúng mật độ pixel hiển thị
+ *     (container width × max(devicePixelRatio, 2)), canvas.style w-full
+ *     h-full giữ kích thước hiển thị → nét 1:1 physical pixel (xem
+ *     "Sizing — render đúng mật độ pixel" ở script).
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CvThumbnailTemplate1 from './CvThumbnailTemplate1.vue';
@@ -56,9 +84,15 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
-const props = defineProps<{
-  cv: Cv;
-}>();
+const props = withDefaults(
+  defineProps<{
+    cv: Cv;
+    fit?: 'contain' | 'cover';
+  }>(),
+  {
+    fit: 'contain',
+  },
+);
 
 /* ============================================================================
  * Branch detection
@@ -121,12 +155,15 @@ const showPdfBranch = computed<boolean>(
  * Lifecycle:
  *   1. Mount / cv.id / cv.fileUrl đổi → reset state (loading=true, loaded=false,
  *      error=false), clear canvas, increment generation (cancel in-flight render).
- *   2. getDocument(url) → promise<PDFDocumentProxy>.
- *   3. getPage(1) → promise<PDFPageProxy>.
- *   4. Tính scale: desiredWidth = THUMBNAIL_WIDTH × DPR → viewport.scale đủ
- *      để canvas.width === desiredWidth. Render page vào canvas context.
- *   5. Nếu generation thay đổi sau bất kỳ await → drop kết quả (CV đã đổi).
- *   6. Success: isPdfLoaded=true. Error: isPdfError=true.
+ *   2. Check bitmap cache (key từ fileUrl + displayWidth + dpr) → hit thì vẽ
+ *      lại bằng drawImage, KHÔNG fetch/parse PDF lần nữa.
+ *   3. Miss → getDocument(url) → getPage(1) → render đúng mật độ hiển thị.
+ *   4. Tính scale = (containerWidth / pageNaturalWidth) × max(DPR, 2) →
+ *      canvas.width/height = bitmap khớp physical pixel vùng hiển thị.
+ *   5. Nếu generation thay đổi sau bất kỳ await → drop kết quả (CV đã đổi),
+ *      vẫn cleanup + destroy pdf để không leak.
+ *   6. Success: isPdfLoaded=true, cache PNG lossless, page.cleanup() +
+ *      pdf.destroy(). Error: isPdfError=true.
  *
  * Race condition:
  *   - generation counter tăng mỗi lần trigger render mới (cv change, mount,
@@ -142,36 +179,77 @@ const showPdfBranch = computed<boolean>(
  *   - Clear canvas khi CV đổi để không "lưu lại" page cũ trong khi page mới
  *     đang load.
  *
- * Sizing:
- *   - Canvas vẽ ở PDF natural size × DPR (2× cho retina). CSS `w-full h-full
- *     object-contain` scale canvas xuống container mà giữ nguyên aspect ratio
- *     PDF, letterbox trắng nếu container aspect ≠ PDF aspect.
+ * Sizing — render đúng mật độ pixel hiển thị (fix thumbnail mờ):
+ *   - Trước đây: bitmap cố định = PDF natural × 2 (A4 → ~1190×1684) rồi CSS
+ *     thu xuống card (~132-320px) → downscale 3.5-8× bằng 1-pass bilinear
+ *     của browser → chữ nhòe.
+ *   - Giờ: scale = (containerWidth / pageNaturalWidth) × max(devicePixelRatio, 2)
+ *     → canvas.width/height (bitmap) khớp đúng số physical pixel của vùng
+ *     hiển thị; canvas.style (w-full h-full) giữ kích thước hiển thị → nét
+ *     1:1, RAM giảm ~10× so với bitmap cố định cũ.
+ *   - Bitmap aspect luôn = PDF page aspect (viewport.scale uniform) → CSS
+ *     `object-contain` (fit='contain') letterbox trắng khi container aspect
+ *     ≠ PDF aspect; `object-cover object-top` (fit='cover') hiện phần đầu
+ *     trang, crop phần dưới tràn.
+ *   - ResizeObserver theo dõi container width; đổi ≥ PDF_RERENDER_DELTA_PX
+ *     → re-render với scale mới (debounce PDF_RERENDER_DEBOUNCE_MS).
  * ==========================================================================*/
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+/** Container ngoài — đo display width (CSS px) để tính render scale. */
+const containerRef = ref<HTMLDivElement | null>(null);
 const isPdfLoading = ref<boolean>(true);
 const isPdfLoaded = ref<boolean>(false);
 const isPdfError = ref<boolean>(false);
 
-/**
- * Render scale cho canvas PDF.js. Higher = sắc nét hơn nhưng tốn memory.
- *
- * - 2× cho retina-quality trên màn hình hiện đại (~4-8 MB / canvas tuỳ PDF size).
- * - Canvas bitmap aspect ratio LUÔN = PDF page aspect ratio vì viewport.scale
- *   là uniform (cả width và height scale đồng đều) → CSS `object-contain`
- *   scale canvas xuống container mà KHÔNG crop.
- *
- * KHÔNG dùng scale "DESIRED_CANVAS_WIDTH / baseViewport.width" vì:
- * - Nó ép canvas.width = DESIRED_CANVAS_WIDTH nhưng canvas.height vẫn theo
- *   PDF aspect → đúng, không crop theo bitmap.
- * - NHƯNG nếu combine với `object-cover` ở CSS, canvas image (bitmap) sẽ bị
- *   crop khi container aspect ≠ canvas aspect. Container 132×170 (aspect
- *   1:1.294) vs A4 canvas 264×373 (aspect 1:1.414) → object-cover scale by
- *   width → canvas height vượt container height → CROPPED top+bottom.
- * - Fix: dùng `object-contain` ở CSS. CSS xử lý scale-to-fit + letterbox,
- *   canvas bitmap giữ nguyên PDF aspect.
- */
-const PDF_RENDER_DPR = 2;
+/** Display width (CSS px) của khung thumbnail — 0 nếu chưa đo được layout. */
+const containerDisplayWidth = (): number => containerRef.value?.clientWidth ?? 0;
+
+/** DPR render — min 2 để giữ nét trên màn thường + khi user zoom browser. */
+const renderDpr = (): number =>
+  typeof window !== 'undefined' ? Math.max(window.devicePixelRatio || 1, 2) : 2;
+
+/** Vẽ bitmap cache (PNG blob) vào canvas — thay cho fetch + parse + render. */
+const drawCachedToCanvas = (
+  canvas: HTMLCanvasElement,
+  entry: PdfThumbBitmap,
+): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.naturalWidth || entry.width;
+      canvas.height = img.naturalHeight || entry.height;
+      fillCanvasWhite(canvas);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas 2D context unavailable'));
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      resolve();
+    };
+    img.onerror = () => reject(new Error('Cached thumbnail decode failed'));
+    img.src = entry.blobUrl;
+  });
+
+/** Lưu bitmap vừa render vào cache — PNG lossless, async (không block UI). */
+const cacheRenderedBitmap = (cacheKey: string, canvas: HTMLCanvasElement): void => {
+  canvas.toBlob((blob) => {
+    if (!blob) return; // best-effort — miss cache không ảnh hưởng hiển thị
+    while (pdfThumbCache.size >= PDF_THUMB_CACHE_MAX) {
+      const oldestKey = pdfThumbCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = pdfThumbCache.get(oldestKey);
+      pdfThumbCache.delete(oldestKey);
+      if (oldest) URL.revokeObjectURL(oldest.blobUrl);
+    }
+    pdfThumbCache.set(cacheKey, {
+      blobUrl: URL.createObjectURL(blob),
+      width: canvas.width,
+      height: canvas.height,
+    });
+  }, 'image/png');
+};
 
 /**
  * Generation counter — chống race condition khi user đổi CV giữa lúc render.
@@ -179,6 +257,9 @@ const PDF_RENDER_DPR = 2;
  * `myGen === renderGeneration`. Nếu khác → drop kết quả (CV đã đổi).
  */
 let renderGeneration = 0;
+
+/** Display width của lần render thành công gần nhất — dùng cho resize check. */
+let lastRenderedDisplayWidth = 0;
 
 const fillCanvasWhite = (canvas: HTMLCanvasElement | null): void => {
   if (!canvas) return;
@@ -191,29 +272,55 @@ const fillCanvasWhite = (canvas: HTMLCanvasElement | null): void => {
 const renderPdfToCanvas = async (gen: number): Promise<void> => {
   const url = props.cv.fileUrl;
   const canvas = canvasRef.value;
+  const displayWidth = containerDisplayWidth();
 
-  if (!url || !canvas) {
+  if (!url || !canvas || displayWidth <= 0) {
     isPdfError.value = true;
     isPdfLoading.value = false;
     return;
   }
 
+  const dpr = renderDpr();
+  const cacheKey = `${url}|${Math.round(displayWidth)}|${dpr}`;
+
   try {
-    const loadingTask = pdfjsLib.getDocument({
+    // 1) Cache hit → vẽ lại bitmap đã render, bỏ qua fetch + parse + render.
+    const cached = pdfThumbCache.get(cacheKey);
+    if (cached) {
+      await drawCachedToCanvas(canvas, cached);
+      if (gen !== renderGeneration) return;
+      lastRenderedDisplayWidth = displayWidth;
+      isPdfLoaded.value = true;
+      isPdfLoading.value = false;
+      return;
+    }
+
+    // 2) Cache miss → fetch + parse + render trang 1 (chỉ trang 1 — thumbnail).
+    const pdf = await pdfjsLib.getDocument({
       url,
       // Auth header nếu BE yêu cầu — match với axios interceptor.
       // KHÔNG cần truyền tường minh: pdfjs-dist sẽ dùng credentials mặc định
       // (cookie-based) cho same-origin, và bearer header sẽ được attach nếu
       // cần qua cách khác. Hiện tại URL là absolute từ backend, browser sẽ
       // gửi cookie nếu same-origin.
-    });
-    const pdf = await loadingTask.promise;
-    if (gen !== renderGeneration) return; // CV đã đổi / unmounted — drop
+    }).promise;
+    if (gen !== renderGeneration) {
+      pdf.destroy().catch(() => {});
+      return; // CV đã đổi / unmounted — drop
+    }
 
     const page = await pdf.getPage(1);
-    if (gen !== renderGeneration) return;
+    if (gen !== renderGeneration) {
+      pdf.destroy().catch(() => {});
+      return;
+    }
 
-    const viewport = page.getViewport({ scale: PDF_RENDER_DPR });
+    // Scale = (chiều rộng hiển thị / chiều rộng trang gốc) × DPR → bitmap
+    // khớp đúng physical pixel của card (xem "Sizing" comment đầu section).
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({
+      scale: (displayWidth / base.width) * dpr,
+    });
 
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
@@ -225,12 +332,23 @@ const renderPdfToCanvas = async (gen: number): Promise<void> => {
     if (!ctx) throw new Error('Canvas 2D context unavailable');
 
     await page.render({ canvasContext: ctx, viewport }).promise;
-    if (gen !== renderGeneration) return;
+    if (gen !== renderGeneration) {
+      page.cleanup();
+      pdf.destroy().catch(() => {});
+      return;
+    }
 
+    lastRenderedDisplayWidth = displayWidth;
     isPdfLoaded.value = true;
     isPdfLoading.value = false;
 
-    // Cleanup PDF document để giải phóng memory sau khi đã có canvas.
+    // Cache PNG lossless cho lần remount kế tiếp (async, best-effort).
+    cacheRenderedBitmap(cacheKey, canvas);
+
+    // Dọn dẹp pdf.js ngay sau khi đã có bitmap: page.cleanup() giải phóng
+    // intermediate render surfaces, pdf.destroy() giải phóng document data
+    // trong worker → không giữ RAM của PDF đã render xong.
+    page.cleanup();
     pdf.destroy().catch(() => {
       // best-effort — không ảnh hưởng UX
     });
@@ -259,11 +377,40 @@ const triggerRender = (): void => {
 // mount đều fire 1 GET fileUrl (MinIO) + parse PDF → bandwidth waste + lag
 // khi list lớn. IntersectionObserver đảm bảo chỉ cards trong viewport (+
 // margin) mới trigger render. Cards còn lại đợi user scroll tới mới load.
-const containerRef = ref<HTMLElement | null>(null);
+// (containerRef đã khai báo ở section PDF state phía trên.)
 const isIntersecting = ref<boolean>(false);
 let intersectionObserver: IntersectionObserver | null = null;
 
+/* ============================================================================
+ * Resize — container đổi width (responsive / zoom browser) → re-render với
+ * scale mới để bitmap luôn khớp mật độ hiển thị.
+ *
+ * Guard: chỉ re-render khi đã lazy-render lần đầu (isIntersecting), không
+ * đang loading, và width lệch ≥ PDF_RERENDER_DELTA_PX so với lần render cuối
+ * (tránh RO initial-fire và rung layout gây render thừa). Debounce để không
+ * render liên tục khi user drag-resize window.
+ * ==========================================================================*/
+let pdfResizeObserver: ResizeObserver | null = null;
+let pdfResizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+const onContainerResize = (): void => {
+  if (!isIntersecting.value || isPdfLoading.value) return;
+  const width = containerDisplayWidth();
+  if (Math.abs(width - lastRenderedDisplayWidth) < PDF_RERENDER_DELTA_PX) return;
+  if (pdfResizeTimer) clearTimeout(pdfResizeTimer);
+  pdfResizeTimer = setTimeout(() => {
+    pdfResizeTimer = null;
+    if (showPdfBranch.value) triggerRender();
+  }, PDF_RERENDER_DEBOUNCE_MS);
+};
+
 onMounted(() => {
+  // Theo dõi resize luôn (không guard showPdfBranch — callback tự skip).
+  if (typeof ResizeObserver !== 'undefined') {
+    pdfResizeObserver = new ResizeObserver(onContainerResize);
+    if (containerRef.value) pdfResizeObserver.observe(containerRef.value);
+  }
+
   if (!showPdfBranch.value) return;
   // SSR / test environment không có IntersectionObserver → render ngay.
   if (typeof IntersectionObserver === 'undefined') {
@@ -330,6 +477,12 @@ onBeforeUnmount(() => {
   renderGeneration++;
   intersectionObserver?.disconnect();
   intersectionObserver = null;
+  pdfResizeObserver?.disconnect();
+  pdfResizeObserver = null;
+  if (pdfResizeTimer) {
+    clearTimeout(pdfResizeTimer);
+    pdfResizeTimer = null;
+  }
 });
 </script>
 
@@ -342,14 +495,17 @@ onBeforeUnmount(() => {
   -->
   <div
     ref="containerRef"
-    class="relative w-full h-full bg-white rounded-[3px] ring-1 ring-slate-900/[0.06] overflow-hidden"
+    class="relative w-full h-full bg-white rounded-[3px] overflow-hidden"
+    :class="fit === 'cover' ? '' : 'ring-1 ring-slate-900/[0.06]'"
   >
     <!-- ==================== Direct CV: switch theo templateId ==================== -->
     <component
       v-if="ResolvedThumbnail"
       :is="ResolvedThumbnail"
       :data="renderData"
-      class="absolute inset-0"
+      class="absolute"
+      :class="fit === 'cover' ? 'top-0 left-0 right-0 w-full' : 'inset-0'"
+      :style="fit === 'cover' ? { height: 'auto', aspectRatio: '850 / 1100' } : undefined"
     />
 
     <!-- ==================== Upload + PDF: pdfjs-dist render vào <canvas> ====================
@@ -359,11 +515,10 @@ onBeforeUnmount(() => {
          lý → không có compositor layer riêng → không có flash đen.
 
          3 layer xếp chồng:
-           0. <canvas> — bitmap ở PDF natural × 2 (retina), CSS `object-contain`
-              để fit-toàn-bộ-trang vào khung thumbnail, không crop top/bottom.
-              Wrapper có `bg-white` nên letterbox (nếu có) hiện nền trắng.
-              như native viewer đã làm. Luôn ở DOM, nhưng invisible khi chưa
-              load (v-show=false) để không chiếm layout trong lúc loading.
+           0. <canvas> — bitmap render đúng mật độ pixel hiển thị (container
+              width × max(DPR, 2)); canvas.style w-full h-full giữ kích thước
+              hiển thị. CSS `object-contain` (hoặc `object-cover object-top`
+              khi fit='cover') để fit hoặc preview phần đầu trang CV.
            1. Skeleton (animate-pulse bars) — load thay thế canvas khi đang
               fetch PDF binary + parse + render.
            2. Error placeholder — khi PDF.js fail (404, CORS, invalid PDF).
@@ -375,7 +530,8 @@ onBeforeUnmount(() => {
         <canvas
           ref="canvasRef"
           v-show="isPdfLoaded"
-          class="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          class="absolute inset-0 w-full h-full pointer-events-none"
+          :class="fit === 'cover' ? 'object-cover object-top' : 'object-contain'"
           aria-hidden="true"
         />
 
@@ -432,6 +588,7 @@ onBeforeUnmount(() => {
       :src="cv.fileUrl ?? ''"
       :alt="cv.title || 'CV image'"
       class="absolute inset-0 w-full h-full object-cover pointer-events-none"
+      :class="fit === 'cover' ? 'object-top' : ''"
     />
 
     <!-- ==================== Upload + Other (DOCX, unknown) ====================

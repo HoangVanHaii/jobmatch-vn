@@ -99,6 +99,13 @@ export const completeOAuthSchema = z.object({
  */
 export const updateCandidateProfileSchema = z.object({
   fullName: z.string().trim().min(2).max(100).optional(),
+  coverUrl: z
+    .string()
+    .url('coverUrl phải là URL hợp lệ')
+    .max(1000)
+    .nullable()
+    .optional()
+    .or(z.literal('')),
   phone: z
     .string()
     .trim()
@@ -110,6 +117,20 @@ export const updateCandidateProfileSchema = z.object({
     .object({
       city: z.string().trim().max(100).optional(),
       district: z.string().trim().max(100).optional(),
+      address: z.string().trim().max(255).optional(),
+      lat: z.number().min(-90).max(90).optional(),
+      lng: z.number().min(-180).max(180).optional(),
+    })
+    .optional(),
+  metadata: z
+    .object({
+      school: z.string().trim().max(255).optional().or(z.literal('')),
+      work: z.string().trim().max(255).optional().or(z.literal('')),
+      birthday: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày sinh phải có dạng YYYY-MM-DD')
+        .or(z.literal(''))
+        .optional(),
     })
     .optional(),
   social: z
@@ -118,6 +139,7 @@ export const updateCandidateProfileSchema = z.object({
       github: z.string().trim().url('GitHub URL không hợp lệ').max(500).optional().or(z.literal('')),
       portfolio: z.string().trim().url('Portfolio URL không hợp lệ').max(500).optional().or(z.literal('')),
     })
+    .catchall(z.string().trim().url('URL mạng xã hội không hợp lệ').max(500).optional().or(z.literal('')))
     .optional(),
   preferences: z.record(z.unknown()).optional(),
 });

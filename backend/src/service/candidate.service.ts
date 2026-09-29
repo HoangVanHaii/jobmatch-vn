@@ -23,10 +23,23 @@ export interface CandidateProfile {
   email: string;
   fullName: string | null;
   avatarUrl: string | null;
+  coverUrl: string | null;
   phone: string | null;
-  location: { city?: string; district?: string } | null;
-  social: { linkedin?: string; github?: string; portfolio?: string } | null;
+  location: {
+    city?: string;
+    district?: string;
+    address?: string;
+    lat?: number;
+    lng?: number;
+  } | null;
+  social: {
+    linkedin?: string;
+    github?: string;
+    portfolio?: string;
+    [key: string]: string | undefined;
+  } | null;
   preferences: Record<string, unknown> | null;
+  metadata: { school?: string; work?: string; birthday?: string };
 }
 
 /** Chuẩn hoá: nếu user gửi chuỗi rỗng → null. Nếu gửi object rỗng → null. */
@@ -73,10 +86,12 @@ export const candidateService = {
       email: user.email,
       fullName: profile?.fullName ?? null,
       avatarUrl: profile?.avatarUrl ?? null,
+      coverUrl: profile?.coverUrl ?? null,
       phone: profile?.phone ?? null,
       location: (profile?.location as CandidateProfile['location']) ?? null,
       social: (profile?.social as CandidateProfile['social']) ?? null,
       preferences: (profile?.preferences as Record<string, unknown>) ?? null,
+      metadata: (profile?.metadata as CandidateProfile['metadata']) ?? {},
     };
   },
 
@@ -99,10 +114,23 @@ export const candidateService = {
     userId: string,
     input: {
       fullName?: string;
+      coverUrl?: string | null;
       phone?: string;
-      location?: { city?: string; district?: string };
-      social?: { linkedin?: string; github?: string; portfolio?: string };
+      location?: {
+        city?: string;
+        district?: string;
+        address?: string;
+        lat?: number;
+        lng?: number;
+      };
+      social?: {
+        linkedin?: string;
+        github?: string;
+        portfolio?: string;
+        [key: string]: string | undefined;
+      };
       preferences?: Record<string, unknown>;
+      metadata?: { school?: string; work?: string; birthday?: string };
     },
   ): Promise<CandidateProfile> => {
     const existing = await db.query.userProfiles.findFirst({
@@ -115,6 +143,11 @@ export const candidateService = {
     if (input.fullName !== undefined) {
       const v = normalizeEmpty(input.fullName);
       patch.fullName = v === undefined ? undefined : v;
+    }
+    if (input.coverUrl !== undefined) {
+      // coverUrl: string hợp lệ → set; null/undefined/empty → clear (set null)
+      const v = normalizeEmpty(input.coverUrl);
+      patch.coverUrl = v === undefined ? undefined : v;
     }
     if (input.phone !== undefined) {
       const v = normalizeEmpty(input.phone);
@@ -135,14 +168,29 @@ export const candidateService = {
       const v = normalizeEmpty(input.social);
       if (v !== undefined) {
         const base = (existing?.social as Record<string, unknown> | null) ?? {};
-        patch.social =
-          v === null
-            ? null
-            : { ...base, ...(v as Record<string, unknown>) };
+        const merged = v === null ? {} : { ...base, ...(v as Record<string, unknown>) };
+        const cleaned: Record<string, unknown> = {};
+        for (const [k, val] of Object.entries(merged)) {
+          if (val !== null && val !== undefined && val !== '') {
+            cleaned[k] = val;
+          }
+        }
+        patch.social = Object.keys(cleaned).length === 0 ? null : cleaned;
       }
     }
     if (input.preferences !== undefined) {
       patch.preferences = input.preferences ?? null;
+    }
+    if (input.metadata !== undefined) {
+      const v = normalizeEmpty(input.metadata);
+      if (v !== undefined) {
+        // Merge key-by-key với metadata cũ (giống pattern location/social).
+        const base = (existing?.metadata as Record<string, unknown> | null) ?? {};
+        patch.metadata =
+          v === null
+            ? null
+            : { ...base, ...(v as Record<string, unknown>) };
+      }
     }
 
     // Nếu tất cả field undefined (input rỗng hoặc chỉ chứa key rỗng) → không
