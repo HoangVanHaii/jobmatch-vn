@@ -20,9 +20,30 @@ const purposeLabels: Record<OtpPurpose, string> = {
 
 export const otpService = {
     requestOtp: async (email: string, purpose: OtpPurpose): Promise<void> => {
-        // Cooldown gửi mail — chặn resend liên tiếp / email-bomb
+        // Cooldown gửi mail — chặn resend liên tiếp / email-bomb.
+        //
+        // RC-1 FIX: dùng `SET key value NX EX seconds` thay cho `EXISTS` + `SETEX`.
+        //
+        // Vấn đề trước fix:
+        //   - `EXISTS` và `SETEX` là 2 round-trip riêng biệt → race condition.
+        //     2 request đồng thời cho cùng email có thể cả 2 pass `EXISTS` check
+        //     trước khi 1 trong 2 chạy `SETEX` → cả 2 đều generate OTP khác nhau,
+        //     cả 2 đều gửi mail → user nhận 2 OTP khác nhau, OTP trong Redis bị
+        //     overwrite bởi cái sau → cái trước trở nên invalid.
+        //
+        // `SET key value NX EX seconds` là atomic check-and-set:
+        //   - Nếu key chưa tồn tại → set + trả 'OK'.
+        //   - Nếu key đã tồn tại → KHÔNG set + trả null.
+        // 1 round-trip duy nhất, không có khoảng hở.
         const cooldownKey = `otp:lastsent:${purpose}:${email}`;
-        if (await redis.exists(cooldownKey)) {
+        const cooldownSet = await redis.set(
+            cooldownKey,
+            '1',
+            'EX',
+            RESEND_COOLDOWN_SECONDS,
+            'NX',
+        );
+        if (cooldownSet === null) {
             throw new AppError(429, 'RESEND_COOLDOWN', 'Vui lòng đợi trước khi yêu cầu mã mới');
         }
 
@@ -32,7 +53,7 @@ export const otpService = {
 
         await redis.setex(key, OTP_TTL_SECONDS, code);        // OTP mới
         await redis.del(attemptsKey);                          // reset bộ đếm thử sai
-        await redis.setex(cooldownKey, RESEND_COOLDOWN_SECONDS, '1');
+        // Cooldown key đã được set bằng SET NX EX ở trên → KHÔNG setex lại ở đây.
 
         // S5 FIX: wrap mailer.sendMail trong try/catch. Nếu SMTP fail (timeout,
         // network, server down) → OTP đã lưu Redis nhưng user không nhận được mail.
