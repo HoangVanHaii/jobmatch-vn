@@ -21,8 +21,8 @@ export class AppError extends Error {
  * Map field name + Zod issue code → Vietnamese error message.
  * Dùng cho ZodError.flatten().fieldErrors (trả về { field: [msg1, msg2] }).
  *
- * Nếu không map được (edge case chưa cover) → fallback message EN để dev debug,
- * KHÔNG dùng cho production UI.
+ * Nếu không map được (edge case chưa cover) → trả thông báo chung tiếng Việt,
+ * tránh lộ message nội bộ của Zod ra production UI.
  */
 const translateZodIssue = (path: string, code: ZodIssueCode, originalMessage: string): string => {
   const field = path.split('.').pop() ?? path;
@@ -60,12 +60,16 @@ const translateZodIssue = (path: string, code: ZodIssueCode, originalMessage: st
   if (code === 'too_small') {
     if (field === 'fullName') return 'Họ và tên phải có ít nhất 2 ký tự';
     if (field === 'otp') return 'Mã OTP phải gồm 6 chữ số';
-    if (field.includes('Password')) return `${field === 'newPassword' ? 'Mật khẩu mới' : 'Mật khẩu'} phải có ít nhất 8 ký tự`;
+    if (field === 'password') return 'Mật khẩu không được để trống';
+    if (field === 'newPassword') return 'Mật khẩu mới phải có ít nhất 8 ký tự';
   }
 
   // String length (too_big)
   if (code === 'too_big') {
     if (field === 'fullName') return 'Họ và tên không được vượt quá 100 ký tự';
+    // Bonus polish kèm Bug 1 FIX (emailSchema.max(254)): map too_big cho email
+    // để message cụ thể thay vì fall through về 'Dữ liệu không hợp lệ' generic.
+    if (field === 'email') return 'Email không được vượt quá 254 ký tự';
   }
 
   // Enum invalid (role, agreedToTerms)
@@ -79,8 +83,7 @@ const translateZodIssue = (path: string, code: ZodIssueCode, originalMessage: st
     if (field === 'agreedToTerms') return 'Bạn phải đồng ý với Điều khoản và Chính sách bảo mật';
   }
 
-  // Fallback: giữ message gốc (EN) cho dev debug
-  return originalMessage;
+  return 'Dữ liệu không hợp lệ';
 };
 
 export const errorHandler = (
@@ -94,6 +97,18 @@ export const errorHandler = (
     const translatedDetails: Record<string, string[]> = {};
     for (const issue of err.issues) {
       const fieldPath = issue.path.join('.') || '_root';
+      // Bug 5 FIX (audit 2026-09-27): khi client gửi sai Content-Type (vd `text/plain`
+      // thay vì `application/json`), express.json() trả về `req.body = {}` rỗng →
+      // Zod nhận empty object → throw với path=[] → fieldPath='_root'. Trước fix:
+      // translateZodIssue path='_root' + message='Required' → return fieldLabels['_root']
+      // → '_root là bắt buộc' (lộ implementation, UX kém).
+      // Giờ: nếu fieldPath='_root' + mọi issue đều 'Required' → trả message
+      // thân thiện hơn. Detect bằng cách check req.body có empty không.
+      if (fieldPath === '_root' && issue.message === 'Required' &&
+          (!req.body || (typeof req.body === 'object' && Object.keys(req.body).length === 0))) {
+        // Skip — sẽ trả message thân thiện ở ngoài
+        continue;
+      }
       if (!translatedDetails[fieldPath]) translatedDetails[fieldPath] = [];
       const translated = translateZodIssue(fieldPath, issue.code, issue.message);
       // Tránh duplicate cùng message cho cùng field
@@ -101,12 +116,17 @@ export const errorHandler = (
         translatedDetails[fieldPath].push(translated);
       }
     }
+    // Bug 5 FIX (cont.): nếu mọi issue bị skip (req.body rỗng do Content-Type sai),
+    // trả message thân thiện thay vì để `details: { _root: [...] }` lủng củng.
+    const hasContent = Object.keys(translatedDetails).length > 0;
     res.status(400).json({
       success: false,
       error: {
         code: 'VALIDATION_ERROR',
-        message: 'Dữ liệu không hợp lệ. Vui lòng kiểm tra lại.',
-        details: translatedDetails,
+        message: hasContent
+          ? 'Dữ liệu không hợp lệ. Vui lòng kiểm tra lại.'
+          : 'Định dạng request không hợp lệ. Vui lòng kiểm tra Content-Type và body.',
+        details: hasContent ? translatedDetails : undefined,
       },
     });
     return;
@@ -114,9 +134,14 @@ export const errorHandler = (
 
   // Custom AppError
   if (err instanceof AppError) {
+    // Wrap single `field` thành `details: { [field]: [message] }` để FE dùng
+    // cùng một path (getFirstFieldError) cho mọi error envelope — không cần
+    // phân biệt ZodError vs AppError. Trước đây field name bị gửi qua property
+    // `field` riêng nhưng FE không đọc → silent dead contract.
+    const details = err.field ? { [err.field]: [err.message] } : undefined;
     res.status(err.statusCode).json({
       success: false,
-      error: { code: err.code, message: err.message, field: err.field },
+      error: { code: err.code, message: err.message, details },
     });
     return;
   }
@@ -124,6 +149,28 @@ export const errorHandler = (
   // JWT errors
   if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
     res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Token không hợp lệ hoặc đã hết hạn' } });
+    return;
+  }
+
+  // express.json() body-parser error khi client gửi body không phải JSON hợp lệ
+  // (vd: `{not-valid-json`, body trống, thiếu dấu nháy, ...). Trước fix: error
+  // rơi xuống catch-all → 500 INTERNAL_ERROR (misleading: là client bug, không
+  // phải server bug). Detect qua 2 cách:
+  //   1. `err.type === 'entity.parse.failed'` — Express body-parser đánh dấu cụ thể.
+  //   2. `err instanceof SyntaxError` — fallback cho các edge case parser khác.
+  // Chỉ log warning (không error) vì đây là client mistake, không phải lỗi server.
+  // KHÔNG expose vị trí parse (vd "position 5") ra response — tránh leak request shape.
+  const isEntityParseFailed = (err as any)?.type === 'entity.parse.failed';
+  const isSyntaxError = err instanceof SyntaxError;
+  if (isEntityParseFailed || isSyntaxError) {
+    logger.warn({ path: req.path, method: req.method }, 'Malformed JSON body');
+    res.status(400).json({
+      success: false,
+      error: {
+        code: 'INVALID_JSON',
+        message: 'Request body không phải JSON hợp lệ. Vui lòng kiểm tra cú pháp.',
+      },
+    });
     return;
   }
 

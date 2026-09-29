@@ -18,7 +18,16 @@ export const oauthController = {
       const { codeChallenge } = (req.body ?? {}) as { codeChallenge?: string };
       const { url, state } = await oauthService.initiate(provider, codeChallenge);
       // Lưu state vào cookie/Redis để verify khi callback
-      res.cookie('oauth_state', state, { httpOnly: true, sameSite: 'lax', maxAge: 5 * 60 * 1000 });
+      // Bug 3 FIX (audit 2026-09-27): thêm `secure: NODE_ENV === 'production'` — dev
+      // vẫn cho phép HTTP để DX (curl/localhost), prod bắt buộc HTTPS để cookie không
+      // bị sniff qua HTTP cleartext. SameSite=Lax + HttpOnly đã chặn CSRF XHR/fetch,
+      // nhưng thiếu Secure thì defense-in-depth chưa đủ cho production deployment.
+      res.cookie('oauth_state', state, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 5 * 60 * 1000,
+      });
       res.json({ success: true, data: { url } });
     } catch (err) { next(err); }
   },

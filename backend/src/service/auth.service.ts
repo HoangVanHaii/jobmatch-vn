@@ -1,9 +1,32 @@
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { db } from '../config/database';
 import { users, userProfiles } from '../db/schema';
 import { and, asc, desc, eq, ilike, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { Profile, User } from '@/interface/user';
+
+/**
+ * DUMMY bcrypt hash dùng cho C4 FIX (login timing equalization).
+ *
+ * Mục đích: khi user không tồn tại / OAuth-only / bị khoá / đã xoá, vẫn chạy
+ * bcrypt.compare(password, DUMMY) để đốt CPU tương đương case user tồn tại +
+ * sai password. Compare luôn trả false (vì user input không match hash dummy).
+ *
+ * Cost=12 (giống policy thật) để thời gian ~280ms mỗi lần — khớp với bcrypt
+ * user hash. Hash này của 1 string random, không phải password thật.
+ *
+ * Lưu ý: hash được sinh MỘT LẦN ở module load (synchronous), không tạo mỗi
+ * request. Nếu bcrypt.hash() ở module load throw (rất hiếm), fallback về
+ * hash rỗng — vẫn equalize timing (so sánh luôn false).
+ */
+const DUMMY_BCRYPT_HASH = (() => {
+  try {
+    return bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 12);
+  } catch {
+    return '$2b$12$0000000000000000000000000000000000000000000000000000';
+  }
+})();
 
 /**
  * Kết quả search user — chỉ chứa field cần cho chat UI: id, fullName, avatarUrl, role.
@@ -64,7 +87,7 @@ export const authService = {
                 })
                 .returning({ id: users.id });
             if (!created) {
-                throw new AppError(500, 'USER_INSERT_FAILED', 'Failed to create user');
+                throw new AppError(500, 'USER_INSERT_FAILED', 'Không thể tạo tài khoản. Vui lòng thử lại.');
             }
             await tx.insert(userProfiles).values({ userId: created.id, fullName });
         });
@@ -115,17 +138,89 @@ export const authService = {
                 .where(eq(userProfiles.userId, userId));
         });
     },
+    /**
+     * Đánh dấu email đã được verify + flip status 'pending' → 'active'.
+     *
+     * HARD RULE (audit 2026-09-28 follow-up):
+     *   KHÔNG BAO GIỜ chuyển 'banned' / 'suspended' về 'active' qua verify OTP.
+     *   Tài khoản bị ban phải GIỮ NGUYÊN trạng thái banned bất kể OTP có hợp lệ
+     *   hay không. Cùng rule với suspended. Bảo toàn business rule:
+     *     pending + OTP hợp lệ → active   (duy nhất transition được phép)
+     *     banned  + OTP hợp lệ → banned  (giữ nguyên, throw 403 ACCOUNT_BANNED)
+     *     suspended + OTP hợp lệ → suspended (giữ nguyên, throw 403 ACCOUNT_SUSPENDED)
+     *
+     * Thực hiện bằng `UPDATE ... WHERE email=$ AND status='pending' RETURNING id`.
+     * Nếu `returning()` rỗng → không có row match → an toàn KHÔNG flip status.
+     * Sau đó look up user để throw error code cụ thể cho FE unwrap đúng.
+     *
+     * Note: Controller `registerVerifyOtp` cũng đã gate status TRƯỚC khi gọi
+     * hàm này — nhưng giữ WHERE clause ở đây là defense-in-depth: kể cả khi
+     * controller bị bypass (refactor sai, endpoint mới gọi verifyEmail), DB
+     * vẫn từ chối flip status. KHÔNG dựa duyệt vào controller.
+     */
     verifyEmail: async (email: string): Promise<void> => {
-        await db.update(users).set({ emailVerifiedAt: new Date(), status: 'active' }).where(eq(users.email, email));
+        const result = await db
+            .update(users)
+            .set({ emailVerifiedAt: new Date(), status: 'active' })
+            .where(and(eq(users.email, email), eq(users.status, 'pending')))
+            .returning({ id: users.id });
+        if (result.length > 0) return; // pending → active OK
+
+        // Không có row match. Look up để phân loại error.
+        const user = await db.query.users.findFirst({
+            where: eq(users.email, email),
+            columns: { status: true, deletedAt: true },
+        });
+        if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'Không tìm thấy tài khoản');
+        if (user.deletedAt) throw new AppError(403, 'ACCOUNT_DELETED', 'Tài khoản đã bị xóa');
+        if (user.status === 'banned') {
+            throw new AppError(
+                403,
+                'ACCOUNT_BANNED',
+                'Tài khoản đã bị cấm. Vui lòng liên hệ hỗ trợ để biết thêm chi tiết.',
+            );
+        }
+        if (user.status === 'suspended') {
+            throw new AppError(
+                403,
+                'ACCOUNT_SUSPENDED',
+                'Tài khoản đang bị tạm khóa. Vui lòng liên hệ hỗ trợ để biết thêm chi tiết.',
+            );
+        }
+        // status khác (vd 'active' đã verified trước đó) — controller đã chặn ALREADY_VERIFIED,
+        // nhưng phòng case race: trả generic 400.
+        throw new AppError(400, 'EMAIL_VERIFY_FAILED', 'Không thể xác thực email ở trạng thái hiện tại.');
     },
     verifyPassword: async (email: string, password: string): Promise<any> => {
         const user = await db.query.users.findFirst({ where: eq(users.email, email) });
-        if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
+
+        // Audit 2026-09-28 follow-up (C4 FIX): luôn chạy bcrypt.compare để normalize
+        // timing. Trước đây: email không tồn tại → throw ngay (~10ms) vs email
+        // tồn tại + sai password → bcrypt.compare (~280ms). Delta ~270ms, 0 overlap →
+        // attacker phân biệt được "email có tồn tại không" qua response time.
+        //
+        // Sau fix: dù DONT_FIND_USER hay thấy user, vẫn chạy bcrypt.compare(password,
+        // DUMMY_BCRYPT_HASH) để CPU work tương đương. Throw error code cụ thể
+        // cho FE nhưng chỉ SAU khi đã đốt CPU.
+        //
+        // DUMMY hash là hash của 1 string ngẫu nhiên (cost=12, giống user hash).
+        // bcrypt.compare luôn trả false với hash khác → không match.
+        // Performance: thêm 1 lần bcrypt cost 12 (~280ms) cho MỌI login attempt,
+        // kể cả user không tồn tại. Chấp nhận được vì:
+        //   - Login là endpoint ít gọi (5 phút/lần/user ở mức bình thường)
+        //   - Đã có rate limit 10/5min/IP + 5 attempts/email
+        //   - Trade-off security (anti-enumeration) > marginal CPU
+        if (!user) {
+            await bcrypt.compare(password, DUMMY_BCRYPT_HASH);
+            throw new AppError(401, 'INVALID_CREDENTIALS', 'Email hoặc mật khẩu không đúng.');
+        }
 
         // OAuth-only user tồn tại nhưng không có local password → báo để user biết
         // cách đăng nhập đúng (qua Google/FB/GitHub). Trước đây throw USER_NOT_FOUND
         // generic → user confused vì "đăng ký rồi mà báo không tồn tại".
         if (!user.passwordHash) {
+            // Vẫn chạy bcrypt để equalize timing — với hash dummy vì user không có hash.
+            await bcrypt.compare(password, DUMMY_BCRYPT_HASH);
             throw new AppError(
                 400,
                 'OAUTH_ONLY_ACCOUNT',
@@ -134,10 +229,30 @@ export const authService = {
         }
 
         if (user.status !== 'active') {
+            // Vẫn chạy bcrypt để equalize timing.
+            await bcrypt.compare(password, user.passwordHash);
             if (user.status === 'pending') throw new AppError(403, 'EMAIL_NOT_VERIFIED', 'Email chưa được xác thực. Vui lòng kiểm tra email và nhập mã OTP.');
+            // Audit 2026-09-28 follow-up: phan biet error code theo status.
+            if (user.status === 'banned') {
+                throw new AppError(
+                    403,
+                    'ACCOUNT_BANNED',
+                    'Tài khoản đã bị cấm. Vui lòng liên hệ hỗ trợ để biết thêm chi tiết.',
+                );
+            }
+            if (user.status === 'suspended') {
+                throw new AppError(
+                    403,
+                    'ACCOUNT_SUSPENDED',
+                    'Tài khoản đang bị tạm khóa. Vui lòng liên hệ hỗ trợ để biết thêm chi tiết.',
+                );
+            }
             throw new AppError(403, 'ACCOUNT_INACTIVE', 'Tài khoản không hoạt động. Vui lòng liên hệ hỗ trợ.');
         }
-        if (user.deletedAt) throw new AppError(403, 'ACCOUNT_DELETED', 'Tài khoản đã bị xóa.');
+        if (user.deletedAt) {
+            await bcrypt.compare(password, user.passwordHash);
+            throw new AppError(403, 'ACCOUNT_DELETED', 'Tài khoản đã bị xóa.');
+        }
         const isMatch = await bcrypt.compare(password, user.passwordHash);
         if (!isMatch) throw new AppError(401, 'INVALID_CREDENTIALS', 'Email hoặc mật khẩu không đúng.');
 
@@ -152,7 +267,13 @@ export const authService = {
         // User OAuth-only phải đăng nhập bằng provider, hoặc qua flow riêng
         // (set-password sau khi verify OAuth session).
         const existing = await db.query.users.findFirst({ where: eq(users.email, email) });
-        if (existing && !existing.passwordHash) {
+        // BIZ-1 FIX: skip work entirely nếu user không tồn tại. OTP đã được verify
+        // ở controller trước khi gọi vào service này (consume OTP), nên controller
+        // vẫn có thể trả 200 generic cho no-enumeration — không lộ user không tồn tại.
+        // Trước đây: bcrypt cost 12 (~100ms) + DB update 0 rows → waste CPU + response
+        // vẫn 200 success nhưng DB không đổi → "nói dối" thành công.
+        if (!existing) return;
+        if (!existing.passwordHash) {
             throw new AppError(
                 400,
                 'OAUTH_ONLY_ACCOUNT',
@@ -160,7 +281,28 @@ export const authService = {
             );
         }
         const passwordHash = await bcrypt.hash(newPassword, 12);
-        await db.update(users).set({ passwordHash }).where(eq(users.email, email));
+        // OP-1 FIX: dùng `.returning({ id })` để biết UPDATE có affect row nào không.
+        // Race condition: user vừa bị soft-delete giữa findFirst (trên) và update
+        // (dưới) → update trả 0 rows. Throw RESET_FAILED để controller KHÔNG trả
+        // 200 success giả.
+        //
+        // Phân biệt với BIZ-1:
+        //   - BIZ-1: user KHÔNG tồn tại từ đầu → silent return (no-enumeration)
+        //   - OP-1:  user TỒN TẠI lúc findFirst nhưng bị xóa trước update →
+        //             throw RESET_FAILED (OTP đã consume nhưng DB không đổi)
+        //
+        // User retry flow: OTP đã consume → phải request OTP mới qua forgot-password.
+        // Nếu user đã bị soft-delete thật, request OTP mới sẽ fail ở otpService.requestOtp
+        // (vì user lookup fail trong forgotPassword controller) → "user not found"
+        // consistent với no-enumeration.
+        const result = await db.update(users).set({ passwordHash }).where(eq(users.email, email)).returning({ id: users.id });
+        if (result.length === 0) {
+            throw new AppError(
+                400,
+                'RESET_FAILED',
+                'Đặt lại mật khẩu không thành công. Vui lòng yêu cầu mã OTP mới và thử lại.',
+            );
+        }
     },
     /**
      * Đổi mật khẩu cho user đang đăng nhập (route POST /auth/change-password).
@@ -221,7 +363,7 @@ export const authService = {
     },
     getProfile: async (userId: string): Promise<Profile | null> => {
         const email = await db.query.users.findFirst({ where: eq(users.id, userId), columns: { email: true } });
-        if (!email) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
+        if (!email) throw new AppError(404, 'USER_NOT_FOUND', 'Không tìm thấy tài khoản');
         const profile = await db.query.userProfiles.findFirst({ where: eq(userProfiles.userId, userId) });
         return { email: email?.email, ...profile } as Profile | null;
     },

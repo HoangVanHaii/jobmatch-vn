@@ -8,10 +8,43 @@ const createRedisStore = (prefix: string) =>
     prefix: `rl:${prefix}:`, // Ví dụ: rl:oauth:, rl:otp:, rl:admin:
   });
 
+/**
+ * Audit 2026-09-28 follow-up (C5 FIX):
+ *   Tách rate limit config thành 2 nhóm theo security sensitivity.
+ *
+ *   - NON_SENSITIVE: passOnStoreError=true (fail-open). Nếu Redis lỗi, request vẫn
+ *     pass qua. Áp cho: global rate limiter, admin, job write, chatbot.
+ *     Trade-off: UX hơn nhưng mất protection khi Redis sập.
+ *
+ *   - SENSITIVE: passOnStoreError=false (fail-closed). Nếu Redis lỗi, request bị
+ *     reject với 500. Áp cho: login (brute-force defense), forgot-password
+ *     (email enumeration timing + email-bomb), OTP routes (chống email bomb,
+ *     brute-force OTP). Trade-off: UX kém khi Redis sập nhưng SECURITY đặt trên UX
+ *     cho các endpoint nhạy cảm này.
+ *
+ *   Lý do cần fail-closed: nếu attacker có khả năng DoS Redis (qua network/
+ *   resource exhaustion), fail-open sẽ mở toàn bộ OTP/login → brute-force không
+ *   giới hạn. Fail-closed yêu cầu attacker vượt qua cả Redis DoS MỚI tới được
+ *   endpoint → tăng cost attack đáng kể.
+ *
+ *   Lưu ý: errorHandler hiện tại trả 500 cho store errors. Sensitive endpoint
+ *   khi Redis lỗi → user thấy "Internal Server Error" + retry → acceptable vì
+ *   đây là system-wide incident, không phải user-induced.
+ */
 const baseConfig = {
   standardHeaders: true,
   legacyHeaders: false,
-  passOnStoreError: true, 
+  passOnStoreError: true,
+};
+
+/**
+ * Config fail-CLOSED cho endpoint nhạy cảm.
+ * KHÔNG dùng cho endpoint public/costly — đó là `baseConfig`.
+ */
+const sensitiveConfig = {
+  standardHeaders: true,
+  legacyHeaders: false,
+  passOnStoreError: false,
 };
 
 export const rateLimiter = rateLimit({
@@ -31,19 +64,72 @@ export const oauthRateLimiter = rateLimit({
   message: { success: false, error: { code: 'OAUTH_RATE_LIMITED', message: 'Quá nhiều lần thử đăng nhập OAuth. Vui lòng thử lại sau 1 phút.' } },
 });
 
-export const otpRateLimiter = rateLimit({
+/**
+ * S2 FIX: Tách otpRateLimiter thành 5 limiter riêng theo route, mỗi route có
+ * bucket đếm độc lập.
+ *
+ * Lý do tách (regression risk):
+ *   Trước đây 4 route (verify-otp, resend-otp, forgot-password, reset-password)
+ *   share chung 1 bucket key `otp:${ip}`. User thao tác hợp lệ nhưng đa dạng
+ *   (vd 3 request-otp + 3 resend-otp) sẽ bị block ở call thứ 4 dù mỗi route
+ *   riêng chỉ mới 3 lần. Tương tự: forgot + reset share → spam 1 route có
+ *   thể lock route kia vô tình.
+ *
+ *   Giờ mỗi route có bucket riêng (Redis prefix + key prefix khác nhau):
+ *     - otp_request      → POST /auth/register/request-otp  (S2 FIX: mới thêm)
+ *     - otp_verify       → POST /auth/register/verify-otp
+ *     - otp_resend       → POST /auth/register/resend-otp
+ *     - otp_forgot       → POST /auth/forgot-password
+ *     - otp_reset        → POST /auth/reset-password
+ *
+ * Default max = 5 / 60s / IP cho mỗi route. Override qua tham số nếu cần.
+ */
+const createOtpRouteLimiter = (suffix: string, max = 5) =>
+  rateLimit({
+    ...sensitiveConfig, // C5 FIX: OTP routes = fail-CLOSED khi Redis lỗi
+    store: createRedisStore(`otp_${suffix}`),
+    windowMs: 60_000,
+    max,
+    keyGenerator: (req) => `otp_${suffix}:${req.ip}`,
+    message: {
+      success: false,
+      error: {
+        code: 'OTP_RATE_LIMITED',
+        message: 'Quá nhiều yêu cầu gửi mã OTP. Vui lòng thử lại sau 1 phút.',
+      },
+    },
+  });
+
+/** S2 FIX: chống email-bomb qua /register/request-otp (trước đây KHÔNG có rate limit). */
+export const otpRequestRateLimiter = createOtpRouteLimiter('request', 5);
+export const otpVerifyRateLimiter = createOtpRouteLimiter('verify', 5);
+export const otpResendRateLimiter = createOtpRouteLimiter('resend', 5);
+export const otpForgotRateLimiter = createOtpRouteLimiter('forgot', 5);
+export const otpResetRateLimiter = createOtpRouteLimiter('reset', 5);
+
+/**
+ * @deprecated Giữ export để không phá vỡ code ngoài đang import, nhưng KHÔNG
+ * nên dùng cho route mới. Dùng 5 limiter riêng ở trên để tránh cross-route
+ * interference. Bucket key cũ vẫn còn data Redis (TTL 60s) sẽ tự hết hạn.
+ */
+export const otpRateLimiter = otpVerifyRateLimiter;
+
+// Tighter limit cho /auth/oauth/complete vì endpoint này có thể spam
+// đổi role liên tục trong 10 phút pendingToken window. Tách khỏi
+// oauthRateLimiter chung (10/min) để apply mức chặt hơn riêng.
+export const oauthCompleteRateLimiter = rateLimit({
   ...baseConfig,
-  store: createRedisStore('otp'),
+  store: createRedisStore('oauth_complete'),
   windowMs: 60_000,
   max: 5,
-  keyGenerator: (req) => `otp:${req.ip}`,
-  message: { success: false, error: { code: 'OTP_RATE_LIMITED', message: 'Quá nhiều yêu cầu gửi mã OTP. Vui lòng thử lại sau 1 phút.' } },
+  keyGenerator: (req) => `oauth_complete:${req.ip}`,
+  message: { success: false, error: { code: 'OAUTH_COMPLETE_RATE_LIMITED', message: 'Quá nhiều yêu cầu hoàn tất đăng ký OAuth. Vui lòng thử lại sau 1 phút.' } },
 });
 
 // S2 FIX: Login rate limit — chặn brute-force password qua IP.
 // 10 attempts / 5 phút / IP. Layer 1 defense (account-level lockout sẽ là layer 2).
 export const loginRateLimiter = rateLimit({
-  ...baseConfig,
+  ...sensitiveConfig, // C5 FIX: login = fail-CLOSED khi Redis lỗi
   store: createRedisStore('login'),
   windowMs: 5 * 60 * 1000, // 5 phút (giảm từ 15 để UX tốt hơn, vẫn chặn brute-force)
   max: 10,
