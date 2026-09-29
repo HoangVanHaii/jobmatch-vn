@@ -145,22 +145,25 @@ onMounted(() => focusBox(0));
 </script>
 
 <template>
-  <div class="flex justify-between gap-2" @paste="onPaste">
-    <input
-      v-for="i in 6"
-      :key="i"
-      :ref="(el) => setInputRef(el as Element | null, i - 1)"
-      :value="digits[i - 1]"
-      type="text"
-      inputmode="numeric"
-      :autocomplete="i === 1 ? 'one-time-code' : 'off'"
-      maxlength="1"
-      :aria-label="`Chữ số ${i} trong 6`"
-      class="w-11 sm:w-12 h-14 text-center text-2xl font-bold border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition"
-      :class="{ 'opacity-50': i - 1 > 0 && !digits[i - 2] }"
-      @focus="onFocus(i - 1)"
-      @input="onInput(i - 1, $event)"
-      @keydown="onKeydown(i - 1, $event)"
-    />
-  </div>
+  <fieldset data-testid="otp-input" class="border-0 p-0 m-0" @paste="onPaste">
+    <legend class="sr-only">Mã OTP gồm 6 chữ số</legend>
+    <div class="flex justify-between gap-1.5 sm:gap-2">
+      <input
+        v-for="i in 6"
+        :key="i"
+        :ref="(el) => setInputRef(el as Element | null, i - 1)"
+        :value="digits[i - 1]"
+        type="text"
+        inputmode="numeric"
+        :autocomplete="i === 1 ? 'one-time-code' : 'off'"
+        maxlength="1"
+        :aria-label="`Chữ số ${i} trong 6`"
+        class="w-10 sm:w-12 h-14 text-center text-2xl font-bold border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition"
+        :class="{ 'opacity-50': i - 1 > 0 && !digits[i - 2] }"
+        @focus="onFocus(i - 1)"
+        @input="onInput(i - 1, $event)"
+        @keydown="onKeydown(i - 1, $event)"
+      />
+    </div>
+  </fieldset>
 </template>

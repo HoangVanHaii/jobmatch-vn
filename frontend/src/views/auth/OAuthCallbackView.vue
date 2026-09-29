@@ -71,13 +71,22 @@ onMounted(async () => {
   try {
     const result = await handleOAuthCallback(provider);
     // Dispatch theo status:
-    //   - EXISTING_USER → đã login, redirect theo role.
-    //   - NEW_USER → chưa tạo user, cần user chọn Role trước.
+    //   - EXISTING_USER        → đã login, redirect theo role.
+    //   - NEW_USER             → chưa tạo user, cần user chọn Role trước.
+    //   - PENDING_VERIFICATION → user match theo email/oauth_account nhưng
+    //                            status='pending' (chưa verify OTP). BE đã
+    //                            resend OTP. FE set pending email + redirect
+    //                            thẳng tới /verify-otp?from=register, KHÔNG
+    //                            qua /login.
     if (result.status === 'EXISTING_USER') {
       // Dùng named route (string path '/employer' hay '/candidate' dễ vô
       // tình match các child relative redirect nếu sau này refactor router).
       const target =
-        result.user.role === 'employer' ? 'employer-jobs' : 'candidate-jobs';
+        result.user.role === 'employer'
+          ? 'employer-jobs'
+          : result.user.role === 'admin'
+          ? 'admin-jobs'
+          : 'candidate-jobs';
       // B2 FIX: wrap router.replace trong try/catch riêng để tránh
       // treo vĩnh viễn nếu route bị rename/xóa/typo trong tương lai.
       try {
@@ -85,6 +94,36 @@ onMounted(async () => {
       } catch (navErr) {
         console.error('[OAuthCallback] Navigation failed:', navErr);
         error.value = 'Đăng nhập thành công nhưng không thể chuyển trang. Vui lòng nhấn F5.';
+      }
+    } else if (result.status === 'PENDING_VERIFICATION') {
+      // Audit 2026-09-28 follow-up: user đã đăng ký email-password (hoặc qua OAuth
+      // completeRegistration ở Case 3) nhưng chưa verify OTP, giờ retry OAuth
+      // với cùng email. BE đã resend OTP. FE phải:
+      //   1. Lưu email vào Pinia `pendingVerifyEmail` để VerifyOtpView auto-fill.
+      //   2. Set `pendingVerifySource = 'register'` để đồng bộ cooldown UX.
+      //   3. Redirect tới /verify-otp?from=register&oauth=pending (KHÔNG qua /login).
+      //
+      // Lưu ý query `oauth=pending` (non-PII, F5-safe):
+      //   - Phân biệt với password-register flow chỉ dùng `?from=register`.
+      //   - VerifyOtpView, khi user F5 làm mất Pinia email, sẽ check query này:
+      //        + `oauth=pending`  → redirect /login (user đã có account, recover
+      //                              bằng cách login lại).
+      //        + chỉ `from=register` không có oauth flag → redirect /register
+      //                              (đang giữa flow đăng ký, F5 → re-register).
+      //   - Email KHÔNG được truyền qua URL (PII leak trong history/Referer).
+      //
+      // VerifyOtpView onMounted (khi from='register') sẽ KHÔNG auto-resend (vì
+      // BE vừa resend rồi) → startCooldown 60s để tránh user spam.
+      authStore.setPendingVerifyEmail(result.email, 'register');
+      try {
+        await router.replace({
+          name: 'verify-otp',
+          query: { from: 'register', oauth: 'pending' },
+        });
+      } catch (navErr) {
+        console.error('[OAuthCallback] Navigation to /verify-otp failed:', navErr);
+        error.value = 'Đã gửi mã OTP tới email của bạn. Vui lòng vào trang xác thực.';
+        setTimeout(safeRedirectToLogin, 3000);
       }
     } else {
       try {

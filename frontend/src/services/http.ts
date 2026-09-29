@@ -150,8 +150,9 @@ const getErrorInfo = (e: unknown): { message: string; details?: Record<string, u
   if (e instanceof HttpError && e.message) {
     return { message: e.message, details: e.details as Record<string, unknown> | undefined };
   }
-  // AxiosError fallback (chưa qua interceptor)
-  if (e && typeof e === 'object' && 'response' in e) {
+  // AxiosError fallback (chưa qua interceptor). Không đưa message kỹ thuật của
+  // Axios ("Network Error", timeout, status code...) trực tiếp lên UI.
+  if (axios.isAxiosError<ApiResponseEnvelope<unknown>>(e)) {
     const axiosErr = e as AxiosError<ApiResponseEnvelope<unknown>>;
     const errorBody = axiosErr.response?.data?.error;
     if (errorBody?.message) {
@@ -160,6 +161,11 @@ const getErrorInfo = (e: unknown): { message: string; details?: Record<string, u
         details: errorBody.details as Record<string, unknown> | undefined,
       };
     }
+    return {
+      message: axiosErr.response
+        ? 'Máy chủ đang gặp sự cố. Vui lòng thử lại sau.'
+        : 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra kết nối mạng và thử lại.',
+    };
   }
   // Error thường
   if (e instanceof Error && e.message) {
@@ -205,9 +211,30 @@ http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// Response interceptor — auto refresh on 401 + unwrap BE errors
+// Response interceptor — auto refresh on 401 + unwrap BE errors + envelope validation
 http.interceptors.response.use(
-  (r) => r,
+  (r) => {
+    // Envelope invariant: mọi 2xx response phải có `success: true` (hoặc
+    // undefined cho backward compat). Nếu BE trả 2xx nhưng body.success === false
+    // là vi phạm contract → ném HttpError để caller xử lý đồng nhất.
+    // Trước đây axios mặc nhiên coi 2xx là OK → nếu có bug BE dạng này,
+    // FE âm thầm fail không có stack trace.
+    const body = r.data as { success?: boolean; error?: { code?: string; message?: string; details?: Record<string, unknown> } } | undefined;
+    if (body && typeof body === 'object' && body.success === false) {
+      const errBody = body.error;
+      if (errBody?.message) {
+        return Promise.reject(
+          new HttpError(
+            r.status ?? 200,
+            errBody.code ?? 'UNKNOWN',
+            errBody.message,
+            errBody.details,
+          ),
+        );
+      }
+    }
+    return r;
+  },
   async (error: AxiosError) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 

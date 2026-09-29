@@ -1,3 +1,137 @@
+<style scoped>
+/* Page enter: fade + slide-up nhẹ. Stagger qua animation-delay (0/80/160ms). */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-up {
+  animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Logo box "thở nhẹ" — scale 1 → 1.06 → 1, chu kỳ 3s. */
+@keyframes pulse-logo {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+.animate-pulse-logo {
+  animation: pulse-logo 3s ease-in-out infinite;
+  transform-origin: center center;
+}
+
+/* Editorial accent bar grow */
+@keyframes grow-bar {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.animate-grow-bar {
+  animation: grow-bar 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+  transform-origin: left center;
+}
+
+/* Benefit line grow — đường kẻ dọc 2px bên trái mỗi benefit */
+.benefit-line {
+  position: relative;
+}
+.benefit-line::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  background-color: rgb(147 197 253 / 0.7);
+  transform: scaleY(0);
+  transform-origin: top center;
+  animation: grow-line 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes grow-line {
+  to { transform: scaleY(1); }
+}
+.benefit-line:nth-child(1)::before { animation-delay: 100ms; }
+.benefit-line:nth-child(2)::before { animation-delay: 180ms; }
+.benefit-line:nth-child(3)::before { animation-delay: 260ms; }
+
+/* Blob float */
+@keyframes blob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(15px, -20px) scale(1.05); }
+  66% { transform: translate(-10px, 15px) scale(0.95); }
+}
+.animate-blob {
+  animation: blob 14s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-blob,
+  .animate-pulse-logo,
+  .animate-grow-bar,
+  .benefit-line::before {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
+/* Shake input khi validation fail — biên độ 6-8px, nhiều mốc rung, dứt khoát.
+   Đồng bộ với @keyframes shake + .animate-shake trong Login/Register/VerifyOtp. */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%      { transform: translateX(-7px); }
+  20%      { transform: translateX(7px); }
+  30%      { transform: translateX(-6px); }
+  40%      { transform: translateX(6px); }
+  50%      { transform: translateX(-4px); }
+  60%      { transform: translateX(4px); }
+  70%      { transform: translateX(-2px); }
+  80%      { transform: translateX(2px); }
+  90%      { transform: translateX(-1px); }
+}
+.animate-shake {
+  animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+/* Error box slide-down (Vue Transition) */
+.error-enter-active {
+  transition: all 0.2s ease-out;
+}
+.error-enter-from {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-shake,
+  .error-enter-active {
+    animation: none !important;
+  }
+}
+
+/* Underline animation cho link auth */
+.link-underline {
+  position: relative;
+}
+.link-underline::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.25s ease-out;
+}
+.link-underline:hover::after {
+  transform: scaleX(1);
+}
+</style>
+
 <script setup lang="ts">
 /**
  * ForgotPasswordView — Quên mật khẩu / Đặt lại mật khẩu JobMatch.
@@ -20,29 +154,28 @@
  *   - Mật khẩu mới phải ≥ 8 ký tự (khớp resetPasswordSchema).
  *
  * UI/UX (đồng bộ Login/Register):
- *   - Cùng ambient gradient bg-slate-50 + decorative blobs + container max-w-[1180px].
+ *   - Cùng ambient gradient bg-slate-50 + decorative blobs + container max-w-[1200px].
  *   - 2 cột desktop (branding trái + form phải); mobile ẩn branding.
- *   - Form max-w-[480px], input/button/error style y hệt Login.
+ *   - Form max-w-[440px], input/button/error style y hệt Login.
  *   - Step indicator 2 dots ngang trên đầu form.
  *   - Transition mượt giữa các step (mode="out-in").
  */
 import { ref, computed, onUnmounted, nextTick, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
-  Check,
   Eye,
   EyeOff,
-  Sparkles,
-  Mail,
+  Briefcase,
   KeyRound,
-  ShieldCheck,
   Clock,
   RefreshCw,
   CheckCircle2,
   ArrowLeft,
+  Mail,
 } from 'lucide-vue-next';
 import { authApi } from '@services/auth.api';
 import { extractErrorCode, extractErrorMessage } from '@services/http';
+import { useAnimatedCount } from '@composables/useAnimatedCount';
 import OtpInput from '@components/auth/OtpInput.vue';
 import { useToastStore } from '@stores/toast';
 
@@ -63,6 +196,8 @@ const email = ref('');
 /** Step 2 */
 const otp = ref('');
 const otpInputRef = ref<InstanceType<typeof OtpInput> | null>(null);
+/** Ref cho email input step 1 — focus khi shake-on-submit fail. */
+const forgotEmailInputRef = ref<HTMLInputElement | null>(null);
 const newPassword = ref('');
 const confirmPassword = ref('');
 const showNewPassword = ref(false);
@@ -76,16 +211,30 @@ const cooldown = ref(0);
 let cooldownTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Touched flags — chỉ show inline error sau khi user đã tương tác với field
- *  để tránh error đỏ hiện ra ngay khi page mount. */
+ *  để tránn error đỏ hiện ra ngay khi page mount. */
 const emailTouched = ref(false);
 const newPasswordTouched = ref(false);
 const confirmTouched = ref(false);
+
+/** Email shake counter — bump để remount :key và trigger lại CSS `animate-shake`
+ *  khi user click "Gửi mã OTP" với email invalid. Pattern đồng bộ với Login/Register.
+ *
+ *  Audit 2026-09-28: trước fix, input thiếu `:key` → chỉ bind :class. CSS animation
+ *  chỉ trigger khi class được ADD lần đầu → spam submit không re-trigger shake.
+ *  Thêm `:key="`forgot-email-${emailShake}`"` để mỗi lần counter đổi → Vue unmount
+ *  + mount lại element → animation reset và chạy lại từ đầu. */
+const emailShake = ref(0);
 
 /** API submit error (BE trả về) — KHÁC với client-side inline error.
  *  submitError hiện trên banner đỏ phía trên button submit. */
 const submitError = ref('');
 
-/** Step success — email đã được verify thành công, dùng để navigate back to login. */
+/* ============================================================================
+ * Stats counter animation — đếm từ 0 → target khi mount.
+ * M2+V2+M1 FIX: dùng composable useAnimatedCount (đồng bộ với 3 trang kia).
+ * Trước đây ForgotPasswordView hiển thị số tĩnh "12K+", "850+", "96%" → lệch pattern.
+ * ==========================================================================*/
+const { jobsCount, companiesCount, satisfactionCount } = useAnimatedCount();
 
 /* ============================================================================
  * Step indicator mapping
@@ -145,8 +294,8 @@ const canSubmitVerify = computed(
  * Masked email cho step 2 subtitle
  *
  * Ví dụ:
- *   "huytest@gmail.com"     → "hu***@gmail.com"
- *   "ab@example.com"        → "ab***@example.com"
+ *   "huytest@gmail.com"     → "hu••••@gmail.com"
+ *   "ab@example.com"        → "ab••••@example.com"
  *   "no-at-sign"            → "no-at-sign" (không có @ → trả nguyên)
  * ==========================================================================*/
 
@@ -156,7 +305,7 @@ const maskedEmail = computed(() => {
   if (at < 1) return e;
   const head = e.slice(0, at).slice(0, 2);
   const domain = e.slice(at);
-  return `${head}***${domain}`;
+  return `${head}${'•'.repeat(4)}${domain}`;
 });
 
 /* ============================================================================
@@ -186,7 +335,13 @@ const startCooldown = (): void => {
 const sendCode = async (): Promise<void> => {
   emailTouched.value = true;
   submitError.value = '';
-  if (!emailValid.value) return;
+  if (!emailValid.value) {
+    // Email invalid → shake input giống pattern Login/Register, focus ô để user sửa ngay.
+    emailShake.value++;
+    await nextTick();
+    forgotEmailInputRef.value?.focus();
+    return;
+  }
 
   loading.value = true;
   try {
@@ -213,7 +368,10 @@ const sendCode = async (): Promise<void> => {
 
 /** Gửi lại OTP — cùng endpoint forgot-password. */
 const resend = async (): Promise<void> => {
-  if (cooldown.value > 0) return;
+  // Defensive: chặn double-call khi user bypass UI (Enter key, devtools,
+  // programmatic call) — button :disabled đã chặn click chuột nhưng không
+  // cover toàn bộ attack vector.
+  if (resending.value || cooldown.value > 0) return;
   submitError.value = '';
   resending.value = true;
   try {
@@ -228,6 +386,11 @@ const resend = async (): Promise<void> => {
     const code = extractErrorCode(e);
     if (code === 'RESEND_COOLDOWN') {
       submitError.value = 'Vui lòng đợi thêm vài giây trước khi gửi lại.';
+      // ERR-1 FIX: riêng RESEND_COOLDOWN + OTP_RATE_LIMITED → startCooldown để hiển thị
+      // countdown 60s + disable nút "Gửi lại". Đồng bộ với pattern VerifyOtpView (B-2 fix)
+      // để user trên /forgot-password cũng thấy countdown khi hit rate limit, không phải
+      // tự đoán khi nào retry.
+      startCooldown();
     } else {
       submitError.value = extractErrorMessage(e, 'Gửi lại mã thất bại. Vui lòng thử lại.');
     }
@@ -319,12 +482,12 @@ watch(step, (s) => {
   <!--
     STRUCTURE (đồng bộ Login/Register):
       page (bg-slate-50)
-        → centered container max-w-[1180px] mx-auto
+        → centered container max-w-[1200px] mx-auto
             → ambient bg layer + decorative blobs
             → header (logo, cùng container)
             → main grid (2 cột)
   -->
-  <div class="relative min-h-screen overflow-hidden bg-slate-50">
+  <div class="fixed inset-0 overflow-hidden bg-slate-50">
     <!-- Ambient background: gradient mềm từ trái → transparent -->
     <div class="pointer-events-none absolute inset-0" aria-hidden="true">
       <div
@@ -337,42 +500,52 @@ watch(step, (s) => {
 
     <!-- Decorative blurred blobs -->
     <div class="pointer-events-none absolute inset-0" aria-hidden="true">
-      <div class="absolute -top-24 -left-24 h-80 w-80 rounded-full bg-primary-200/30 blur-3xl" />
-      <div class="absolute top-1/3 left-[18%] h-96 w-96 rounded-full bg-primary-100/35 blur-3xl" />
-      <div class="absolute -bottom-32 left-[8%] h-96 w-96 rounded-full bg-primary-50/60 blur-3xl" />
-      <div class="absolute top-1/4 right-[10%] h-72 w-72 rounded-full bg-primary-100/15 blur-3xl" />
+      <div
+        class="absolute -top-24 -left-24 h-80 w-80 rounded-full bg-primary-200/30 blur-3xl animate-blob"
+      />
+      <div
+        class="absolute top-1/3 left-[18%] h-96 w-96 rounded-full bg-primary-100/35 blur-3xl animate-blob"
+        style="animation-delay: 2s;"
+      />
+      <div
+        class="absolute -bottom-32 left-[8%] h-96 w-96 rounded-full bg-primary-50/60 blur-3xl animate-blob"
+        style="animation-delay: 4s;"
+      />
+      <div
+        class="absolute top-1/4 right-[10%] h-72 w-72 rounded-full bg-primary-100/15 blur-3xl animate-blob"
+        style="animation-delay: 6s;"
+      />
     </div>
 
-    <!-- Centered container -->
+    <!-- Centered container: max-w-[1200px], đồng bộ Login/Register -->
     <div
-      class="relative mx-auto flex min-h-screen w-full max-w-[1180px] flex-col px-6 lg:px-10 xl:px-12"
+      class="relative mx-auto flex min-h-screen w-full max-w-[1200px] flex-col px-6 lg:px-10 xl:px-12"
     >
-      <!-- Logo JobMatch — đồng bộ Login/Register -->
-      <RouterLink
-        to="/"
-        class="relative z-10 inline-flex items-center gap-2 pt-12 group lg:pt-16"
-        aria-label="JobMatch"
+      <!-- Logo JobMatch — không bọc RouterLink, dùng div thuần (đồng bộ Login/Register) -->
+      <div
+        class="relative z-10 inline-flex items-center gap-2 pt-8 lg:pt-10 animate-fade-up"
+        style="animation-delay: 0ms;"
       >
         <span
-          class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary-600 text-white shadow-sm transition group-hover:bg-primary-700"
+          class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary-600 text-white shadow-sm animate-pulse-logo"
         >
-          <Sparkles class="h-5 w-5" aria-hidden="true" />
+          <Briefcase class="h-5 w-5" aria-hidden="true" />
         </span>
         <span class="text-xl font-semibold tracking-tight text-slate-900">JobMatch</span>
-      </RouterLink>
+      </div>
 
-      <!-- Main grid -->
+      <!-- Main grid: 2 cột đối xứng (grid-cols-2) -->
       <main
-        class="relative z-10 grid flex-1 grid-cols-1 items-start gap-y-10 pt-10 lg:grid-cols-[1fr_1.3fr] lg:gap-x-10 lg:gap-y-0 lg:pt-3 xl:gap-x-14"
+        class="relative z-10 grid flex-1 grid-cols-1 items-start gap-y-3 pt-10 lg:grid-cols-2 lg:gap-x-14 lg:gap-y-0 lg:pt-14"
       >
         <!-- ========== CỘT TRÁI — BRANDING ========== -->
-        <section class="hidden lg:block w-full max-w-[440px] lg:pt-10">
-          <p
-            class="inline-flex items-center gap-2 text-[11px] font-medium tracking-wide text-primary-700 bg-primary-100/70 rounded-full px-3 py-1"
-          >
-            <ShieldCheck class="h-3.5 w-3.5" aria-hidden="true" />
-            Bảo mật &amp; an toàn
-          </p>
+        <section data-testid="branding-section" class="hidden lg:block w-full max-w-[440px] animate-fade-up" style="animation-delay: 80ms;">
+          <div class="inline-flex items-center gap-2">
+            <span class="h-px w-4 bg-slate-900 animate-grow-bar" aria-hidden="true"></span>
+            <p class="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-700">
+              Bảo mật &amp; an toàn
+            </p>
+          </div>
 
           <h2
             class="mt-3 text-2xl xl:text-[26px] font-bold tracking-tight text-slate-900 leading-tight"
@@ -383,89 +556,37 @@ watch(step, (s) => {
             Tạo mật khẩu mới để tiếp tục hành trình của bạn cùng JobMatch.
           </p>
 
-          <ul class="mt-5 space-y-2.5">
-            <li class="flex items-start gap-2.5">
-              <span
-                class="mt-0.5 inline-flex h-5 w-5 flex-none items-center justify-center rounded-full bg-primary-600 text-white"
-              >
-                <Check class="h-3 w-3" aria-hidden="true" />
-              </span>
-              <span class="text-sm text-slate-700 leading-snug">
-                <span class="font-medium text-slate-900">Mã OTP</span> gửi qua email trong vài giây
-              </span>
+          <ul class="mt-5 space-y-3">
+            <li class="benefit-line pl-3 text-sm text-slate-700 leading-relaxed">
+              <span class="font-semibold text-slate-900">Mã OTP</span> gửi qua email trong vài giây
             </li>
-            <li class="flex items-start gap-2.5">
-              <span
-                class="mt-0.5 inline-flex h-5 w-5 flex-none items-center justify-center rounded-full bg-primary-600 text-white"
-              >
-                <Check class="h-3 w-3" aria-hidden="true" />
-              </span>
-              <span class="text-sm text-slate-700 leading-snug">
-                <span class="font-medium text-slate-900">Mã 6 số</span> có thời hạn 5 phút
-              </span>
+            <li class="benefit-line pl-3 text-sm text-slate-700 leading-relaxed">
+              <span class="font-semibold text-slate-900">Mã 6 số</span> có thời hạn 5 phút
             </li>
-            <li class="flex items-start gap-2.5">
-              <span
-                class="mt-0.5 inline-flex h-5 w-5 flex-none items-center justify-center rounded-full bg-primary-600 text-white"
-              >
-                <Check class="h-3 w-3" aria-hidden="true" />
-              </span>
-              <span class="text-sm text-slate-700 leading-snug">
-                <span class="font-medium text-slate-900">Mật khẩu mới</span> được mã hoá an toàn
-              </span>
+            <li class="benefit-line pl-3 text-sm text-slate-700 leading-relaxed">
+              <span class="font-semibold text-slate-900">Mật khẩu mới</span> được mã hoá an toàn
             </li>
           </ul>
 
-          <!-- Illustration SVG — dùng lại pattern từ Login/Register cho visual rhythm đồng nhất -->
-          <div class="mt-5 max-w-[360px]" aria-hidden="true">
-            <svg
-              viewBox="0 0 480 200"
-              class="w-full h-auto max-h-[140px]"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-            >
-              <!-- Card backdrop -->
-              <rect x="40" y="30" width="400" height="140" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" />
-              <!-- Lock icon left -->
-              <rect x="68" y="78" width="44" height="44" rx="8" fill="#DBEAFE" />
-              <rect x="80" y="92" width="20" height="20" rx="3" fill="#2563EB" />
-              <path d="M84 92 v -6 a 6 6 0 0 1 12 0 v 6" stroke="#2563EB" stroke-width="2.5" fill="none" stroke-linecap="round" />
-              <!-- OTP cells right -->
-              <rect x="135" y="68" width="170" height="8" rx="4" fill="#E2E8F0" />
-              <rect x="135" y="84" width="110" height="6" rx="3" fill="#EFF6FF" />
-              <g>
-                <rect x="140" y="108" width="38" height="44" rx="6" fill="#F8FAFC" stroke="#E2E8F0" />
-                <text x="159" y="137" font-family="ui-sans-serif" font-size="20" font-weight="700" fill="#2563EB" text-anchor="middle">1</text>
-              </g>
-              <g>
-                <rect x="184" y="108" width="38" height="44" rx="6" fill="#F8FAFC" stroke="#E2E8F0" />
-                <text x="203" y="137" font-family="ui-sans-serif" font-size="20" font-weight="700" fill="#2563EB" text-anchor="middle">2</text>
-              </g>
-              <g>
-                <rect x="228" y="108" width="38" height="44" rx="6" fill="#F8FAFC" stroke="#E2E8F0" />
-                <text x="247" y="137" font-family="ui-sans-serif" font-size="20" font-weight="700" fill="#2563EB" text-anchor="middle">3</text>
-              </g>
-              <g>
-                <rect x="272" y="108" width="38" height="44" rx="6" fill="#EFF6FF" stroke="#BFDBFE" />
-                <text x="291" y="137" font-family="ui-sans-serif" font-size="20" font-weight="700" fill="#1E3A8A" text-anchor="middle">4</text>
-              </g>
-              <g>
-                <rect x="316" y="108" width="38" height="44" rx="6" fill="#F8FAFC" stroke="#E2E8F0" />
-                <text x="335" y="137" font-family="ui-sans-serif" font-size="20" font-weight="700" fill="#2563EB" text-anchor="middle">5</text>
-              </g>
-              <g>
-                <rect x="360" y="108" width="38" height="44" rx="6" fill="#F8FAFC" stroke="#E2E8F0" />
-                <text x="379" y="137" font-family="ui-sans-serif" font-size="20" font-weight="700" fill="#2563EB" text-anchor="middle">6</text>
-              </g>
-              <!-- Sparkles -->
-              <path d="M420 50 l 3 -6 l 3 6 l 6 3 l -6 3 l -3 6 l -3 -6 l -6 -3 z" fill="#2563EB" opacity="0.7" />
-              <path d="M70 40 l 2 -4 l 2 4 l 4 2 l -4 2 l -2 4 l -2 -4 l -4 -2 z" fill="#3B82F6" opacity="0.5" />
-            </svg>
-          </div>
+          <!-- Trust indicators — đồng bộ Login/Register (animated via useAnimatedCount) -->
+          <dl data-testid="stats-list" class="mt-7 grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-slate-200/70 pt-5">
+            <div data-testid="stat-0">
+              <dt class="text-2xl font-bold text-slate-900 tabular-nums leading-none">{{ jobsCount }}K+</dt>
+              <dd class="mt-1.5 text-xs text-slate-600 leading-tight">Việc làm<br />đang tuyển</dd>
+            </div>
+            <div data-testid="stat-1">
+              <dt class="text-2xl font-bold text-slate-900 tabular-nums leading-none">{{ companiesCount }}+</dt>
+              <dd class="mt-1.5 text-xs text-slate-600 leading-tight">Doanh nghiệp<br />đối tác</dd>
+            </div>
+            <div data-testid="stat-2">
+              <dt class="text-2xl font-bold text-slate-900 tabular-nums leading-none">{{ satisfactionCount }}%</dt>
+              <dd class="mt-1.5 text-xs text-slate-600 leading-tight">Ứng viên<br />hài lòng</dd>
+            </div>
+          </dl>
         </section>
 
         <!-- ========== CỘT PHẢI — FORM ========== -->
-        <section class="w-full max-w-[480px] justify-self-start">
+        <section data-testid="form-section" class="w-full max-w-[440px] justify-self-center lg:justify-self-start animate-fade-up" style="animation-delay: 160ms;">
           <!-- Step indicator (đồng bộ design system) — ẩn ở step success -->
           <div
             v-if="currentStepNumber !== null"
@@ -536,15 +657,15 @@ watch(step, (s) => {
                  ================================================================ -->
             <div v-if="step === 'request'" key="request">
               <header>
-                <h1 class="text-2xl font-bold tracking-tight text-slate-900">
+                <h1 class="text-xl font-bold tracking-tight text-slate-900">
                   Quên mật khẩu?
                 </h1>
-                <p class="mt-1.5 text-sm text-slate-600">
+                <p class="mt-1 text-sm text-slate-600 leading-snug">
                   Nhập email tài khoản để nhận mã OTP đặt lại mật khẩu.
                 </p>
               </header>
 
-              <form @submit.prevent="sendCode" class="mt-5 space-y-3" novalidate>
+              <form @submit.prevent="sendCode" class="mt-3 space-y-3" novalidate>
                 <div>
                   <label for="forgot-email" class="block text-sm font-medium text-slate-700">
                     Email
@@ -552,6 +673,8 @@ watch(step, (s) => {
                   <div class="relative mt-1">
                     <input
                       id="forgot-email"
+                      ref="forgotEmailInputRef"
+                      :key="`forgot-email-${emailShake}`"
                       name="email"
                       v-model="email"
                       type="email"
@@ -559,11 +682,14 @@ watch(step, (s) => {
                       autocomplete="email"
                       :aria-invalid="emailError ? 'true' : 'false'"
                       :aria-describedby="emailError ? 'forgot-email-err' : undefined"
-                      class="block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 pr-10 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                      :class="emailError ? 'border-red-400 focus:border-red-500 focus:ring-red-500/30' : ''"
+                      class="block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 pr-10 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/40"
+                      :class="[
+                        emailError ? '!border-red-400 focus:!border-red-500 focus:!ring-red-500/30' : '',
+                        emailShake > 0 ? 'animate-shake' : '',
+                      ]"
                       placeholder="Nhập email của bạn"
                       @blur="emailTouched = true"
-                      @input="emailTouched = true; submitError = ''"
+                      @input="emailTouched = true; submitError = ''; emailShake = 0"
                     />
                     <span
                       class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400"
@@ -582,18 +708,20 @@ watch(step, (s) => {
                 </div>
 
                 <!-- Submit error (BE) — banner đỏ phía trên button -->
-                <p
-                  v-if="submitError"
-                  role="alert"
-                  class="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700"
-                >
-                  {{ submitError }}
-                </p>
+                <Transition name="error">
+                  <p
+                    v-if="submitError"
+                    role="alert"
+                    class="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700"
+                  >
+                    {{ submitError }}
+                  </p>
+                </Transition>
 
                 <button
                   type="submit"
                   :disabled="loading"
-                  class="flex w-full items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  class="flex w-full items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-base font-semibold text-white shadow-sm transition-all duration-200 hover:bg-primary-700 hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <span
                     v-if="loading"
@@ -607,7 +735,7 @@ watch(step, (s) => {
               <p class="mt-5 text-center text-sm text-slate-600">
                 <RouterLink
                   to="/login"
-                  class="inline-flex items-center gap-1 font-medium text-primary-600 hover:text-primary-700 transition"
+                  class="link-underline inline-flex items-center gap-1 font-medium text-primary-600 hover:text-primary-700 transition"
                 >
                   <ArrowLeft class="h-3.5 w-3.5" />
                   Quay lại đăng nhập
@@ -620,16 +748,16 @@ watch(step, (s) => {
                  ================================================================ -->
             <div v-else-if="step === 'verify'" key="verify">
               <header>
-                <h1 class="text-2xl font-bold tracking-tight text-slate-900">
+                <h1 class="text-xl font-bold tracking-tight text-slate-900">
                   Đặt lại mật khẩu
                 </h1>
-                <p class="mt-1.5 text-sm text-slate-600">
+                <p class="mt-1 text-sm text-slate-600 leading-snug">
                   Mã OTP đã được gửi đến
                   <span class="font-semibold text-slate-900">{{ maskedEmail }}</span>
                 </p>
               </header>
 
-              <form @submit.prevent="submitReset" class="mt-5 space-y-4" novalidate>
+              <form @submit.prevent="submitReset" class="mt-3 space-y-3" novalidate>
                 <!-- OTP -->
                 <div>
                   <label class="block text-sm font-medium text-slate-700">Mã OTP</label>
@@ -682,8 +810,8 @@ watch(step, (s) => {
                       autocomplete="new-password"
                       :aria-invalid="newPasswordError ? 'true' : 'false'"
                       :aria-describedby="newPasswordError ? 'new-password-err' : 'new-password-hint'"
-                      class="block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 pr-10 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                      :class="newPasswordError ? 'border-red-400 focus:border-red-500 focus:ring-red-500/30' : ''"
+                      class="block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 pr-10 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/40"
+                      :class="newPasswordError ? '!border-red-400 focus:!border-red-500 focus:!ring-red-500/30' : ''"
                       placeholder="Nhập mật khẩu mới"
                       @blur="newPasswordTouched = true"
                       @input="newPasswordTouched = true; submitError = ''"
@@ -729,8 +857,8 @@ watch(step, (s) => {
                       autocomplete="new-password"
                       :aria-invalid="confirmError ? 'true' : 'false'"
                       :aria-describedby="confirmError ? 'confirm-password-err' : undefined"
-                      class="block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 pr-10 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                      :class="confirmError ? 'border-red-400 focus:border-red-500 focus:ring-red-500/30' : ''"
+                      class="block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 pr-10 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/40"
+                      :class="confirmError ? '!border-red-400 focus:!border-red-500 focus:!ring-red-500/30' : ''"
                       placeholder="Nhập lại mật khẩu"
                       @blur="confirmTouched = true"
                       @input="confirmTouched = true; submitError = ''"
@@ -756,18 +884,20 @@ watch(step, (s) => {
                 </div>
 
                 <!-- Submit error (BE) — banner đỏ phía trên button -->
-                <p
-                  v-if="submitError"
-                  role="alert"
-                  class="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700"
-                >
-                  {{ submitError }}
-                </p>
+                <Transition name="error">
+                  <p
+                    v-if="submitError"
+                    role="alert"
+                    class="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700"
+                  >
+                    {{ submitError }}
+                  </p>
+                </Transition>
 
                 <button
                   type="submit"
                   :disabled="loading || !canSubmitVerify"
-                  class="flex w-full items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  class="flex w-full items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-base font-semibold text-white shadow-sm transition-all duration-200 hover:bg-primary-700 hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <span
                     v-if="loading"
@@ -782,7 +912,7 @@ watch(step, (s) => {
                   <button
                     type="button"
                     @click="backToRequest"
-                    class="inline-flex items-center gap-1 font-medium text-slate-500 hover:text-slate-700 transition"
+                    class="link-underline inline-flex items-center gap-1 font-medium text-slate-500 hover:text-slate-700 transition"
                   >
                     <ArrowLeft class="h-3 w-3" />
                     Đổi email
@@ -815,7 +945,7 @@ watch(step, (s) => {
               <button
                 type="button"
                 @click="goToLogin"
-                class="mt-6 flex w-full items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                class="mt-6 flex w-full items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-base font-semibold text-white shadow-sm transition-all duration-200 hover:bg-primary-700 hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
               >
                 Đăng nhập
               </button>

@@ -99,7 +99,10 @@ export const useAuthStore = defineStore('auth', () => {
   const fetchMe = async (): Promise<void> => {
     try {
       const { data } = await authApi.me();
-      user.value = data.data;
+      // data.data là optional trong generic; interceptor success validation đảm
+      // bảo 2xx + success=true đồng nghĩa có `data`, nhưng TS không suy ra được.
+      // Fallback null nếu BE trả success=true nhưng thiếu data (contract violation).
+      user.value = data.data ?? null;
       // Restore session: bind socket + notification listener để bell realtime
       // hoạt động sau khi refresh page.
       useNotificationStore().bindSocket();
@@ -118,8 +121,16 @@ export const useAuthStore = defineStore('auth', () => {
     isLoading.value = true;
     try {
       const { data } = await authApi.login({ email, password });
-      setTokens(data.data.accessToken, data.data.refreshToken);
-      user.value = data.data.user;
+      // Guard data.data (interceptor đảm bảo 2xx + envelope hợp lệ nhưng TS không biết).
+      const payload = data.data;
+      if (!payload) {
+        throw new Error('Login response missing data envelope');
+      }
+      setTokens(payload.accessToken, payload.refreshToken);
+      // BE trả `{ id, email, role }` không bao gồm `status`/`fullName`...
+      // Synthesize full User shape với status='active' default (user qua login
+      // chắc chắn đã active). fetchMe() sau đó sẽ populate các field optional.
+      user.value = { ...payload.user, status: 'active' } as User;
       // Kết nối socket + bind notification listener (bell realtime).
       const notif = useNotificationStore();
       notif.bindSocket();

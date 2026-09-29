@@ -16,8 +16,12 @@ export interface OAuthProfilePreview {
 
 /**
  * Discriminated union — FE check `status` để dispatch:
- *   - EXISTING_USER → set tokens, push về home
- *   - NEW_USER → lưu pendingToken, push tới /select-role
+ *   - EXISTING_USER       → set tokens, push về home/role dashboard.
+ *   - NEW_USER            → lưu pendingToken, push tới /select-role.
+ *   - PENDING_VERIFICATION → user status='pending' (chưa verify OTP) ở user
+ *                            đã tồn tại. BE đã gửi/resend OTP. FE set pending
+ *                            email và push tới /verify-otp?from=register
+ *                            (KHÔNG qua /login).
  */
 export type OAuthCallbackResult =
   | {
@@ -30,6 +34,10 @@ export type OAuthCallbackResult =
       status: 'NEW_USER';
       pendingToken: string;
       profile: OAuthProfilePreview;
+    }
+  | {
+      status: 'PENDING_VERIFICATION';
+      email: string;
     };
 
 export const oauthApi = {
