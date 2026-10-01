@@ -13,7 +13,7 @@
  * tính lại. SSR-safe: không có element → scale 0 → không render phần inside.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import CVTemplate6 from '../templates/CVTemplate1.vue';
+import CVTemplate6 from '../templates/CVTemplate6.vue';
 import type { CvRenderData } from '@/types/cv';
 
 defineProps<{ data: CvRenderData }>();

@@ -1,19 +1,13 @@
 <script setup lang="ts">
 /**
- * CvThumbnailTemplate6 — bản mini của CVTemplate6.
+ * CvThumbnailTemplate7 — bản mini của CVTemplate7.
  *
- * Template 6 chưa có bản mini thuần như 1-5 → dùng kỹ thuật SCALE: render
- * template FULL ở design width 850px rồi `transform: scale(w/850)` xuống đúng
- * width container; `aspect-ratio: 850/1100` giữ khung A4 của card. Toàn bộ
- * px bên trong template giữ nguyên tỉ lệ → nhìn như ảnh thu nhỏ, không vỡ
- * layout (khác biệt duy nhất: text chọn được ở kích thước scale, chấp nhận
- * được cho thumbnail).
- *
- * ResizeObserver theo container — card đổi size (responsive/zoom) là scale
- * tính lại. SSR-safe: không có element → scale 0 → không render phần inside.
+ * Sử dụng kỹ thuật SCALE: render template FULL ở design width 850px rồi
+ * `transform: scale(w/850)` xuống đúng width container; `aspect-ratio: 850/1100`
+ * giữ khung A4 của card. Giữ nguyên toàn bộ layout, màu sắc và typography.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import CVTemplate6 from '../templates/CVTemplate1.vue';
+import CVTemplate7 from '../templates/CVTemplate7.vue';
 import type { CvRenderData } from '@/types/cv';
 
 defineProps<{ data: CvRenderData }>();
@@ -53,7 +47,8 @@ const scale = computed(() =>
       class="absolute left-0 top-0 origin-top-left bg-white"
       :style="{ width: DESIGN_WIDTH + 'px', transform: `scale(${scale})` }"
     >
-      <CVTemplate6 :data="data" />
+      <CVTemplate7 :data="data" :disable-links="true" />
     </div>
   </div>
 </template>
+

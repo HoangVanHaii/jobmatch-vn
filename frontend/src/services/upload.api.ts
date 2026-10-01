@@ -36,17 +36,49 @@ export const formatFileSize = (bytes: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+/**
+ * MIME whitelist cho /uploads/file — mirror FILE_MIME ở BE middleware/upload.ts
+ * (CHAT_FILE_MIME + image). FE-side guard để fail-fast trước khi tốn round-trip.
+ */
+export const UPLOAD_FILE_MIME = [
+  ...CHAT_FILE_MIME,
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+] as const;
+
+/** Kiểm tra MIME có nằm trong whitelist của /uploads/file không. */
+export const isAllowedFileMime = (mime: string): boolean =>
+  UPLOAD_FILE_MIME.includes(mime as (typeof UPLOAD_FILE_MIME)[number]);
+
 export const uploadApi = {
   /**
    * Upload CV (PDF/DOCX/image, 10MB) — POST /uploads/file.
-   * Dùng trong flow "Upload CV" của CreateResumeView (mode=upload).
+   * Dùng trong flow "Upload CV" của CreateResumeView (mode=upload) và
+   * UploadFilesDialog (nhiều file song song, mỗi file 1 request).
+   *
+   * @param onProgress callback theo `onUploadProgress` của axios — nhận
+   *   (percent 0-100, loaded bytes, total bytes) để vẽ progress bar thật.
+   * @param signal AbortSignal — caller abort để hủy request đang chạy (vd xoá
+   *   item giữa chừng).
    */
-  uploadFile: (file: File, folder: string = 'cvs') => {
+  uploadFile: (
+    file: File,
+    folder: string = 'cvs',
+    onProgress?: (percent: number, loaded: number, total: number) => void,
+    signal?: AbortSignal,
+  ) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('folder', folder);
     return http.post<ApiResponse<UploadResult>>('/uploads/file', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      signal,
+      onUploadProgress: (e) => {
+        if (!onProgress || !e.total) return;
+        onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)), e.loaded, e.total);
+      },
     });
   },
 
@@ -117,4 +149,12 @@ export const uploadApi = {
     const { data } = await uploadApi.uploadFile(file, 'chat');
     return { ...data.data, kind: 'file', name: file.name };
   },
+
+  /**
+   * Xoá file đã upload trên MinIO — DELETE /uploads?key=...
+   * Dọn orphan: file upload thành công nhưng bước tạo CV row phía sau fail
+   * (mạng/429) → file nằm trong bucket không có row nào trỏ tới. BE chỉ cho
+   * owner (hoặc admin) xoá key của mình — lỗi best-effort, không block UI.
+   */
+  removeFile: (key: string) => http.delete<ApiResponse<null>>('/uploads', { params: { key } }),
 };

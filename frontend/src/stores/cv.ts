@@ -104,8 +104,11 @@ export const useCvStore = defineStore('cv', () => {
    * @param source — optional filter: 'upload' | 'direct'. Bỏ trống → giữ nguyên
    *   source hiện tại trong `query.source` (không reset).
    * @param pageNum — trang muốn load (1-based). Mặc định giữ nguyên page hiện tại.
-   * @param q — optional từ khoá search theo title (case-insensitive ILIKE). Mặc
-   *   định giữ nguyên `query.q` hiện tại. Khi search thay đổi → reset page=1.
+   * @param q — optional từ khoá search theo title (case-insensitive ILIKE).
+   *   `undefined` = giữ nguyên `query.q` hiện tại; `null` = CLEAR q (về không
+   *   search) — watch(searchQuery) truyền null khi user xoá hết text, nếu
+   *   truyền undefined thì query cũ bị giữ lại (list không về ban đầu).
+   *   Khi search thay đổi → reset page=1.
    * @param resetFilters — true → clear source + q về undefined (dùng cho chip
    *   "Xóa lọc"). Cần flag riêng vì mặc định `undefined` cho source/q nghĩa
    *   "giữ nguyên" → không reset được.
@@ -117,7 +120,7 @@ export const useCvStore = defineStore('cv', () => {
   const fetchList = async (
     source?: CvSource,
     pageNum?: number,
-    q?: string,
+    q?: string | null,
     resetFilters?: boolean,
   ): Promise<void> => {
     loading.value = true;
@@ -133,9 +136,10 @@ export const useCvStore = defineStore('cv', () => {
         if (source !== undefined) query.value.source = source;
         // Search thay đổi → luôn về page 1; pageNum truyền tường minh → ưu tiên.
         // Khi q truyền nhưng bằng giá trị hiện tại → không reset (tránh reset
-        // oan khi user chỉ chuyển tab).
+        // oan khi user chỉ chuyển tab). q=null (hoặc '') → clear về undefined
+        // để axios không serialize param q (BE validator reject empty string).
         const qChanged = q !== undefined && q !== query.value.q;
-        if (q !== undefined) query.value.q = q;
+        if (q !== undefined) query.value.q = q || undefined;
         if (pageNum === undefined && qChanged) page.value = 1;
       }
       // pageNum truyền tường minh → ưu tiên tuyệt đối (cả trong resetFilters

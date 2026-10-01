@@ -1,43 +1,4 @@
 <script setup lang="ts">
-/**
- * Template 6 — "Navy & Yellow Editorial" (chuẩn theo ảnh thiết kế).
- *
- * Cấu trúc (1 trang A4 chuẩn):
- *   1. Header (~300px):
- *      - Cột tên dọc bên trái:
- *        + Khối vàng hình học đỉnh trái (chevron polygon).
- *        + Họ tên bold hoa viết dọc (writing-mode: vertical-lr).
- *        + Chức danh viết dọc cạnh họ tên, căn thẳng đáy với tên.
- *      - Ảnh chân dung (~195x270px bo tròn góc 14px, grayscale) + tab vàng góc dưới phải.
- *      - Khối phải header:
- *        + Địa chỉ / Công ty (dòng đầu in đậm).
- *        + Danh sách liên hệ (ô vuông icon màu vàng #fec901, đường kẻ hairline).
- *        + Mục PROFILE (tiêu đề in hoa kèm gạch chân navy, các đoạn văn bản).
- *   2. Body 2 cột:
- *      - Cột trái (~60%): WORK EXPERIENCE (+ PROJECTS nếu có).
- *        + Tiêu đề in hoa kèm gạch chân.
- *        + Job title (in hoa bold) + ngày tháng căn phải.
- *        + Tên công ty / địa điểm.
- *        + Đoạn mô tả intro + bullet list tròn màu navy.
- *        + Đường gạch mảnh phân cách giữa các công việc.
- *      - Cột phải (~40%): Đường kẻ dọc phân cách (border-left).
- *        + EDUCATION (bằng cấp, trường học, niên khóa).
- *        + SKILLS (phân nhóm PERSONAL & TECHNICAL với bullet tròn).
- *        + REFERENCES / CERTIFICATES (người tham chiếu hoặc chứng chỉ).
- *        + ACTIVITIES / INTERESTS (nếu có dữ liệu).
- *
- * Design tokens:
- *   - Yellow: #fec901
- *   - Navy: #141b3a
- *   - Text gray: #5a6072
- *   - Line gray: #c9ceda
- *   - Divider: #7b8192
- *   - Font: 'Poppins', sans-serif
- *
- * Quy tắc:
- *   - Không hard-code nội dung; section rỗng tự ẩn.
- *   - Hỗ trợ prop `disableLinks` khi xem trước / in ấn.
- */
 import { computed } from 'vue';
 import { Phone, Mail, Globe, MapPin, Linkedin, Github } from 'lucide-vue-next';
 import type { CvRenderData } from '@/types/cv';
