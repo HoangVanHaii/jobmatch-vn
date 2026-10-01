@@ -45,6 +45,16 @@ paymentRouter.post(
     paymentController.cancel,
 );
 
+// POST /:id/finalize — admin CS tool: hỏi PayOS rồi finalize nếu PayOS
+// xác nhận PAID (fix HIGH #1 — recovery cho payment kẹt trước khi có reconcile).
+paymentRouter.post(
+    '/:id/finalize',
+    adminOnly,
+    adminRateLimiter,
+    validate(paymentIdParamsSchema, 'params'),
+    paymentController.finalizeById,
+);
+
 paymentRouter.get(
     '/',
     adminOnly,

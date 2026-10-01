@@ -14,6 +14,8 @@ import { redis } from '../config/redis';
 import { cvAnalysisWorker } from './cvAnalysis.worker';
 import { cvMatchWorker } from './cvMatch.worker';
 import { exportWorker } from './export.worker';
+import { paymentReconciliationWorker } from './paymentReconciliation.worker';
+import { paymentReconcileQueue } from '../config/queue';
 
 export const startWorkers = (): void => {
   void cvAnalysisWorker;
@@ -26,6 +28,7 @@ export const startWorkers = (): void => {
   void jobEmbeddingWorker;
   void jobExpiryWorker;
   void exportWorker;
+  void paymentReconciliationWorker;
 
 
   // Schedule periodic jobs
@@ -39,6 +42,14 @@ export const startWorkers = (): void => {
 
   // Job expiry — mỗi ngày 0h (Asia/Ho_Chi_Minh) → live → expired khi quá deadline
   void scheduleJobExpiry();
+
+  // Payment reconciliation — mỗi 10 phút, đối chiếu payment 'pending' với PayOS
+  // (fix HIGH #1). DRY_RUN mặc định: env PAYMENT_RECONCILE_DRY_RUN (default 'true').
+  paymentReconcileQueue.add(
+    'payment-reconcile',
+    {},
+    { repeat: { pattern: '*/10 * * * *' } },
+  );
 
   logger.info(
     'All BullMQ workers started (CV parse/score, scan, GitHub, test, cv-match, interview reminder, job moderation, job embedding, job expiry)',

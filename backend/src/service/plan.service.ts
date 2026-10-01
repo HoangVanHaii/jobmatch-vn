@@ -38,6 +38,7 @@ export const planService = {
           id: plans.id,
           code: plans.code,
           name: plans.name,
+          description: plans.description,
           priceVnd: plans.priceVnd,
           durationDays: plans.durationDays,
           features: plans.features,
@@ -61,6 +62,7 @@ export const planService = {
         id: plans.id,
         code: plans.code,
         name: plans.name,
+        description: plans.description,
         priceVnd: plans.priceVnd,
         durationDays: plans.durationDays,
         features: plans.features,
@@ -94,6 +96,7 @@ export const planService = {
       .values({
         code: body.code,
         name: body.name,
+        description: body.description ?? null,
         priceVnd: String(body.priceVnd),
         durationDays: body.durationDays,
         features: body.features,
@@ -103,6 +106,7 @@ export const planService = {
         id: plans.id,
         code: plans.code,
         name: plans.name,
+        description: plans.description,
         priceVnd: plans.priceVnd,
         durationDays: plans.durationDays,
         features: plans.features,
@@ -137,6 +141,8 @@ export const planService = {
     const updatePayload: Partial<typeof plans.$inferInsert> = {};
     if (body.code !== undefined) updatePayload.code = body.code;
     if (body.name !== undefined) updatePayload.name = body.name;
+    if (body.description !== undefined)
+      updatePayload.description = body.description;
     if (body.priceVnd !== undefined) updatePayload.priceVnd = String(body.priceVnd);
     if (body.durationDays !== undefined) updatePayload.durationDays = body.durationDays;
     if (body.features !== undefined) updatePayload.features = body.features;
@@ -223,6 +229,37 @@ export const planService = {
 
         if (!plan || plan.isActive === false) {
             throw new AppError(404, 'PLAN_NOT_FOUND', 'Plan không tồn tại hoặc đã ngừng bán');
+        }
+        return plan;
+    },
+
+    /**
+     * Lookup plan cho luồng FINALIZE payment (webhook / reconcile / admin).
+     *
+     * KHÁC checkPlanTx: KHÔNG yêu cầu isActive — business chốt 2026-10-01:
+     * plan bị deactivate SAU khi user trả tiền thì subscription vẫn được cấp
+     * theo plan của payment (tiền đã trừ thật, không được nuốt).
+     *
+     * Chỉ fail khi plan row mất hẳn (FK ON DELETE NO ACTION khiến điều này
+     * gần như không thể — coi như data corruption, caller xử lý như transient).
+     */
+    getPlanForFinalizeTx: async (
+        tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+        planId: string,
+        ): Promise<{ id: string; name: string; priceVnd: string; durationDays: number }> => {
+        const [plan] = await tx
+            .select({
+                id: plans.id,
+                name: plans.name,
+                priceVnd: plans.priceVnd,
+                durationDays: plans.durationDays,
+            })
+            .from(plans)
+            .where(eq(plans.id, planId))
+            .limit(1);
+
+        if (!plan) {
+            throw new Error(`PLAN_ROW_MISSING planId=${planId} (data corruption?)`);
         }
         return plan;
     },

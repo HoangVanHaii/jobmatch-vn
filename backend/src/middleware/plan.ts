@@ -18,6 +18,7 @@ export const planCreateSchema = z.object({
     .max(50, 'code tối đa 50 ký tự')
     .regex(/^[a-z0-9_]+$/, 'code chỉ chứa chữ thường, số và _'),
   name: z.string().min(1, 'name là bắt buộc').max(200),
+  description: z.string().max(500, 'description tối đa 500 ký tự').optional(),
   priceVnd: z.coerce.number().int('priceVnd phải là số nguyên').nonnegative('priceVnd phải >= 0'),
   durationDays: z.coerce.number().int('durationDays phải là số nguyên').positive('durationDays phải > 0'),
   features: planFeaturesSchema,
@@ -33,6 +34,7 @@ export const planUpdateSchema = z
       .regex(/^[a-z0-9_]+$/)
       .optional(),
     name: z.string().min(1).max(200).optional(),
+    description: z.string().max(500).nullable().optional(),
     priceVnd: z.coerce.number().int().nonnegative().optional(),
     durationDays: z.coerce.number().int().positive().optional(),
     features: planFeaturesSchema.optional(),

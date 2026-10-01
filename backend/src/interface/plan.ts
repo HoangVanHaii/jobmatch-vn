@@ -3,6 +3,7 @@ export interface Plan {
   id: string;
   code: string;
   name: string;
+  description?: string | null;
   priceVnd: string;
   durationDays: number;
   features: Record<string, unknown>;

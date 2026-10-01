@@ -7,16 +7,35 @@
  * Verify signature bằng official SDK @payos/node:
  *   payOS.webhooks.verify(body)  ← handle đúng algorithm
  *
- * Lưu ý quan trọng:
- * - KHÔNG dùng auth middleware (PayOS không có JWT).
- * - LUÔN trả 200 OK để PayOS không retry dù xử lý lỗi.
- * - Trong production: cần check IP whitelist của PayOS.
+ * HTTP STATUS SEMANTICS (fix HIGH #1, 2026-10-01 — thay cho "always 200" cũ):
+ *
+ *   | Case                                   | Status | Lý do |
+ *   |----------------------------------------|--------|-------|
+ *   | invalid signature                      | 200    | payload rác — trả 4xx/5xx sẽ khiến PayOS retry vô tận với thứ không bao giờ hợp lệ |
+ *   | non-'00' (thanh toán thất bại thật)    | 200    | không cấp gói; payment 'pending' sẽ do reconcile job hỏi lại PayOS |
+ *   | PAYMENT_NOT_FOUND (orderCode lạ)       | 200    | request test của webhooks.confirm dùng orderCode không có trong DB — phải trả 200 để confirm pass |
+ *   | AMOUNT_MISMATCH                        | 200    | lỗi nghiệp vụ KHÔNG retry được (tiền lệch) — retry chỉ lặp lại cùng kết quả; admin xử lý tay |
+ *   | transient (DB/pool/timeout/deadlock)   | 500    | PayOS retry; reconcile job cũng tự quét lại mỗi 5 phút (2 lớp) |
+ *
+ * GIẢ ĐỊNH CHƯA XÁC MINH với docs chính thức của PayOS: non-2xx sẽ được
+ * retry. Assumption này cũng là assumption của code cũ (comment "nếu
+ * 401/4xx PayOS sẽ retry vô tận"). Chỉ ảnh hưởng hiệu quả của nhánh 500,
+ * không ảnh hưởng tính đúng đắn: reconcile job là lưới an toàn độc lập
+ * với HTTP status.
+ *
+ * KHÔNG dùng auth middleware (PayOS không có JWT).
+ * KHÔNG log payload đầy đủ — verifiedData chứa accountNumber /
+ * counterAccountNumber (dữ liệu ngân hàng bên trả tiền). Chỉ log orderCode,
+ * stage, code, stack.
  */
 import { Router, Request, Response } from 'express';
 import { PayOS } from '@payos/node';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
-import { paymentService } from '../service/payment.service';
+import {
+    paymentService,
+    PaymentFinalizeError,
+} from '../service/payment.service';
 
 // Singleton client cho verify webhook
 const payOS = new PayOS({
@@ -28,11 +47,10 @@ const payOS = new PayOS({
 export const webhooksRouter = Router();
 
 /**
- * POST /webhooks/payos — PayOS gọi khi payment status thay đổi.
+ * Handler export để unit test được (jest gọi trực tiếp với req/res mock).
  */
-webhooksRouter.post('/payos', async (req: Request, res: Response) => {
-
-    let verifiedData: any;
+export async function payosWebhookHandler(req: Request, res: Response): Promise<void> {
+    let verifiedData: Record<string, unknown>;
 
     // 1. Verify signature qua SDK official (handle null→'', sort keys, etc.)
     try {
@@ -43,56 +61,92 @@ webhooksRouter.post('/payos', async (req: Request, res: Response) => {
                 err: err instanceof Error ? err.message : String(err),
                 ip: req.ip,
             },
-            'PayOS webhook signature verification failed',
+            'Verify chữ ký PayOS webhook thất bại',
         );
-        // Vẫn trả 200 — nếu 401/4xx PayOS sẽ retry vô tận với payload rác
-        return res.status(200).json({ success: false, error: 'INVALID_SIGNATURE' });
+        // Trả 200 — payload rác không bao giờ trở nên hợp lệ, retry vô nghĩa.
+        return void res.status(200).json({ success: false, error: 'INVALID_SIGNATURE' });
     }
 
-    const { code, success } = req.body as any;
+    const { code, success } = req.body as { code?: string; success?: boolean };
 
-    // 2. Nếu webhook-level không thành công → bỏ qua
+    // 2. Webhook-level non-success → không phải giao dịch thành công.
+    //    KHÔNG cấp gói, KHÔNG đụng DB. Payment 'pending' tương ứng sẽ do
+    //    reconcile job hỏi PayOS trực tiếp để biết số phận cuối.
     if (code !== '00' || success !== true) {
-        logger.info({ code, success }, 'PayOS webhook non-success, skipping');
-        return res.status(200).json({ success: true });
+        const bodyOrderCode = (req.body as { data?: { orderCode?: unknown } })
+            ?.data?.orderCode;
+        logger.warn(
+            { orderCode: bodyOrderCode, code, success },
+            'PayOS webhook non-success — bỏ qua, không cấp gói (trạng thái payment do reconcile job phụ trách)',
+        );
+        return void res.status(200).json({ success: true });
     }
-    logger.info({ verifiedData }, "data");
 
-    // 3. Xử lý business logic (verifiedData đã được verify, an toàn dùng)
+    // 3. Payload đã verify signature — an toàn để dùng.
     const orderCode = String(verifiedData.orderCode);
-    const payosTxnId = String(verifiedData.reference ?? verifiedData.id ?? orderCode);
+    const payosTxnId = String(
+        verifiedData.reference ?? verifiedData.id ?? orderCode,
+    );
 
     try {
         await paymentService.handlePayOSWebhook(orderCode, payosTxnId, verifiedData);
     } catch (err) {
+        if (err instanceof PaymentFinalizeError) {
+            if (err.code === 'PAYMENT_NOT_FOUND') {
+                // Confirm-test của PayOS / orderCode lạ → permanent, không retry.
+                logger.warn(
+                    { orderCode, stage: err.stage },
+                    'PayOS webhook: không tìm thấy payment (confirm-test hoặc orderCode lạ) — trả 200, không retry',
+                );
+                return void res.status(200).json({ success: true });
+            }
+            if (err.code === 'AMOUNT_MISMATCH') {
+                // Đã log error có orderCode trong finalizePayment. Không retry —
+                // admin xử lý tay; reconcile cũng sẽ log lại mỗi chu kỳ.
+                logger.error(
+                    { orderCode, stage: err.stage },
+                    'PayOS webhook: AMOUNT_MISMATCH — trả 200, không retry; cần admin xem lại',
+                );
+                return void res.status(200).json({ success: true });
+            }
+            // TRANSIENT — DB/pool/timeout/deadlock → trả 5xx để PayOS retry.
+            /*
+            logger.error(
+                {
+                    orderCode,
+                    stage: err.stage,
+                    code: err.code,
+                    cause:
+                        err.cause instanceof Error
+                            ? err.cause.message
+                            : String(err.cause ?? ''),
+                    stack: err.stack,
+                },
+                'PayOS webhook lỗi tạm thời — trả 500 (chờ PayOS retry)',
+            );
+            */
+            return void res.status(500).json({ success: false, error: 'TRANSIENT_FAILURE' });
+        }
+
+        // Exception chưa phân loại — coi như transient (an toàn hơn: nếu thực
+        // ra là permanent, PayOS retry vài lần rồi thôi; ngược lại nếu nuốt
+        // thành 200 thì mất gói — bias về phía retry).
+        /*
+        
         logger.error(
             {
-                err: err instanceof Error ? err.message : String(err),
                 orderCode,
+                stage: 'unhandled',
+                err: err instanceof Error ? err.message : String(err),
+                stack: err instanceof Error ? err.stack : undefined,
             },
-            'PayOS webhook handler failed',
+            'PayOS webhook lỗi chưa phân loại — trả 500 (chờ retry)',
         );
+        */
+        return void res.status(500).json({ success: false, error: 'TRANSIENT_FAILURE' });
     }
 
-    return res.status(200).json({ success: true });
-});
-/*
-verifiedData: {
-    "accountNumber": "0867721825",
-    "amount": 2100,
-    "description": "Mua goi pro",
-    "reference": "FT26237330213110",
-    "transactionDateTime": "2026-08-25 17:31:13",
-    "virtualAccountNumber": "",
-    "counterAccountBankId": "970422",
-    "counterAccountBankName": "",
-    "counterAccountName": null,
-    "counterAccountNumber": "2281072020614",
-    "virtualAccountName": "",
-    "currency": "VND",
-    "orderCode": 653857177,
-    "paymentLinkId": "c27ad520c5ed4d0c982ae5a0dea833a2",
-    "code": "00",
-    "desc": "success"
+    return void res.status(200).json({ success: true });
 }
-*/
+
+webhooksRouter.post('/payos', payosWebhookHandler);

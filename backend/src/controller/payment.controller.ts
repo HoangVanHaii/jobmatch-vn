@@ -132,4 +132,24 @@ export const paymentController = {
       next(err);
     }
   },
+
+  /**
+   * POST /payments/:id/finalize (admin) — CS tool: hỏi PayOS get rồi
+   * finalize payment nếu PayOS xác nhận PAID. Fix HIGH #1.
+   */
+  finalizeById: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const id = req.params.id as string;
+
+      const data = await paymentService.finalizeById(id);
+
+      res.json({
+        success: true,
+        data,
+        message: "Payment đã được finalize (PayOS xác nhận PAID)",
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
 } as const;
