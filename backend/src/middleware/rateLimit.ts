@@ -52,6 +52,20 @@ export const rateLimiter = rateLimit({
   store: createRedisStore('global'),
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
   max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
+  /**
+   * fix HIGH #1 (2026-10-01): /webhooks/* ra khỏi global limiter.
+   *
+   * Webhook PayOS dùng chung bucket 100 req/60s/IP với TOÀN BỘ user traffic
+   * —burst user hợp lệ có thể đẩy bucket đầy → request của PayOS ăn 429 →
+   * delivery chậm/mất, payment kẹt 'pending' dù user đã trả tiền. Webhook
+   * đã được bảo vệ bằng signature verification (SDK) nên không cần rate
+   * limit chống abuse; limiter riêng rất rộng không thêm giá trị.
+   *
+   * req.path tại middleware app-level là full path (vd /api/v1/webhooks/payos).
+   * Thứ tự middleware không đổi (rateLimiter vẫn sau body parsers) → cách
+   * parse body + verify signature như cũ.
+   */
+  skip: (req) => req.path.startsWith('/api/v1/webhooks'),
   message: { success: false, error: { code: 'RATE_LIMITED', message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau ít phút.' } },
 });
 

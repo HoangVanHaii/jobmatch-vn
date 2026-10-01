@@ -23,6 +23,7 @@
  */
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import QRCode from 'qrcode';
+import { CircleCheck, CircleX, X } from 'lucide-vue-next';
 import { paymentApi } from '@services/payment.api';
 import { connectSocket } from '@services/socket';
 import { usePaymentUpdates } from '@composables/usePaymentUpdates';
@@ -220,7 +221,11 @@ function formatVnd(n: number): string {
             class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto"
             @click.self="close"
         >
-            <div class="bg-white rounded-xl shadow-2xl max-w-md w-full my-8">
+            <!-- font-poppins: modal teleport ra <body> nên KHÔNG kế thừa
+                 font của trang mở nó — phải set tường minh. -->
+            <div
+                class="font-poppins bg-white rounded-2xl shadow-2xl max-w-md w-full my-8"
+            >
                 <!-- Header -->
                 <div class="flex items-center justify-between p-5 border-b">
                     <h2 class="text-lg font-semibold text-gray-900">
@@ -228,11 +233,11 @@ function formatVnd(n: number): string {
                     </h2>
                     <button
                         type="button"
-                        class="text-gray-400 hover:text-gray-600 transition"
+                        class="text-gray-400 hover:text-gray-600 transition hover:text-red-400 hover:bg-gray-100"
                         aria-label="Đóng"
                         @click="close"
                     >
-                        ✕
+                        <X class="w-5 h-5" />
                     </button>
                 </div>
 
@@ -240,7 +245,7 @@ function formatVnd(n: number): string {
                 <div class="p-5">
                     <!-- ===== WAITING ===== -->
                     <div v-if="state === 'waiting'">
-                        <p class="text-sm text-gray-600 mb-3 text-center">
+                        <p class="text-sm text-gray-600 mb-2 text-center">
                             Quét QR bằng app ngân hàng để thanh toán
                         </p>
 
@@ -249,11 +254,11 @@ function formatVnd(n: number): string {
                                 v-if="qrDataUrl"
                                 :src="qrDataUrl"
                                 alt="QR thanh toán PayOS"
-                                class="w-64 h-64 border border-gray-200 rounded-lg p-2 bg-white"
+                                class="w-[224px] h-[224px] border border-gray-200 rounded-lg p-2 bg-white"
                             />
                             <div
                                 v-else
-                                class="w-64 h-64 border border-gray-200 rounded-lg p-2 bg-gray-50 flex items-center justify-center text-xs text-gray-400"
+                                class="w-[224px] h-[224px] border border-gray-200 rounded-lg p-2 bg-gray-50 flex items-center justify-center text-xs text-gray-400"
                             >
                                 Đang tạo QR...
                             </div>
@@ -285,11 +290,26 @@ function formatVnd(n: number): string {
                                 </span>
                             </div>
                         </div>
+
+                        <!-- Feedback: hệ thống đang tự động xác nhận qua
+                             WebSocket + polling — user không cần bấm gì. -->
+                        <p
+                            class="flex items-center justify-center gap-2 mt-4 text-xs text-gray-500"
+                        >
+                            <CircleCheck
+                                class="h-[18px] w-[18px] shrink-0 text-green-500"
+                                aria-hidden="true"
+                            />
+                            Tự động xác nhận khi thanh toán thành công
+                        </p>
                     </div>
 
                     <!-- ===== SUCCESS ===== -->
                     <div v-else-if="state === 'success'" class="text-center py-4">
-                        <div class="text-6xl mb-3">✅</div>
+                        <CircleCheck
+                            class="w-16 h-16 text-green-600 mx-auto mb-3"
+                            aria-hidden="true"
+                        />
                         <h3 class="text-xl font-bold text-gray-900 mb-2">
                             Thanh toán thành công!
                         </h3>
@@ -303,7 +323,10 @@ function formatVnd(n: number): string {
 
                     <!-- ===== FAILED ===== -->
                     <div v-else class="text-center py-4">
-                        <div class="text-6xl mb-3">❌</div>
+                        <CircleX
+                            class="w-16 h-16 text-red-600 mx-auto mb-3"
+                            aria-hidden="true"
+                        />
                         <h3 class="text-xl font-bold text-gray-900 mb-2">
                             Thanh toán thất bại
                         </h3>
@@ -313,12 +336,12 @@ function formatVnd(n: number): string {
                     </div>
                 </div>
 
-                <!-- Footer -->
-                <div class="p-5 border-t bg-gray-50 rounded-b-xl">
-                    <div v-if="state === 'waiting'" class="flex gap-2">
+                <!-- Footer — waiting và failed dùng chung bộ nút Đóng/PayOS -->
+                <div class="p-5 border-t bg-gray-50 rounded-b-2xl">
+                    <div v-if="state !== 'success'" class="flex gap-2">
                         <button
                             type="button"
-                            class="flex-1 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm"
+                            class="flex-1 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 hover:text-red-400 transition text-sm"
                             @click="close"
                         >
                             Đóng
@@ -333,30 +356,13 @@ function formatVnd(n: number): string {
                     </div>
 
                     <button
-                        v-else-if="state === 'success'"
+                        v-else
                         type="button"
                         class="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm"
                         @click="close"
                     >
                         Hoàn tất
                     </button>
-
-                    <div v-else class="flex gap-2">
-                        <button
-                            type="button"
-                            class="flex-1 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm"
-                            @click="close"
-                        >
-                            Đóng
-                        </button>
-                        <button
-                            type="button"
-                            class="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition text-sm"
-                            @click="openPayOS"
-                        >
-                            Mở trang PayOS ↗
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>

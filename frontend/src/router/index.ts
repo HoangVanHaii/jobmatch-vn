@@ -77,7 +77,7 @@ const routes: RouteRecordRaw[] = [
 
       { path: 'chat/:id?', name: 'chat', component: ChatView, meta: { auth: true },},
       // Pricing & billing (có sidebar qua layout)
-      { path: 'pricing', name: 'pricing', component: () => import('@views/PricingView.vue') },
+      { path: 'pricing', name: 'pricing', component: () => import('@views/candidate/PricingView.vue') },
       { path: 'billing/history', name: 'billing-history', component: () => import('@views/candidate/BillingHistoryView.vue') },
       { path: 'billing/success', name: 'billing-success', component: () => import('@views/BillingSuccessView.vue') },
       { path: 'billing/cancel', name: 'billing-cancel', component: () => import('@views/BillingCancelView.vue') },
