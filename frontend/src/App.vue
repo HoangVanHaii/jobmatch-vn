@@ -25,6 +25,7 @@
  *   - `notification:new` ← NotificationBell tự lo.
  */
 import { RouterView, useRoute, useRouter } from 'vue-router';
+import { ref } from 'vue';
 import { useAuthStore } from '@stores/auth';
 import { useChatStore } from '@stores/chat';
 import { useEmployerJobStore } from '@stores/employerJob';
@@ -32,6 +33,7 @@ import { useToastStore } from '@stores/toast';
 import { useSocket } from '@composables/useSocket';
 import NotificationBell from '@components/notify/NotificationBell.vue';
 import ToastContainer from '@components/notify/ToastContainer.vue';
+import UpgradePricing from '@components/pricing/UpgradePricing.vue';
 
 // Chatbot AI giờ là trang full-page tại `/chatbot` (ChatbotView.vue).
 // Floating ChatbotWidget cũ đã thay thế — import giữ để tương thích nếu file còn được tham chiếu,
@@ -179,6 +181,34 @@ useSocket(
     }
   },
 );
+
+/**
+ * `cv:quota-warning` — worker hết lượt AI emit event này (xem
+ * cvAnalysis.worker.ts / cvParse.worker.ts). POST /cvs/:cvId/analyze chỉ
+ * enqueue nên KHÔNG bao giờ trả lỗi quota ngay — tín hiệu duy nhất là event
+ * socket này (hoặc failureReason persist trong DB khi fetchList).
+ *
+ * context='analyze' (hết lượt PHÂN TÍCH AI) → mở modal UpgradePricing để
+ * user mua thêm lượt ngay tại chỗ, bất kể đang ở trang nào (đăng ký global
+ * tại App.vue để survive navigation — user có thể bấm phân tích từ list,
+ * modal chi tiết, ...). context='parse' (hết lượt parse CV upload) không
+ * mở modal — behavior cũ giữ nguyên.
+ */
+const showUpgradePricing = ref(false);
+useSocket(
+  'cv:quota-warning',
+  (payload: {
+    cvId: string;
+    context?: 'parse' | 'analyze' | string;
+    reason?: string;
+    message?: string;
+  }): void => {
+    if (auth.user?.role !== 'candidate') return;
+    if (payload?.context === 'analyze') {
+      showUpgradePricing.value = true;
+    }
+  },
+);
 </script>
 
 <template>
@@ -192,4 +222,7 @@ useSocket(
    *  emit duplicate không push 2 lần. -->
   <ToastContainer v-if="route.name !== 'chat' && route.name !== 'e-chat'"/>
   <ToastHost v-if="route.name !== 'chat' && route.name !== 'e-chat'" />
+
+  <!-- Modal nâng cấp gói — mở khi worker báo hết lượt phân tích AI -->
+  <UpgradePricing v-model:open="showUpgradePricing" />
 </template>
