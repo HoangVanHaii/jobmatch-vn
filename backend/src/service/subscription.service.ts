@@ -143,6 +143,9 @@ export const subscriptionService = {
      * @param planId      Plan được mua
      * @param payosOrderId  orderCode từ PayOS (dùng cho audit)
      * @returns           Subscription mới (active) của user sau khi xử lý
+     *
+     * Lưu ý: dùng getPlanForFinalizeTx (KHÔNG check isActive) — plan bị
+     * deactivate sau khi payment đã trả tiền vẫn phải được cấp subscription.
      */
     create: async (
         tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
@@ -150,7 +153,7 @@ export const subscriptionService = {
         planId: string,
         payosOrderId: string,
     ): Promise<Subscription> => {
-        const plan = await planService.checkPlanTx(tx, planId);
+        const plan = await planService.getPlanForFinalizeTx(tx, planId);
 
         // 1. Cancel mọi sub active hiện tại (cùng plan hay khác đều cancel).
         //    Giữ row làm lịch sử — expiresAt giữ nguyên giá trị gốc.

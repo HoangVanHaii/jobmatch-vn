@@ -74,6 +74,10 @@ const envSchema = z.object({
   PAYOS_WEBHOOK_URL: z.string().url(),
   PAYOS_RETURN_URL: z.string().url(),
   PAYOS_CANCEL_URL: z.string().url(),
+  // Reconciliation job (fix HIGH #1). Default 'true' = DRY_RUN: lần deploy
+  // đầu chỉ log kết quả đối chiếu PayOS, KHÔNG ghi DB. Chuyển 'false' sau
+  // khi review log DRY_RUN.
+  PAYMENT_RECONCILE_DRY_RUN: z.enum(["true", "false"]).default("true"),
 });
 
 const parsed = envSchema.safeParse(process.env);

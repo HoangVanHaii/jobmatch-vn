@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { PayOS } from "@payos/node";
 import { db } from "../config/database";
 import { payments, plans, subscriptions } from "../db/schema";
-import { eq, and, sql, desc, lt } from "drizzle-orm";
+import { eq, and, sql, desc, lt, gt, asc } from "drizzle-orm";
 import { AppError } from "../middleware/errorHandler";
 import { env } from "../config/env";
 import type { PaymentListQuery } from "../middleware/payment";
@@ -20,7 +20,9 @@ import { notificationGateway } from "../socket/notificationGateway";
 
 const PAYOS_API = "https://api-merchant.payos.vn/v2";
 
-// Singleton PayOS client (dùng cho reconciliation + verify webhook)
+// Singleton PayOS client — create/cancel payment link; reconciliation job
+// dùng paymentRequests.get để hỏi trạng thái thật (fix HIGH #1);
+// webhooks router có client riêng chỉ để verify signature.
 const payOS = new PayOS({
   clientId: env.PAYOS_CLIENT_ID,
   apiKey: env.PAYOS_API_KEY,
@@ -42,16 +44,32 @@ function generateOrderCode(): number {
 }
 
 /**
- * Ngưỡng tuổi tối đa của một payment 'pending' trước khi bị coi là "bỏ rơi"
- * và tự động cleanup thành 'expired'.
+ * Ngưỡng tuổi tối đa của một payment 'pending' trước khi bị sweep thành
+ * 'expired' (last-resort janitor).
  *
- * 24h khớp với PayOS default expiration window cho payment link.
- * Sau thời gian này, dù user có quét QR lại thì PayOS cũng trả fail
- * (webhook hoặc GET status đều về 'failed' / không tồn tại).
+ * 7 NGÀY = giới hạn trên của reconcile window: reconcile job (mỗi 10 phút,
+ * paymentReconciliation.worker) hỏi TRỰC TIẾP PayOS với mọi payment pending
+ * tuổi (10 phút, 7 ngày) và finalize/sync theo status thật từ PayOS. Chỉ row
+ * TRƯỢT khỏi window này — tức reconcile đã có ~1000 cơ hội hỏi PayOS mà vẫn
+ * pending, gần như chỉ khi job bị tắt cả tuần — mới bị sweep.
  *
- * Có thể điều chỉnh nếu PayOS config khác — xem docs PayOS.
+ * Lý do giữ sweep thay vì bỏ hẳn (chọn phương án ít rủi ro hơn): nếu reconcile
+ * disabled/lỗi kéo dài thì không còn gì chuyển trạng thái → payment 'pending'
+ * vĩnh viễn làm bẩn history. 7d an toàn vì PayOS link đã expire từ lâu
+ * (default 24h theo docs PayOS — 24h từng là cutoff cũ của hàm này) → không
+ * thể phát sinh tiền thật sau thời điểm đó.
  */
-const STALE_PENDING_MS = 24 * 60 * 60 * 1000;
+const STALE_PENDING_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Reconcile: chỉ quét payment pending chờ ít nhất 10 phút — đủ thời gian
+ *  cho webhook đến + retry đầu tiên, tránh đốt PayOS API cho payment mới tạo. */
+const RECONCILE_MIN_AGE_MS = 10 * 60 * 1000;
+
+/** Reconcile: trần tuổi — vượt ngưỡng này do sweep xử lý (xem STALE_PENDING_MS). */
+const RECONCILE_MAX_AGE_MS = STALE_PENDING_MS;
+
+/** Reconcile: số payment tối đa mỗi chu kỳ 10 phút — chống đụng rate limit PayOS. */
+const RECONCILE_BATCH_SIZE = 50;
 
 /**
  * Lazy cleanup pending payments quá hạn.
@@ -64,8 +82,13 @@ const STALE_PENDING_MS = 24 * 60 * 60 * 1000;
  *
  * Cách fix:
  *   - Trước MỌI GET (getByOrderCode / getById / list), chạy bulk UPDATE:
- *       UPDATE payments SET status='expired' WHERE status='pending' AND created_at < now() - 24h
+ *       UPDATE payments SET status='expired' WHERE status='pending' AND created_at < now() - 7d
  *   - Sau update, SELECT sẽ không còn thấy rows stale.
+ *
+ * fix HIGH #1 (2026-10-01): cutoff 24h → 7 ngày. Sweep 24h cũ từng đánh dấu
+ * 'expired' những payment mà user ĐÃ trả tiền nhưng webhook fail — không còn
+ * đường nào cứu. Giờ reconcile job hỏi PayOS thật trong window (10 phút, 7
+ * ngày); sweep chỉ là last-resort ngoài window (xem STALE_PENDING_MS).
  *
  * Phân biệt với 'cancelled':
  *   - 'cancelled' = user CHỦ ĐỘNG bấm "Hủy" qua POST /payments/:id/cancel.
@@ -100,7 +123,7 @@ async function cleanupStalePendingPayments(): Promise<void> {
     if (expired.length > 0) {
       logger.info(
         { expiredCount: expired.length, cutoff: cutoff.toISOString() },
-        "Auto-expired stale pending payments",
+        "Tự động chuyển payment pending quá hạn sang expired",
       );
     }
   } catch (err) {
@@ -112,7 +135,7 @@ async function cleanupStalePendingPayments(): Promise<void> {
         err: err instanceof Error ? err.message : String(err),
         pgCode,
       },
-      "Lazy cleanup stale pending payments failed — proceeding without cleanup",
+      "Lazy cleanup payment pending thất bại — tiếp tục mà không cleanup",
     );
   }
 }
@@ -147,6 +170,176 @@ function extractPayosLinkInfo(
     };
 }
 
+/**
+ * Nguồn gọi finalize — chỉ dùng cho log/observability, logic như nhau.
+ */
+export type FinalizeSource = "webhook" | "reconcile" | "admin";
+
+/**
+ * Lỗi phân loại cho luồng finalize payment — router/webhooks dựa vào `code`
+ * để quyết định HTTP status thay vì catch-all:
+ *   - PAYMENT_NOT_FOUND : orderCode không tồn tại trong DB → KHÔNG retry
+ *     (request test của webhooks.confirm dùng orderCode giả → phải trả 200).
+ *   - AMOUNT_MISMATCH   : số tiền PayOS báo nhận ≠ payment.amountVnd → KHÔNG
+ *     retry, KHÔNG cấp gói — admin xử lý tay.
+ *   - TRANSIENT         : DB/pool/timeout/deadlock/exception chưa phân loại
+ *     → retryable (webhook trả 5xx để PayOS retry; reconcile tự retry chu kỳ).
+ */
+export class PaymentFinalizeError extends Error {
+  constructor(
+    public readonly code:
+      | "PAYMENT_NOT_FOUND"
+      | "AMOUNT_MISMATCH"
+      | "TRANSIENT",
+    public readonly orderCode: string,
+    public readonly stage: string,
+    public readonly cause?: unknown,
+  ) {
+    super(`Finalize payment thất bại [${code}] orderCode=${orderCode} stage=${stage}`);
+    this.name = "PaymentFinalizeError";
+  }
+
+  get retryable(): boolean {
+    return this.code === "TRANSIENT";
+  }
+}
+
+/**
+ * Finalize payment thành 'paid' + cấp subscription — HÀM DUY NHẤT trong
+ * codebase thực hiện việc này, dùng chung cho 3 đường:
+ *   - webhook   : PayOS callback (amount từ payload đã verify signature)
+ *   - reconcile : BullMQ job đối chiếu PayOS (amount từ PaymentLink.amountPaid)
+ *   - admin     : POST /payments/:id/finalize (amount từ PaymentLink.amountPaid)
+ *
+ * Transaction + row lock:
+ *   - SELECT ... FOR UPDATE → 2 webhook/reconcile song song cùng orderCode
+ *     được serialize tại DB; lần 2 thấy status='paid' → return null (idempotent).
+ *
+ * Business rules (chốt 2026-10-01):
+ *   - Payment đang 'cancelled' / 'expired' / 'failed' mà PayOS báo đã nhận
+ *     tiền → VẪN finalize (tiền đã trừ thật), log warn để audit.
+ *   - Plan đã inactive → VẪN cấp subscription theo plan của payment
+ *     (subscriptionService.create dùng getPlanForFinalizeTx — không check isActive).
+ *   - amount ≠ payment.amountVnd → throw AMOUNT_MISMATCH, không đụng DB.
+ *
+ * @param paidAmount  Số tiền PayOS xác nhận đã nhận (webhook: rawData.amount;
+ *                    reconcile/admin: PaymentLink.amountPaid).
+ * @param rawResponse Optional — chỉ đường webhook lưu payload PayOS vào DB
+ *                    (giữ hành vi cũ); reconcile/admin không đụng rawResponse.
+ * @returns PaymentUpdatedEvent nếu finalize mới, null nếu payment đã 'paid' từ trước.
+ */
+async function finalizePayment(
+  orderCode: string,
+  payosTxnId: string,
+  source: FinalizeSource,
+  paidAmount: number,
+  rawResponse?: Record<string, unknown>,
+): Promise<PaymentUpdatedEvent | null> {
+  try {
+    return await db.transaction(
+      async (tx): Promise<PaymentUpdatedEvent | null> => {
+        // FOR UPDATE: serialize các request finalize cùng orderCode.
+        const [payment] = await tx
+          .select()
+          .from(payments)
+          .where(eq(payments.orderCode, orderCode))
+          .for("update")
+          .limit(1);
+
+        if (!payment || !payment.planId) {
+          throw new PaymentFinalizeError(
+            "PAYMENT_NOT_FOUND",
+            orderCode,
+            "lookup",
+          );
+        }
+
+        // Idempotency: đã finalize từ trước (webhook retry / reconcile trùng)
+        // → không update, không tạo sub, không emit.
+        if (payment.status === "paid") {
+          return null;
+        }
+
+        // Business: cancelled/expired/failed vẫn finalize — tiền đã trừ thật.
+        if (payment.status !== "pending") {
+          logger.warn(
+            {
+              orderCode,
+              paymentId: payment.id,
+              source,
+              previousStatus: payment.status,
+            },
+            "Finalize payment ở trạng thái khác pending (PayOS đã nhận tiền)",
+          );
+        }
+
+        // Amount verification — lệch thì KHÔNG cấp gói, admin xử lý tay.
+        const expectedAmount = Number(payment.amountVnd);
+        if (paidAmount !== expectedAmount) {
+          logger.error(
+            {
+              orderCode,
+              paymentId: payment.id,
+              source,
+              expectedAmount,
+              paidAmount,
+            },
+            "AMOUNT_MISMATCH — không finalize payment, cần admin xem lại",
+          );
+          throw new PaymentFinalizeError(
+            "AMOUNT_MISMATCH",
+            orderCode,
+            "amount_verify",
+          );
+        }
+
+        // Update payment status = paid
+        await tx
+          .update(payments)
+          .set({
+            status: "paid",
+            payosTxnId,
+            updatedAt: new Date(), // stamp lúc finalize → đẩy lên top list (migration 0017)
+            ...(rawResponse ? { rawResponse } : {}),
+          })
+          .where(eq(payments.id, payment.id));
+
+        // Tạo subscription (cancel mọi sub active cũ + insert mới — xem
+        // subscription.service.ts). Plan inactive vẫn cấp (business chốt).
+        const newSub = await subscriptionService.create(
+          tx,
+          payment.userId,
+          payment.planId,
+          orderCode,
+        );
+
+        // Link subscription vào payment
+        await tx
+          .update(payments)
+          .set({ subscriptionId: newSub.id })
+          .where(eq(payments.id, payment.id));
+
+        return {
+          orderCode,
+          status: "paid",
+          subscriptionId: newSub.id,
+          planId: payment.planId,
+        };
+      },
+    );
+  } catch (err) {
+    // Lỗi nghiệp vụ đã phân loại → giữ nguyên để route quyết HTTP status.
+    if (err instanceof PaymentFinalizeError) throw err;
+    // Mọi lỗi khác (DB down, pool, deadlock, lỗi code) = transient → retryable.
+    throw new PaymentFinalizeError(
+      "TRANSIENT",
+      orderCode,
+      "transaction",
+      err instanceof Error ? err : String(err),
+    );
+  }
+}
+
 export const paymentService = {
   create: async (
     userId: string,
@@ -163,6 +356,18 @@ export const paymentService = {
   }> => {
     return await db.transaction(async (tx) => {
       const plan = await planService.checkPlanTx(tx, planId);
+
+      // Gói miễn phí KHÔNG đi qua payment: PayOS sẽ reject amount 0 với lỗi
+      // 502 mù mờ. Free do hệ thống tự cấp (refreshFreeSubscriptionForUser
+      // khi gói trả phí hết hạn) — chặn tường minh ngay từ BE thay vì ỷ lại
+      // vào validation của third-party.
+      if (Number(plan.priceVnd) === 0) {
+        throw new AppError(
+          400,
+          "FREE_PLAN_NOT_PURCHASABLE",
+          "Gói miễn phí không cần thanh toán — hệ thống sẽ tự kích hoạt khi gói trả phí hết hạn.",
+        );
+      }
 
       // 1. INSERT payment row ở trạng thái 'pending' (orderCode uniqueness — xem helper doc).
       const { payment, orderCode } = await createPendingPaymentRow(
@@ -198,7 +403,7 @@ export const paymentService = {
     orderCode: string,
     userId: string,
   ): Promise<Payment | null> => {
-    // Lazy cleanup: chuyển pending payments > 24h thành 'expired' trư�c khi SELECT.
+    // Lazy cleanup: chuyển pending payments > 7 ngày thành 'expired' trư�c khi SELECT.
     await cleanupStalePendingPayments();
 
     const [row] = await db
@@ -227,7 +432,7 @@ export const paymentService = {
     userId?: string,
     isAdmin = false,
   ): Promise<PaymentWithPlan> => {
-    // Lazy cleanup: chuyển pending payments > 24h thành 'expired' trước khi SELECT.
+    // Lazy cleanup: chuyển pending payments > 7 ngày thành 'expired' trước khi SELECT.
     await cleanupStalePendingPayments();
 
     const [row] = await db
@@ -279,7 +484,7 @@ export const paymentService = {
     userId?: string;
     status?: PaymentListQuery["status"];
   }): Promise<{ data: PaymentWithPlan[]; total: number }> => {
-    // Lazy cleanup: chuyển pending payments > 24h thành 'expired' trước khi SELECT.
+    // Lazy cleanup: chuyển pending payments > 7 ngày thành 'expired' trước khi SELECT.
     // Áp dụng cho cả listMine (controller) và admin list vì cùng gọi service này.
     await cleanupStalePendingPayments();
 
@@ -332,112 +537,53 @@ export const paymentService = {
   },
   /**
    * Webhook handler — PayOS gọi khi payment status thay đổi.
-   * Đặt trong transaction để đảm bảo atomic: nếu tạo sub fail → rollback cả payment update.
+   *
+   * Toàn bộ logic finalize nằm ở `finalizePayment()` (dùng chung cho
+   * webhook / reconcile / admin) — hàm này chỉ:
+   *   1. Verify amount từ payload ĐÃ verify signature (rawData.amount).
+   *   2. Gọi finalizePayment(source='webhook').
+   *   3. Emit WebSocket SAU KHI commit (không emit trong transaction).
    *
    * @param orderCode   Mã đơn hàng từ PayOS
    * @param payosTxnId  Reference/transaction ID từ PayOS
-   * @param rawData     Toàn bộ payload từ PayOS
+   * @param rawData     Payload PayOS đã qua verify signature
    */
   handlePayOSWebhook: async (
     orderCode: string,
     payosTxnId: string,
     rawData: Record<string, unknown>,
   ): Promise<void> => {
+    const paidAmount = Number((rawData as { amount?: unknown }).amount);
+    if (!Number.isFinite(paidAmount)) {
+      // Payload đã verify signature nhưng thiếu amount — invariant PayOS broken.
+      // Coi là transient để PayOS retry; nếu persistent, reconcile job sẽ xử lý.
+      logger.error(
+        { orderCode, payosTxnId },
+        "Payload webhook thiếu/invalid amount — coi là transient",
+      );
+      throw new PaymentFinalizeError(
+        "TRANSIENT",
+        orderCode,
+        "webhook_amount_parse",
+      );
+    }
+
     // Capture thông tin cần emit SAU KHI transaction commit.
     // Không emit trong transaction — nếu commit fail thì FE đã nhận event sai.
-    const emitted: PaymentUpdatedEvent | null = await db.transaction(
-      async (tx): Promise<PaymentUpdatedEvent | null> => {
-        const [payment] = await tx
-          .select()
-          .from(payments)
-          .where(eq(payments.orderCode, orderCode))
-          .limit(1);
-
-        if (!payment || !payment.planId) {
-          throw new AppError(
-            404,
-            "PAYMENT_NOT_FOUND",
-            `Payment với orderCode ${orderCode} không tồn tại`,
-          );
-        }
-
-        // Idempotency: webhook retry sau commit → early-return, không update, không tạo sub, không emit.
-        if (payment.status === "paid") {
-          return null;
-        }
-
-        // PayOS sandbox trả "00" = success, các code khác = failed/cancelled.
-        // (docs cũ nói "00000" nhưng payload thực tế dùng "00")
-        const paymentCode = String((rawData as any).code ?? "");
-        const isSuccess = paymentCode === "00";
-
-        if (!isSuccess) {
-          await tx
-            .update(payments)
-            .set({
-              status: "failed",
-              payosTxnId,
-              updatedAt: new Date(), // stamp lúc finalize status → đẩy lên top list
-              rawResponse: rawData,
-            })
-            .where(eq(payments.id, payment.id));
-
-          // Trả event 'failed' để FE cập nhật UI nếu đang ngóng
-          return {
-            orderCode,
-            status: "failed",
-            subscriptionId: payment.subscriptionId ?? null,
-            planId: payment.planId,
-          };
-        }
-
-        // SUCCESS → Update payment status = paid
-        await tx
-          .update(payments)
-          .set({
-            status: "paid",
-            payosTxnId,
-            updatedAt: new Date(), // stamp lúc finalize status → đẩy lên top list (xem migration 0017)
-            rawResponse: rawData,
-          })
-          .where(eq(payments.id, payment.id));
-
-        // Tạo subscription (cancel mọi sub active cũ + insert mới — xem subscription.service.ts)
-        const newSub = await subscriptionService.create(
-          tx,
-          payment.userId,
-          payment.planId,
-          orderCode,
-        );
-
-        // Link subscription vào payment
-        await tx
-          .update(payments)
-          .set({ subscriptionId: newSub.id })
-          .where(eq(payments.id, payment.id));
-
-        return {
-          orderCode,
-          status: "paid",
-          subscriptionId: newSub.id,
-          planId: payment.planId,
-        };
-      },
+    const emitted: PaymentUpdatedEvent | null = await finalizePayment(
+      orderCode,
+      payosTxnId,
+      "webhook",
+      paidAmount,
+      rawData,
     );
 
     // ===== SAU KHI COMMIT → emit WebSocket =====
-    // Emit cho CẢ 2 trường hợp:
-    //   - status='paid'  → modal/success view set state='success', navigate /billing/success
-    //   - status='failed' → modal set state='failed', hiện thông báo "Thanh toán bị từ chối"
-    // Chỉ skip emit khi webhook retry (early-return null do payment đã paid từ trước).
+    // Emit khi finalize thành công (đi kèm navigate /billing/success ở FE).
+    // Webhook duplicate/retry -> finalizePayment trả null -> không emit, không log.
     if (emitted) {
       const userId = await getUserIdByOrderCode(orderCode);
       notificationGateway.emitToUser(userId, "payment:updated", emitted);
-    } else {
-      logger.info(
-        { orderCode },
-        "Skipped emit — payment already paid (webhook retry)",
-      );
     }
   },
   
@@ -486,6 +632,299 @@ export const paymentService = {
     }
 
     return await cancelPendingPaymentLink(payment);
+  },
+
+  /**
+   * Admin force-finalize 1 payment (CS tool) — fix HIGH #1.
+   *
+   * Bắt buộc hỏi PayOS TRƯỚC: `paymentRequests.get` — PayOS không báo PAID
+   * thì KHÔNG finalize (không tin trạng thái do admin nhập). PAID → verify
+   * amountPaid → finalizePayment(source='admin'), dùng chung đường finalize
+   * duy nhất với webhook/reconcile.
+   *
+   * Lỗi: 404 PAYMENT_NOT_FOUND / 409 PAYMENT_ALREADY_PAID /
+   *      409 PAYOS_NOT_PAID / 409 PAYMENT_AMOUNT_MISMATCH / 409 NOT_FINALIZABLE.
+   */
+  finalizeById: async (id: string): Promise<Payment> => {
+    const [payment] = await db
+      .select()
+      .from(payments)
+      .where(eq(payments.id, id))
+      .limit(1);
+
+    if (!payment) {
+      throw new AppError(404, "PAYMENT_NOT_FOUND", "Payment không tồn tại");
+    }
+    if (!payment.planId) {
+      throw new AppError(
+        409,
+        "PAYMENT_NOT_FINALIZABLE",
+        "Payment không gắn với plan (legacy row) — không thể cấp subscription",
+      );
+    }
+    if (payment.status === "paid") {
+      throw new AppError(
+        409,
+        "PAYMENT_ALREADY_PAID",
+        "Payment đã được thanh toán trước đó",
+      );
+    }
+
+    // Hỏi PayOS — source of truth. Ưu tiên paymentLinkId (pattern như cancel).
+    const raw = payment.rawResponse as Record<string, unknown> | null;
+    const paymentLinkId =
+      raw && typeof raw.paymentLinkId === "string" ? raw.paymentLinkId : null;
+    const link = paymentLinkId
+      ? await payOS.paymentRequests.get(paymentLinkId)
+      : await payOS.paymentRequests.get(Number(payment.orderCode));
+
+    if (link.status !== "PAID") {
+      throw new AppError(
+        409,
+        "PAYOS_NOT_PAID",
+        `PayOS báo status '${link.status}' — chỉ finalize được khi PayOS xác nhận PAID. Nếu chưa, hãy chờ reconcile job.`,
+      );
+    }
+
+    const txnRef =
+      link.transactions && link.transactions.length > 0
+        ? String(link.transactions[0].reference)
+        : link.id;
+
+    let emitted: PaymentUpdatedEvent | null;
+    try {
+      emitted = await finalizePayment(
+        payment.orderCode,
+        txnRef,
+        "admin",
+        link.amountPaid,
+      );
+    } catch (err) {
+      if (
+        err instanceof PaymentFinalizeError &&
+        err.code === "AMOUNT_MISMATCH"
+      ) {
+        throw new AppError(
+          409,
+          "PAYMENT_AMOUNT_MISMATCH",
+          `Số tiền PayOS xác nhận (${link.amountPaid}) khác số tiền payment (${Number(payment.amountVnd)}) — cần review thủ công, không finalize tự động`,
+        );
+      }
+      throw err;
+    }
+
+    if (!emitted) {
+      throw new AppError(
+        409,
+        "PAYMENT_ALREADY_PAID",
+        "Payment đã được finalize trong lúc xử lý (race với webhook/reconcile)",
+      );
+    }
+    /*
+    logger.info(
+      { orderCode: payment.orderCode, paymentId: payment.id, subscriptionId: emitted.subscriptionId },
+      "Admin đã finalize payment (PayOS xác nhận PAID)",
+    );
+      
+    */
+
+    const [updated] = await db
+      .select()
+      .from(payments)
+      .where(eq(payments.id, id))
+      .limit(1);
+    return updated;
+  },
+
+  /**
+   * Reconciliation — đối chiếu payment 'pending' với PayOS (fix HIGH #1).
+   *
+   * Webhook KHÔNG còn là đường finalize duy nhất: job BullMQ chạy mỗi 10 phút
+   * (paymentReconciliation.worker) quét payment 'pending' tuổi (10 phút, 7
+   * ngày] và hỏi thẳng PayOS paymentRequests.get. Bảo đảm: user trả tiền mà
+   * webhook thất bại (500 bị PayOS không retry, 429 rate limit, lỗi DB…) vẫn
+   * được cấp gói trong vòng ~10-20 phút.
+   *
+   * Mapping PaymentLinkStatus → hành động:
+   *   PAID      → verify amountPaid === amountVnd → finalizePayment('reconcile')
+   *   EXPIRED   → payment 'expired'   (conditional UPDATE WHERE status='pending')
+   *   CANCELLED → payment 'cancelled' (như trên)
+   *   FAILED    → payment 'failed'    (như trên)
+   *   PENDING / PROCESSING / UNDERPAID → giữ nguyên, chỉ log
+   *     (business chốt 2026-10-01: chưa đủ tiền / chưa xử lý xong → KHÔNG cấp gói)
+   *
+   * An toàn:
+   *   - Lỗi 1 payment (PayOS timeout/4xx) KHÔNG làm hỏng batch — try/catch từng item.
+   *   - finalizePayment tự FOR UPDATE → an toàn khi webhook cùng lúc finalize.
+   *   - Batch giới hạn + xử lý tuần tự → không đụng rate limit PayOS.
+   *   - DRY_RUN (env PAYMENT_RECONCILE_DRY_RUN, default 'true'): chỉ log
+   *     kết quả sẽ làm, KHÔNG ghi DB — dùng cho lần deploy đầu.
+   */
+  reconcilePendingPayments: async (opts?: {
+    dryRun?: boolean;
+    batchSize?: number;
+  }): Promise<{
+    dryRun: boolean;
+    scanned: number;
+    finalized: number;
+    statusSynced: number;
+    keptPending: number;
+    amountMismatches: number;
+    errors: number;
+  }> => {
+    const dryRun = opts?.dryRun ?? true;
+    const batchSize = opts?.batchSize ?? RECONCILE_BATCH_SIZE;
+
+    const now = Date.now();
+    const rows = await db
+      .select()
+      .from(payments)
+      .where(
+        and(
+          eq(payments.status, "pending"),
+          lt(payments.createdAt, new Date(now - RECONCILE_MIN_AGE_MS)),
+          gt(payments.createdAt, new Date(now - RECONCILE_MAX_AGE_MS)),
+        ),
+      )
+      .orderBy(asc(payments.createdAt))
+      .limit(batchSize);
+
+    const summary = {
+      dryRun,
+      scanned: rows.length,
+      finalized: 0,
+      statusSynced: 0,
+      keptPending: 0,
+      amountMismatches: 0,
+      errors: 0,
+    };
+
+    for (const payment of rows) {
+      const orderCode = payment.orderCode;
+      try {
+        // Ưu tiên paymentLinkId (unique phía PayOS — pattern như cancel);
+        // fallback orderCode cho row legacy thiếu rawResponse.
+        const raw = payment.rawResponse as Record<string, unknown> | null;
+        const paymentLinkId =
+          raw && typeof raw.paymentLinkId === "string"
+            ? raw.paymentLinkId
+            : null;
+
+        const link = paymentLinkId
+          ? await payOS.paymentRequests.get(paymentLinkId)
+          : await payOS.paymentRequests.get(Number(orderCode));
+
+        const txnRef =
+          link.transactions && link.transactions.length > 0
+            ? String(link.transactions[0].reference)
+            : link.id;
+
+        if (link.status === "PAID") {
+          // Verify amount TRƯỚC khi finalize (finalizePayment verify lại lần
+          // nữa trong tx — defense in depth).
+          const expectedAmount = Number(payment.amountVnd);
+          if (link.amountPaid !== expectedAmount) {
+              summary.amountMismatches += 1;
+              /*
+            logger.error(
+              {
+                orderCode,
+                paymentId: payment.id,
+                expectedAmount,
+                amountPaid: link.amountPaid,
+              },
+              "Reconcile: AMOUNT_MISMATCH — không finalize, cần admin xem lại",
+            );
+            */
+            continue;
+          }
+
+          if (dryRun) {
+              summary.finalized += 1;
+              /*
+            logger.info(
+              {
+                orderCode,
+                paymentId: payment.id,
+                payosStatus: link.status,
+                amountPaid: link.amountPaid,
+              },
+              "[DRY_RUN] Reconcile sẽ finalize payment (PayOS xác nhận PAID)",
+            );
+            */
+            continue;
+          }
+
+          // emitted = null khi webhook đã finalize trước trong race — vô hại,
+          // không log (noise); payment 'paid' là kết quả đúng rồi.
+          const emitted = await finalizePayment(
+            orderCode,
+            txnRef,
+            "reconcile",
+            link.amountPaid,
+          );
+          if (emitted) {
+              summary.finalized += 1;
+              /*
+            logger.info(
+              { orderCode, subscriptionId: emitted.subscriptionId },
+              "Reconcile đã finalize payment (PayOS xác nhận đã nhận tiền)",
+            );
+            */
+          }
+          continue;
+        }
+
+        const syncMap: Record<string, "expired" | "cancelled" | "failed"> = {
+          EXPIRED: "expired",
+          CANCELLED: "cancelled",
+          FAILED: "failed",
+        };
+        const mappedStatus = syncMap[link.status];
+        if (mappedStatus) {
+          if (dryRun) {
+              summary.statusSynced += 1;
+              /*
+            logger.info(
+              { orderCode, payosStatus: link.status, wouldStatus: mappedStatus },
+              "[DRY_RUN] Reconcile sẽ đồng bộ trạng thái payment",
+            );
+              */
+            continue;
+          }
+          // Conditional update — nếu webhook vừa finalize thì 0 row, không ghi đè.
+          // Không log per-item: kết quả nằm trong summary (statusSynced) + row DB.
+          await db
+            .update(payments)
+            .set({ status: mappedStatus, updatedAt: new Date() })
+            .where(
+              and(eq(payments.id, payment.id), eq(payments.status, "pending")),
+            );
+          summary.statusSynced += 1;
+          continue;
+        }
+
+        // PENDING / PROCESSING / UNDERPAID — chưa settled, giữ nguyên.
+        // Không log từng item (sẽ lặp mỗi chu kỳ) — con số tổng hợp
+        // keptPending đã nằm trong log "Payment reconciliation run complete".
+        summary.keptPending += 1;
+      } catch (err) {
+        if (err instanceof PaymentFinalizeError && err.code === "AMOUNT_MISMATCH") {
+          summary.amountMismatches += 1;
+        } else {
+          summary.errors += 1;
+        }
+        logger.error(
+          {
+            orderCode,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "Reconcile: lỗi 1 payment — tiếp tục batch",
+        );
+      }
+    }
+
+    return summary;
   },
 };
 
@@ -558,24 +997,30 @@ async function cancelPendingPaymentLink(payment: Payment): Promise<Payment> {
           paymentLinkId,
           paymentId: payment.id,
         },
-        "PayOS cancel API failed — proceeding DB update anyway",
+        "PayOS cancel API lỗi — vẫn cập nhật DB để user không bị kẹt",
       );
     }
 
+    // Guard trạng thái trong WHERE (defense chống race với webhook finalize):
+    // nếu payment đã chuyển 'paid' giữa lúc SELECT và UPDATE, statement này
+    // impact 0 row → throw 409 thay vì ghi đè trạng thái 'paid' của payment
+    // đã được thanh toán.
     const [updated] = await db
       .update(payments)
       .set({
         status: "cancelled",
         updatedAt: new Date(),
       })
-      .where(eq(payments.id, payment.id))
+      .where(
+        and(eq(payments.id, payment.id), eq(payments.status, "pending")),
+      )
       .returning();
 
-    if (!updated) { 
+    if (!updated) {
       throw new AppError(
-        404,
-        "PAYMENT_NOT_FOUND",
-        "Payment không tồn tại hoặc đã bị xóa",
+        409,
+        "PAYMENT_NOT_CANCELLABLE",
+        "Payment không còn ở trạng thái 'pending' (có thể vừa được thanh toán hoặc đã được finalize).",
       );
     }
 
@@ -596,7 +1041,7 @@ async function cancelPendingPaymentLink(payment: Payment): Promise<Payment> {
         paymentId: payment.id,
         orderCode: payment.orderCode,
       },
-      "cancelPendingPaymentLink: unhandled error",
+      "cancelPendingPaymentLink: lỗi chưa phân loại",
     );
     throw err;
   }
@@ -741,7 +1186,7 @@ async function createPayOSPaymentLink(
         requestPayload: { orderCode, amount, description, returnUrl, cancelUrl },
         errorMessage: err instanceof Error ? err.message : String(err),
       },
-      "PAYOS_API_FAILED",
+      "Gọi PayOS API tạo payment link thất bại",
     );
     throw new AppError(
       502,
