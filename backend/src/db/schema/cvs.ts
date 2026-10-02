@@ -26,6 +26,8 @@ export const cvs = pgTable('cvs', {
     name?: string;
     email?: string;
     phone?: string;
+    /** Địa chỉ — template 1/6 render khối "Address / Location". */
+    address?: string;
     // URL fields cho phép null: PATCH semantics (RFC 7396) — null = xoá field.
     portfolio?: string | null;
     github?: string | null;
@@ -33,6 +35,8 @@ export const cvs = pgTable('cvs', {
     facebook?: string | null;
     avatarUrl?: string | null;
     summary?: string;
+    /** Sở thích — list string đơn giản, template render section INTERESTS. */
+    interests?: string[];
     education?: Array<Record<string, unknown>>;
     experience?: Array<Record<string, unknown>>;
     /**

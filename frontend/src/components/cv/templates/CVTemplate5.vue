@@ -32,8 +32,15 @@ import {
   Briefcase, FolderGit2, Settings, Award, Star, Heart,
 } from 'lucide-vue-next';
 import type { CvRenderData } from '@/types/cv';
+import { CV_LABELS, type CvLanguage, type CvSectionKey } from '@/utils/cvLabels';
 
-defineProps<{ data: CvRenderData }>();
+const props = withDefaults(
+  defineProps<{ data: CvRenderData; language?: CvLanguage }>(),
+  { language: 'en' },
+);
+
+/** Tra nhãn section theo ngôn ngữ hiện tại — xem [cvLabels.ts](../../utils/cvLabels.ts). */
+const t = (k: CvSectionKey): string => CV_LABELS[props.language][k];
 
 /** Chữ cái đầu của tên làm avatar fallback. */
 const initial = (name: string | undefined | null): string => {
@@ -132,7 +139,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
         class="relative z-[1] text-center font-bold uppercase leading-tight break-words"
         style="font-size: 24px; color: #064C8A; letter-spacing: 1px;"
       >
-        {{ data.personalInfo.fullName || 'HỌ VÀ TÊN' }}
+        {{ data.personalInfo.fullName || t('fullName') }}
       </h1>
 
       <!-- ============ JOB TITLE — label xanh chữ trắng ============ -->
@@ -300,7 +307,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
             class="font-bold uppercase whitespace-nowrap"
             style="font-size: 17px; color: #064C8A; letter-spacing: 1px;"
           >
-            Mục tiêu nghề nghiệp
+            {{ t('objective') }}
           </span>
           <span class="flex-1 h-[2px]" style="background: #064C8A;" />
         </h2>
@@ -320,7 +327,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
             class="font-bold uppercase whitespace-nowrap"
             style="font-size: 17px; color: #064C8A; letter-spacing: 1px;"
           >
-            Trình độ học vấn
+            {{ t('education') }}
           </span>
           <span class="flex-1 h-[2px]" style="background: #064C8A;" />
         </h2>
@@ -333,14 +340,14 @@ const descriptionBullets = (desc: string | undefined): string[] => {
                 class="text-neutral-500 italic whitespace-nowrap"
                 style="font-size: 11.5px;"
               >
-                {{ e.startYear || '' }}<span v-if="e.startYear || e.endYear"> — </span>{{ e.endYear || 'Nay' }}
+                {{ e.startYear || '' }}<span v-if="e.startYear || e.endYear"> — </span>{{ e.endYear || t('present') }}
               </span>
             </div>
             <p
               v-if="e.major || e.degree"
               class="text-neutral-700 leading-tight mt-1 break-words"
             >
-              <span v-if="e.major">Chuyên ngành: {{ e.major }}</span>
+              <span v-if="e.major">{{ t('major') }}: {{ e.major }}</span>
               <span v-if="e.major && e.degree"> — </span>
               <span v-if="e.degree">{{ e.degree }}</span>
             </p>
@@ -363,7 +370,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
             class="font-bold uppercase whitespace-nowrap"
             style="font-size: 17px; color: #064C8A; letter-spacing: 1px;"
           >
-            Kinh nghiệm làm việc
+            {{ t('experience') }}
           </span>
           <span class="flex-1 h-[2px]" style="background: #064C8A;" />
         </h2>
@@ -376,7 +383,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
                 class="text-neutral-500 italic whitespace-nowrap"
                 style="font-size: 11.5px;"
               >
-                {{ x.startDate || '' }}<span v-if="x.startDate || x.endDate"> — </span>{{ x.endDate || 'Nay' }}
+                {{ x.startDate || '' }}<span v-if="x.startDate || x.endDate"> — </span>{{ x.endDate || t('present') }}
               </span>
             </div>
             <p
@@ -409,7 +416,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
             class="font-bold uppercase whitespace-nowrap"
             style="font-size: 17px; color: #064C8A; letter-spacing: 1px;"
           >
-            Dự án tham gia
+            {{ t('projects') }}
           </span>
           <span class="flex-1 h-[2px]" style="background: #064C8A;" />
         </h2>
@@ -463,7 +470,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
             class="font-bold uppercase whitespace-nowrap"
             style="font-size: 17px; color: #064C8A; letter-spacing: 1px;"
           >
-            Kỹ năng chuyên môn
+            {{ t('skills') }}
           </span>
           <span class="flex-1 h-[2px]" style="background: #064C8A;" />
         </h2>
@@ -495,7 +502,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
             class="font-bold uppercase whitespace-nowrap"
             style="font-size: 17px; color: #064C8A; letter-spacing: 1px;"
           >
-            Chứng chỉ
+            {{ t('certificates') }}
           </span>
           <span class="flex-1 h-[2px]" style="background: #064C8A;" />
         </h2>
@@ -524,7 +531,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
             class="font-bold uppercase whitespace-nowrap"
             style="font-size: 17px; color: #064C8A; letter-spacing: 1px;"
           >
-            Hoạt động
+            {{ t('activities') }}
           </span>
           <span class="flex-1 h-[2px]" style="background: #064C8A;" />
         </h2>
@@ -544,7 +551,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
               v-if="a.role"
               class="text-neutral-700 leading-tight mt-1 break-words"
             >
-              Vai trò: {{ a.role }}
+              {{ t('role') }}: {{ a.role }}
             </p>
             <p
               v-if="a.description"
@@ -565,7 +572,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
             class="font-bold uppercase whitespace-nowrap"
             style="font-size: 17px; color: #064C8A; letter-spacing: 1px;"
           >
-            Sở thích
+            {{ t('interests') }}
           </span>
           <span class="flex-1 h-[2px]" style="background: #064C8A;" />
         </h2>

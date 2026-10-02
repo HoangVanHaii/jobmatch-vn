@@ -69,6 +69,8 @@ export interface DirectCvContact {
   name?: string;
   email?: string;
   phone?: string;
+  /** Địa chỉ — template 1/6 render khối "Address / Location". */
+  address?: string;
   portfolio?: string | null;
   github?: string | null;
   linkedin?: string | null;
@@ -138,6 +140,8 @@ export interface CreateDirectCvInput {
   languages?: DirectCvLanguage[];
   projects?: DirectCvProject[];
   certifications?: DirectCvCertification[];
+  /** Sở thích — list string đơn giản, template render section INTERESTS. */
+  interests?: string[];
 }
 
 /**
@@ -165,6 +169,7 @@ export interface UpdateDirectCvInput {
     | 'languages'
     | 'projects'
     | 'certifications'
+    | 'interests'
   >;
 }
 

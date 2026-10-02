@@ -26,6 +26,7 @@ import {
   Brain,
   Loader2,
   AlertTriangle,
+  X,
 } from 'lucide-vue-next'
 import { useCvStore } from '@stores/cv'
 import { useToastStore } from '@stores/toast'
@@ -34,11 +35,14 @@ import { useSocket } from '@composables/useSocket'
 import type { Cv, CvSource, CvStatus, CvFailureReason } from '@/types/cv'
 import { getAiScore } from '@/types/cv'
 import { scoreLabel } from '@/utils/aiScore'
+import type { CvLanguage } from '@/utils/cvLabels'
+import { clampTemplateId } from '@/utils/cvTemplates'
 import CvThumbnail from '@components/cv/thumbnails/CvThumbnail.vue'
 import UploadFilesDialog from '@components/upload/UploadFilesDialog.vue'
 import type { UploadItem } from '@components/upload/UploadFilesDialog.vue'
 import CvDetailView from '@components/cv/CvDetailView.vue'
 import CvTemplateLightbox from '@components/cv/CvTemplateLightbox.vue'
+import CvBuilderEditor from '@components/cv/builder/CvBuilderEditor.vue'
 
 // ===== Wire API — lấy CV list từ cvStore (cùng pattern MyResumesView) =====
 const cvStore = useCvStore()
@@ -198,9 +202,33 @@ const onDeleteCv = async (cv: Cv): Promise<void> => {
     toast.error(cvStore.error ?? 'Không xóa được CV.')
   }
 }
+/* ===== Builder overlay — CvBuilderEditor nhúng ngay trong trang =====
+ * Mở từ 3 entry: nút "Tạo mới" (create), lightbox "Dùng mẫu này" (create
+ * kèm templateId + ngôn ngữ đang chọn), menu "Sửa" CV direct (edit kèm cvId).
+ * Lưu thành công → đóng overlay + refresh list (reset filter để CV mới
+ * chắc chắn hiển thị). Không còn route sang CreateResumeView. */
+const builderOpen = ref(false)
+const builderCvId = ref<string | null>(null)
+const builderTemplateId = ref(1)
+const builderLanguage = ref<CvLanguage>('en')
+
+const openCreateBuilder = (): void => {
+  builderCvId.value = null
+  builderTemplateId.value = 1
+  builderOpen.value = true
+}
+
+/** Lưu thành công trong builder → đóng overlay + refresh list (reset filter
+ *  về mặc định để CV mới/chỉnh sửa chắc chắn hiển thị). */
+const onBuilderSaved = (): void => {
+  builderOpen.value = false
+  void cvStore.fetchList(undefined, undefined, undefined, true)
+}
+
 const onEditCv = (cv: Cv): void => {
   closeDetail()
-  router.push({ name: 'edit-resume', params: { cvId: cv.id } })
+  builderCvId.value = cv.id
+  builderOpen.value = true
 }
 /** Adapter — dialog emit cvId, handleAnalyze nhận Cv. */
 const onAnalyzeFromDetail = (cvId: string): void => {
@@ -212,12 +240,18 @@ const onAnalyzeFromDetail = (cvId: string): void => {
  * Fake Cv (direct, templateId 1-7) mở CvDetailView chế độ demo: chỉ tab
  * Chi tiết + CTA "Dùng mẫu này" → route sang CreateResumeView kèm templateId. */
 const tplDetailCv = ref<Cv | null>(null)
+
+/** Ngôn ngữ tiêu đề section khi xem chi tiết mẫu (lightbox "Mẫu CV từ
+ *  hệ thống"). UI-only — không persist; default 'en' theo yêu cầu. */
+const templateLanguage = ref<CvLanguage>('en')
+
 const onUseTemplate = (cv: Cv): void => {
   tplDetailCv.value = null
-  router.push({
-    name: 'create-resume',
-    query: { templateId: String(cv.templateId ?? 1) },
-  })
+  builderCvId.value = null
+  builderTemplateId.value = clampTemplateId(cv.templateId ?? 1)
+  // Đồng bộ mode ngôn ngữ tiêu đề đang chọn ở lightbox sang builder.
+  builderLanguage.value = templateLanguage.value
+  builderOpen.value = true
 }
 
 /* ===== Search theo title — server-side (?q=), debounce 400ms =====
@@ -409,7 +443,7 @@ const aiTemplateCvs = aiTemplateMeta.map((meta, i) => ({
 
         <div>
           <h1 class="mb-1.5 text-[20px] font-semibold text-slate-900">
-            Chào mừng bạn đến mới thư viện CV của JobMatch
+            Chào mừng bạn đến với thư viện CV của JobMatch
           </h1>
           <p class="mb-3 text-[14px] text-slate-500">
             Quản lý tất cả CV của bạn, khám phá các mẫu CV được tạo bởi hệ thống JobMatch.
@@ -439,7 +473,11 @@ const aiTemplateCvs = aiTemplateMeta.map((meta, i) => ({
           Upload
         </button>
         
-        <button class="flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[14px] text-slate-600">
+        <button
+          type="button"
+          class="flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[14px] text-slate-600"
+          @click="openCreateBuilder"
+        >
           <Palette :size="13" />
           Tạo mới
         </button>
@@ -697,6 +735,7 @@ const aiTemplateCvs = aiTemplateMeta.map((meta, i) => ({
       :setting-primary="settingPrimaryId !== null"
       :deleting="deletingId !== null"
       :analyzing="detailCv !== null && analyzingId === detailCv.id"
+      :language="templateLanguage"
       @close="closeDetail"
       @set-primary="onSetPrimary"
       @edit="onEditCv"
@@ -705,13 +744,54 @@ const aiTemplateCvs = aiTemplateMeta.map((meta, i) => ({
     />
 
     <!-- Template demo lightbox — click card "Mẫu CV từ hệ thống" mở khung
-         full-size A4 như trang /test6. CTA "Dùng mẫu này" → CreateResumeView. -->
+         full-size A4 như trang /test6. CTA "Dùng mẫu này" → mở builder overlay. -->
     <CvTemplateLightbox
       :open="tplDetailCv !== null"
       :cv="tplDetailCv"
+      v-model:language="templateLanguage"
       @close="tplDetailCv = null"
       @use-template="onUseTemplate"
     />
+
+    <!-- ===== Builder overlay — nền trong suốt (dim + blur trang list phía
+         sau), chỉ nổi 2 ô: preview card (trái) + form card (phải) và các
+         nút. Click ra vùng dim cũng đóng. ===== -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-150 ease-out"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition duration-100 ease-in"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div
+          v-if="builderOpen"
+          class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 px-4 pt-4 backdrop-blur-sm sm:px-6 sm:pt-6 lg:px-8 lg:pt-8"
+          @click.self="builderOpen = false"
+        >
+          <!-- Nút đóng nổi góc phải — không top bar để 2 ô editor là trung tâm -->
+          <button
+            type="button"
+            class="fixed right-4 top-4 z-10 grid h-9 w-9 place-items-center rounded-full bg-white text-slate-600 shadow-lg ring-1 ring-slate-900/10 transition-colors hover:text-slate-900"
+            aria-label="Đóng"
+            @click="builderOpen = false"
+          >
+            <X :size="16" />
+          </button>
+
+          <div class="mx-auto w-full max-w-[1500px]">
+            <CvBuilderEditor
+              :cv-id="builderCvId"
+              :initial-template-id="builderTemplateId"
+              :initial-language="builderLanguage"
+              @saved="onBuilderSaved"
+              @cancel="builderOpen = false"
+            />
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 

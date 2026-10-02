@@ -1,22 +1,27 @@
 <script setup lang="ts">
 /**
- * CvDetailView — modal xem chi tiết 1 CV, pattern theo mockup trang list CV
- * (font-poppins, text-size nhỏ, accent #5b4eea).
+ * CvDetailView — lightbox xem chi tiết 1 CV, CÙNG pattern với
+ * CvTemplateLightbox (xem mẫu CV): overlay slate-900/60 + blur, toolbar nổi
+ * chữ trắng phía trên, sheet trắng A4 max-w-[794px] bo góc + shadow — nội
+ * dung dài thì cuộn dọc trên overlay (2 chế độ cùng kích thước).
  *
- * 3 tab:
- *   - "Chi tiết"  — nội dung CV KHÔNG khung: direct → CVTemplateRenderer full
- *     A4 (white block, không ring/shadow); upload PDF → iframe native viewer;
- *     image → <img> contain; DOCX → fallback tải về (render docx-preview đầy
- *     đủ đã có ở CvPreview — không nhân bản composable vào đây).
+ * 3 tab (ẩn dải tab ở chế độ demo — chỉ còn tab Chi tiết):
+ *   - "Chi tiết"  — nội dung render TRỰC TIẾP trong sheet không padding:
+ *     direct → CVTemplateRenderer full 794px như lightbox; upload PDF →
+ *     iframe native viewer theo ĐÚNG tỷ lệ A4 (aspect 210/298 + view=FitH)
+ *     nên hiện trọn trang, không bị cắt đáy; image → <img> contain;
+ *     DOCX → fallback tải về (render docx-preview đầy đủ đã có ở CvPreview
+ *     — không nhân bản composable vào đây).
  *   - "AI Summary" — điểm + strengths/weaknesses/suggestions từ ai_analysis;
  *     chưa phân tích / parsing / failed → empty state tương ứng.
  *   - "File" — metadata file (loại, nguồn, ngày) + nút tải xuống.
  *
- * 3 action ở footer (component PURE — chỉ emit, parent tự gọi store/router):
- *   - "Đặt làm CV chính" → emit('set-primary') — disabled khi đã là primary,
- *     loading qua prop `settingPrimary`.
+ * Actions ở TOOLBAR (component PURE — chỉ emit, parent tự gọi store/router):
+ *   - "Đặt làm CV chính" → emit('set-primary') — ẩn khi đã là primary (chip
+ *     "CV chính" đã thể hiện), loading qua prop `settingPrimary`.
  *   - "Xóa CV" → 2 bước inline confirm rồi emit('delete').
  *   - "Chỉnh sửa CV" → CHỈ hiện với CV tạo tay (source='direct') → emit('edit').
+ *   - Demo: CTA "Dùng mẫu này" → emit('use-template').
  */
 import { computed, ref, watch } from 'vue'
 import {
@@ -37,7 +42,9 @@ import {
 import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue'
 import { buildRenderData } from '@/composables/cvRenderData'
 import { scoreLabel } from '@/utils/aiScore'
+import { clampTemplateId } from '@/utils/cvTemplates'
 import type { Cv } from '@/types/cv'
+import type { CvLanguage } from '@/utils/cvLabels'
 
 const props = withDefaults(
   defineProps<{
@@ -54,12 +61,15 @@ const props = withDefaults(
     /** Chế độ xem mẫu demo (template hệ thống): chỉ tab Chi tiết + CTA
      *  "Dùng mẫu này" — ẩn action set-primary/delete/edit/analyze. */
     demo?: boolean
+    /** Ngôn ngữ tiêu đề section khi render template ('vi' | 'en'). Default 'en'. */
+    language?: CvLanguage
   }>(),
   {
     settingPrimary: false,
     deleting: false,
     analyzing: false,
     demo: false,
+    language: 'en',
   },
 )
 
@@ -101,10 +111,9 @@ const visibleTabs = computed<Array<{ value: DetailTab; label: string }>>(() =>
  * Derived từ cv
  * ==========================================================================*/
 const renderData = computed(() => (props.cv ? buildRenderData(props.cv) : null))
-const templateId = computed<number>(() => {
-  const id = props.cv?.templateId
-  return id !== null && id !== undefined && id >= 1 && id <= 5 ? id : 1
-})
+// Clamp 1..7 (đủ 7 mẫu hệ thống) — trước đây chỉ 1..5 nên CV mẫu 6/7 bị
+// render nhầm thành mẫu 1.
+const templateId = computed<number>(() => clampTemplateId(props.cv?.templateId))
 
 const isDirect = computed<boolean>(() => props.cv?.source === 'direct')
 const mime = computed<string>(() => (props.cv?.fileType ?? '').toLowerCase())
@@ -146,6 +155,10 @@ const fmtDate = (iso: string | null): string => {
  * sidebar thumbnail (navpanes) và scrollbar của trình xem PDF Chrome, mở
  * với chế độ fit chiều ngang (FitH).
  *
+ * FitH + iframe theo đúng tỷ lệ A4 (aspect-[210/298] bên dưới) → trang PDF
+ * scale khít chiều ngang và VỪA ĐỦ chiều cao iframe → hiện trọn trang 1,
+ * hết bị cắt đáy như trước đây (iframe h-[70vh] thấp hơn trang).
+ *
  * Chỉ nối khi URL CHƯA có fragment (`#`) — nối 2 lần sẽ tạo `##...`, trình
  * xem chỉ đọc fragment đầu và bỏ qua các param sau.
  *
@@ -180,103 +193,167 @@ watch(
     >
       <div
         v-if="open"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 p-4 backdrop-blur-[2px] sm:p-8"
         @click.self="emit('close')"
       >
-        <div
-          class="font-poppins flex h-[85vh] w-full flex-col overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-slate-200"
-          :class="demo ? 'max-w-2xl' : 'max-w-4xl'"
-          role="dialog"
-          aria-modal="true"
-        >
-          <!-- ==================== Header ==================== -->
-          <div class="flex items-center justify-between border-b border-slate-100 px-5 py-3">
-            <div class="flex min-w-0 items-center gap-2.5">
-              <div class="truncate text-[15px] font-semibold text-slate-900">
-                {{ cv?.title?.trim() || 'CV chưa đặt tên' }}
+        <!-- Container cùng kích thước lightbox xem mẫu CV: max-w-[794px] (A4).
+             Toolbar + tabs NỔI trên overlay (chữ trắng), sheet trắng bên dưới. -->
+        <div class="font-poppins mx-auto flex w-full max-w-[794px] flex-col">
+          <!-- ==================== Toolbar nổi ==================== -->
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <div class="min-w-0 text-white">
+              <div class="flex min-w-0 items-center gap-2">
+                <div class="truncate text-[15px] font-semibold drop-shadow-sm">
+                  {{ cv?.title?.trim() || 'CV chưa đặt tên' }}
+                </div>
+                <!-- Chip CV chính -->
+                <span
+                  v-if="!demo && cv?.isPrimary"
+                  class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-medium text-amber-200 ring-1 ring-amber-300/30"
+                >
+                  <Star :size="10" class="fill-amber-300 text-amber-300" />
+                  CV chính
+                </span>
+                <!-- Chip nguồn -->
+                <span
+                  class="inline-flex shrink-0 items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-white/80"
+                >
+                  {{ demo ? 'Mẫu hệ thống' : isDirect ? 'Tạo thủ công' : `Upload ${mimeLabel}` }}
+                </span>
               </div>
-              <!-- Chip CV chính -->
-              <span
-                v-if="!demo && cv?.isPrimary"
-                class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200/70"
-              >
-                <Star :size="10" class="fill-amber-500 text-amber-500" />
-                CV chính
-              </span>
-              <!-- Chip nguồn -->
-              <span
-                class="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600"
-              >
-                {{ demo ? 'Mẫu hệ thống' : isDirect ? 'Tạo thủ công' : `Upload ${mimeLabel}` }}
-              </span>
+              <div class="truncate text-[11px] text-white/70">
+                {{
+                  demo
+                    ? 'Xem trước mẫu — nội dung demo từ hệ thống JobMatch'
+                    : `Cập nhật ${fmtDate(cv?.updatedAt ?? null)}`
+                }}
+              </div>
             </div>
-            <button
-              type="button"
-              class="shrink-0 text-slate-400 transition-colors hover:text-slate-700"
-              aria-label="Đóng"
-              @click="emit('close')"
-            >
-              <X :size="16" />
-            </button>
+
+            <div class="flex shrink-0 flex-wrap items-center gap-2">
+              <!-- ===== Demo: CTA dùng mẫu (như lightbox xem mẫu CV) ===== -->
+              <template v-if="demo">
+                <button
+                  type="button"
+                  class="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5b4eea] px-3.5 text-[12px] font-medium text-white shadow-sm transition-colors hover:bg-[#4a3ed1]"
+                  @click="cv && emit('use-template', cv)"
+                >
+                  <Pencil :size="12" />
+                  Dùng mẫu này
+                </button>
+              </template>
+
+              <!-- ===== Thường: Xóa + Đặt làm CV chính + Chỉnh sửa ===== -->
+              <template v-else>
+                <!-- Xóa — 2 bước confirm inline -->
+                <button
+                  type="button"
+                  class="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[12px] font-medium transition-colors disabled:opacity-50"
+                  :class="
+                    confirmDelete
+                      ? 'bg-red-600 text-white hover:bg-red-700'
+                      : 'bg-white/10 text-white hover:bg-white/20'
+                  "
+                  :disabled="deleting"
+                  @click="confirmDelete ? cv && emit('delete', cv) : (confirmDelete = true)"
+                >
+                  <Loader2 v-if="deleting" :size="12" class="animate-spin" />
+                  <Trash2 v-else :size="12" />
+                  {{ confirmDelete ? 'Xác nhận xoá?' : 'Xóa CV' }}
+                </button>
+
+                <!-- Đặt làm CV chính — ẩn khi đã là primary (chip thể hiện) -->
+                <button
+                  v-if="!cv?.isPrimary"
+                  type="button"
+                  class="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5b4eea] px-3 text-[12px] font-medium text-white shadow-sm transition-colors hover:bg-[#4a3ed1] disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="settingPrimary"
+                  title="Đặt làm CV chính"
+                  @click="cv && emit('set-primary', cv.id)"
+                >
+                  <Loader2 v-if="settingPrimary" :size="12" class="animate-spin" />
+                  <Star v-else :size="12" />
+                  Đặt làm CV chính
+                </button>
+
+                <!-- Chỉnh sửa — CHỈ CV tạo tay (source='direct') -->
+                <button
+                  v-if="isDirect"
+                  type="button"
+                  class="inline-flex h-8 items-center gap-1.5 rounded-md bg-white/10 px-3 text-[12px] font-medium text-white transition-colors hover:bg-white/20"
+                  @click="cv && emit('edit', cv)"
+                >
+                  <Pencil :size="12" />
+                  Chỉnh sửa
+                </button>
+              </template>
+
+              <button
+                type="button"
+                class="grid h-8 w-8 place-items-center rounded-md bg-white/10 text-white transition-colors hover:bg-white/20"
+                aria-label="Đóng"
+                @click="emit('close')"
+              >
+                <X :size="16" />
+              </button>
+            </div>
           </div>
 
-          <!-- ==================== Tabs ==================== -->
-          <!-- Demo template: chỉ 1 tab duy nhất → ẩn hẳn dải tab. -->
-          <div v-if="!demo" class="flex items-center gap-1 border-b border-slate-100 px-5">
+          <!-- ==================== Tabs nổi ==================== -->
+          <!-- Demo template: chỉ 1 tab duy nhất → ẩn hẳn dải tab. Pill style
+               trên nền tối: active = pill trắng (đồng bộ toggle EN/VI lightbox). -->
+          <div v-if="!demo" class="mb-3 flex items-center gap-1">
             <button
               v-for="tab in visibleTabs"
               :key="tab.value"
               type="button"
-              class="relative -mb-px px-3 py-2 text-[12px] font-medium transition-colors"
+              class="inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors"
               :class="
                 activeTab === tab.value
-                  ? 'text-[#5b4eea]'
-                  : 'text-slate-500 hover:text-slate-800'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-white/70 hover:bg-white/10 hover:text-white'
               "
+              :aria-pressed="activeTab === tab.value"
               @click="activeTab = tab.value"
             >
               {{ tab.label }}
-              <span
-                class="absolute inset-x-2 bottom-0 h-0.5 rounded-full"
-                :class="activeTab === tab.value ? 'bg-[#5b4eea]' : 'bg-transparent'"
-              />
             </button>
           </div>
 
-          <!-- ==================== Body ==================== -->
-          <div class="min-h-0 flex-1 overflow-y-auto bg-slate-50/70">
-            <!-- ========== Tab Chi tiết — nội dung CV, không khung ==========
-                 Demo: padding mỏng + render FULL width (không max-w) để hết
-                 khoảng trống 2 bên. -->
-            <div v-if="activeTab === 'detail'" :class="demo ? 'p-3' : 'p-5'">
+          <!-- ==================== Sheet trắng A4 ==================== -->
+          <!-- Cùng khung lightbox xem mẫu: bo góc + shadow + ring. Nội dung
+               tab "Chi tiết" render TRỰC TIẾP trong sheet (không padding) —
+               full 794px giống hệt xem mẫu CV. -->
+          <div class="overflow-hidden rounded-lg bg-white shadow-xl ring-1 ring-slate-900/5">
+            <!-- ========== Tab Chi tiết — nội dung CV, không padding ========== -->
+            <template v-if="activeTab === 'detail'">
               <!-- Đang parse/analyze → chưa có nội dung để render -->
               <div
                 v-if="isProcessing"
-                class="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 text-slate-500"
+                class="flex min-h-[320px] flex-col items-center justify-center gap-2 p-8 text-slate-500"
               >
                 <Loader2 :size="20" class="animate-spin text-[#5b4eea]" />
                 <span class="text-[12px]">CV đang được phân tích — nội dung sẽ hiện sau.</span>
               </div>
 
-              <!-- Direct: render full A4 qua CVTemplateRenderer — block trắng
-                   trơn, KHÔNG ring/shadow ("không có khung chỉ có nội dung").
-                   Demo: full width modal; thường: giới hạn 640px giữa. -->
-              <div
+              <!-- Direct: render thuần như lightbox xem mẫu — template tự là
+                   trang A4 trắng, full 794px, chiều cao theo nội dung. -->
+              <CVTemplateRenderer
                 v-else-if="isDirect && renderData"
-                class="mx-auto w-full bg-white"
-                :class="demo ? '' : 'max-w-[640px]'"
-                style="aspect-ratio: 850 / 1100"
-              >
-                <CVTemplateRenderer :template-id="templateId" :data="renderData" />
-              </div>
+                :template-id="templateId"
+                :data="renderData"
+                :language="language"
+              />
 
               <!-- Upload PDF: iframe native viewer ẩn toolbar/sidebar qua
-                   fragment (buildPdfViewUrl) — chỉ còn nội dung CV, full
-                   width, cao cố định 70vh, không border. -->
+                   fragment (buildPdfViewUrl). Chiều cao theo ĐÚNG tỷ lệ A4
+                   (210/298 — chừa ~5px chống clip làm tròn) nên viewer FitH
+                   scale khít width và trọn trang 1 lấp đầy iframe → hết cắt
+                   đáy. Nhiều trang → cuộn bên trong iframe. -->
               <iframe
                 v-else-if="isPdf && cv?.fileUrl"
                 :src="buildPdfViewUrl(cv?.fileUrl ?? '')"
-                class="h-[70vh] w-full border-0 bg-white"
+                class="block aspect-[210/298] w-full border-0 bg-white"
                 title="Nội dung CV"
               />
 
@@ -285,13 +362,13 @@ watch(
                 v-else-if="isImage && cv?.fileUrl"
                 :src="cv.fileUrl"
                 :alt="cv.title || 'CV image'"
-                class="mx-auto max-h-[560px] w-auto max-w-full rounded-md bg-white object-contain"
+                class="mx-auto block max-h-[80vh] w-full object-contain"
               />
 
               <!-- DOCX / khác: fallback tải về (docx-preview đầy đủ có ở CvPreview) -->
               <div
                 v-else
-                class="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 text-center"
+                class="flex min-h-[320px] flex-col items-center justify-center gap-2 p-8 text-center"
               >
                 <FileText :size="22" class="text-slate-300" />
                 <p class="text-[12px] text-slate-600">
@@ -308,14 +385,14 @@ watch(
                   Mở / tải file
                 </a>
               </div>
-            </div>
+            </template>
 
             <!-- ========== Tab AI Summary ========== -->
             <div v-else-if="activeTab === 'ai'" class="p-5">
               <!-- Chưa có analysis -->
               <div
                 v-if="!cv?.ai_analysis"
-                class="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 text-center"
+                class="flex min-h-[320px] flex-col items-center justify-center gap-2 text-center"
               >
                 <Brain :size="22" class="text-slate-300" />
                 <template v-if="isProcessing">
@@ -509,80 +586,6 @@ watch(
                   </div>
                 </template>
               </div>
-            </div>
-          </div>
-
-          <!-- ==================== Footer actions ==================== -->
-          <!-- Demo template: chỉ CTA "Dùng mẫu này" → parent route sang create. -->
-          <div
-            v-if="demo"
-            class="flex items-center justify-between gap-2 border-t border-slate-200 px-5 py-3"
-          >
-            <p class="text-[10px] text-slate-400">
-              Mẫu demo — dùng để tạo CV, chỉnh sửa trực tiếp trên nội dung.
-            </p>
-            <button
-              type="button"
-              class="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5b4eea] px-3.5 text-[12px] font-medium text-white transition-colors hover:bg-[#4a3ed1]"
-              @click="cv && emit('use-template', cv)"
-            >
-              <Pencil :size="12" />
-              Dùng mẫu này
-            </button>
-          </div>
-
-          <div
-            v-else
-            class="flex items-center justify-between gap-2 border-t border-slate-200 px-5 py-3"
-          >
-            <!-- Trái: hint khi CV đang là primary -->
-            <p class="text-[10px] text-slate-400">
-              {{ cv?.isPrimary ? 'CV này đang được employers xem mặc định.' : '' }}
-            </p>
-
-            <div class="flex items-center gap-2">
-              <!-- Chỉnh sửa — CHỈ CV tạo tay (source='direct') -->
-              <button
-                v-if="isDirect"
-                type="button"
-                class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-[12px] font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                @click="cv && emit('edit', cv)"
-              >
-                <Pencil :size="12" />
-                Chỉnh sửa CV
-              </button>
-
-              <!-- Xóa — 2 bước confirm inline -->
-              <button
-                type="button"
-                class="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[12px] font-medium transition-colors disabled:opacity-50"
-                :class="
-                  confirmDelete
-                    ? 'border-red-600 bg-red-600 text-white hover:bg-red-700'
-                    : 'border-red-200 bg-white text-red-600 hover:bg-red-50'
-                "
-                :disabled="deleting"
-                @click="
-                  confirmDelete ? cv && emit('delete', cv) : (confirmDelete = true)
-                "
-              >
-                <Loader2 v-if="deleting" :size="12" class="animate-spin" />
-                <Trash2 v-else :size="12" />
-                {{ confirmDelete ? 'Xác nhận xoá?' : 'Xóa CV' }}
-              </button>
-
-              <!-- Đặt làm CV chính -->
-              <button
-                type="button"
-                class="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5b4eea] px-3 text-[12px] font-medium text-white transition-colors hover:bg-[#4a3ed1] disabled:cursor-not-allowed disabled:opacity-50"
-                :disabled="cv?.isPrimary || settingPrimary"
-                :title="cv?.isPrimary ? 'Đã là CV chính' : 'Đặt làm CV chính'"
-                @click="cv && emit('set-primary', cv.id)"
-              >
-                <Loader2 v-if="settingPrimary" :size="12" class="animate-spin" />
-                <Star v-else :size="12" />
-                {{ cv?.isPrimary ? 'CV chính' : 'Đặt làm CV chính' }}
-              </button>
             </div>
           </div>
         </div>

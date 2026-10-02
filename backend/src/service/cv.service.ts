@@ -17,6 +17,7 @@ const buildParsedData = (input: CreateDirectCvInput): NonNullable<typeof cvs.$in
     if (input.contact.name !== undefined) parsedData.name = input.contact.name;
     if (input.contact.email !== undefined) parsedData.email = input.contact.email;
     if (input.contact.phone !== undefined) parsedData.phone = input.contact.phone;
+    if (input.contact.address !== undefined) parsedData.address = input.contact.address;
     if (input.contact.portfolio !== undefined) parsedData.portfolio = input.contact.portfolio;
     if (input.contact.github !== undefined) parsedData.github = input.contact.github;
     if (input.contact.linkedin !== undefined) parsedData.linkedin = input.contact.linkedin;
@@ -46,6 +47,7 @@ const buildParsedData = (input: CreateDirectCvInput): NonNullable<typeof cvs.$in
     parsedData.projects = input.projects as unknown as Record<string, unknown>[];
   }
   if (input.certifications) parsedData.certifications = input.certifications as unknown as Record<string, unknown>[];
+  if (input.interests) parsedData.interests = input.interests;
   return parsedData;
 };
 
@@ -529,7 +531,7 @@ export const cvService = {
         const contact = (mergedParsedData as Record<string, unknown>).contact;
         if (contact && typeof contact === "object" && !Array.isArray(contact)) {
           const promoted: Array<keyof NonNullable<typeof cvs.$inferSelect.parsedData>> = [
-            "name", "email", "phone", "portfolio",
+            "name", "email", "phone", "address", "portfolio",
             "github", "linkedin", "facebook", "avatarUrl",
           ];
           for (const key of promoted) {

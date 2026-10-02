@@ -145,6 +145,21 @@
   background-color: #9ca3af;
 }
 
+/**
+ * Ẩn hoàn toàn scrollbar nhưng vẫn cuộn được (wheel/drag/touch) — dùng cho
+ * các hàng pill/tab cuộn ngang (switcher template, tab bar) mà scrollbar
+ * chiếm chiều cao làm lệch layout. Cross-browser: Firefox (scrollbar-width:
+ * none), IE/Edge legacy (-ms-overflow-style), Chromium/Safari
+ * (::-webkit-scrollbar { display: none }).
+ */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 /* Global page scrollbar — scrollbar mỏng cho cả window + mọi scroll nội bộ
  * không có class riêng. Tone slate-300/70 (idle) → slate-400/90 (hover),
  * track trong suốt, thumb bo tròn 2 đầu. Firefox dùng `scrollbar-width`,

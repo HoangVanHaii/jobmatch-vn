@@ -2,14 +2,20 @@
 import { computed } from 'vue';
 import { Phone, Mail, Globe, MapPin, Linkedin, Github } from 'lucide-vue-next';
 import type { CvRenderData } from '@/types/cv';
+import { CV_LABELS, type CvLanguage, type CvSectionKey } from '@/utils/cvLabels';
 
 const props = withDefaults(
   defineProps<{
     data: CvRenderData;
     disableLinks?: boolean;
+    /** Ngôn ngữ tiêu đề section ('vi' | 'en'). Default 'en'. */
+    language?: CvLanguage;
   }>(),
-  { disableLinks: false },
+  { disableLinks: false, language: 'en' },
 );
+
+/** Tra nhãn section theo ngôn ngữ hiện tại — xem [cvLabels.ts](../../utils/cvLabels.ts). */
+const t = (k: CvSectionKey): string => CV_LABELS[props.language][k];
 
 /** Lấy chữ cái đầu làm avatar fallback */
 const initial = (name: string | undefined | null): string => {
@@ -49,14 +55,15 @@ const profileParas = computed<string[]>(() =>
     .filter(Boolean),
 );
 
-/** Chia skills thành 2 nhóm Personal và Technical bám theo thiết kế */
+/** Chia skills thành 2 nhóm Personal và Technical bám theo thiết kế.
+ *  Label lấy từ CV_LABELS theo language — computed re-run khi language đổi. */
 const skillGroups = computed<{ label: string; items: string[] }[]>(() => {
   const all = props.data.skills ?? [];
   if (!all.length) return [];
   const half = Math.ceil(all.length / 2);
   return [
-    { label: 'PERSONAL', items: all.slice(0, half).map((s) => s.name) },
-    { label: 'TECHNICAL', items: all.slice(half).map((s) => s.name) },
+    { label: CV_LABELS[props.language].personal, items: all.slice(0, half).map((s) => s.name) },
+    { label: CV_LABELS[props.language].technical, items: all.slice(half).map((s) => s.name) },
   ].filter((g) => g.items.length);
 });
 
@@ -80,7 +87,7 @@ const addressParts = computed(() => {
   if (parts.length > 1) {
     return { title: parts[0], detail: parts.slice(1).join(', ') };
   }
-  return { title: 'Address / Location', detail: addr };
+  return { title: CV_LABELS[props.language].addressLocation, detail: addr };
 });
 </script>
 
@@ -93,7 +100,7 @@ const addressParts = computed(() => {
         <div class="yellow-top-shape" />
         <div class="name-col">
           <div class="name-text">
-            {{ data.personalInfo.fullName || 'HỌ VÀ TÊN' }}
+            {{ data.personalInfo.fullName || t('fullName') }}
           </div>
           <div v-if="data.personalInfo.position" class="role-text">
             {{ data.personalInfo.position }}
@@ -125,7 +132,7 @@ const addressParts = computed(() => {
             <span>{{ addressParts.detail }}</span>
           </div>
           <div v-else class="company-block">
-            <b>{{ data.title || 'Curriculum Vitae' }}</b>
+            <b>{{ data.title || t('curriculumVitae') }}</b>
           </div>
 
           <!-- Các mục liên hệ kèm icon hộp vàng -->
@@ -151,7 +158,7 @@ const addressParts = computed(() => {
 
         <!-- Khối Profile tóm tắt -->
         <div v-if="profileParas.length" class="profile-section">
-          <h2 class="profile-heading">PROFILE</h2>
+          <h2 class="profile-heading">{{ t('profile') }}</h2>
           <div class="profile-content">
             <p v-for="(p, i) in profileParas" :key="i">
               {{ p }}
@@ -167,7 +174,7 @@ const addressParts = computed(() => {
       <div class="body-left">
         <!-- Work Experience -->
         <section v-if="data.experiences.length" class="section-exp">
-          <h2 class="section-title">WORK EXPERIENCE</h2>
+          <h2 class="section-title">{{ t('experience') }}</h2>
 
           <article
             v-for="(x, i) in data.experiences"
@@ -195,7 +202,7 @@ const addressParts = computed(() => {
 
         <!-- Projects -->
         <section v-if="data.projects.length" class="section-projects">
-          <h2 class="section-title">PROJECTS</h2>
+          <h2 class="section-title">{{ t('projects') }}</h2>
 
           <article
             v-for="(p, i) in data.projects"
@@ -231,7 +238,7 @@ const addressParts = computed(() => {
       <aside class="body-right">
         <!-- Education -->
         <section v-if="data.educations.length" class="section-edu">
-          <h2 class="section-title">EDUCATION</h2>
+          <h2 class="section-title">{{ t('education') }}</h2>
           <div
             v-for="(e, i) in data.educations"
             :key="i"
@@ -248,7 +255,7 @@ const addressParts = computed(() => {
 
         <!-- Skills -->
         <section v-if="skillGroups.length" class="section-skills">
-          <h2 class="section-title">SKILLS</h2>
+          <h2 class="section-title">{{ t('skills') }}</h2>
           <div
             v-for="(group, gi) in skillGroups"
             :key="gi"
@@ -263,7 +270,7 @@ const addressParts = computed(() => {
 
         <!-- References / Certificates -->
         <section v-if="data.certificates.length" class="section-ref">
-          <h2 class="section-title">REFERENCES</h2>
+          <h2 class="section-title">{{ t('references') }}</h2>
           <div
             v-for="(c, i) in data.certificates"
             :key="i"
@@ -272,7 +279,7 @@ const addressParts = computed(() => {
             <span class="ref-name">{{ c.name }}</span>
             <div v-if="c.issuer" class="ref-role">{{ c.issuer }}</div>
             <div v-if="c.date" class="ref-row">
-              <span class="ref-label">Date:</span>
+              <span class="ref-label">{{ t('dateLabel') }}:</span>
               <span class="ref-val">{{ c.date }}</span>
             </div>
           </div>
@@ -280,7 +287,7 @@ const addressParts = computed(() => {
 
         <!-- Activities (nếu có) -->
         <section v-if="data.activities.length" class="section-act">
-          <h2 class="section-title">ACTIVITIES</h2>
+          <h2 class="section-title">{{ t('activities') }}</h2>
           <div
             v-for="(a, i) in data.activities"
             :key="i"
@@ -295,7 +302,7 @@ const addressParts = computed(() => {
 
         <!-- Interests (nếu có) -->
         <section v-if="data.interests?.length" class="section-interests">
-          <h2 class="section-title">INTERESTS</h2>
+          <h2 class="section-title">{{ t('interests') }}</h2>
           <ul class="skill-list">
             <li v-for="(it, i) in data.interests" :key="i">{{ it }}</li>
           </ul>

@@ -14,17 +14,22 @@ import { X, Pencil } from 'lucide-vue-next'
 import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue'
 import { buildRenderData } from '@/composables/cvRenderData'
 import type { Cv } from '@/types/cv'
+import type { CvLanguage } from '@/utils/cvLabels'
 
 const props = defineProps<{
   open: boolean
   /** Mẫu CV demo (source='direct', templateId 1-7) — cung cấp templateId + parsedData. */
   cv: Cv | null
+  /** Ngôn ngữ tiêu đề section trong template ('vi' | 'en'). Default 'en'. */
+  language?: CvLanguage
 }>()
 
 const emit = defineEmits<{
   close: []
   /** User muốn dùng mẫu này để tạo CV. */
   'use-template': [cv: Cv]
+  /** Đổi ngôn ngữ tiêu đề template — dùng với v-model:language ở parent. */
+  'update:language': [lang: CvLanguage]
 }>()
 
 const renderData = computed(() => (props.cv ? buildRenderData(props.cv) : null))
@@ -59,6 +64,24 @@ const templateId = computed<number>(() => props.cv?.templateId ?? 1)
               </div>
             </div>
             <div class="flex shrink-0 items-center gap-2">
+              <!-- Toggle ngôn ngữ tiêu đề template (EN/VI) — nằm ngay trong
+                   lightbox vì khi overlay mở, toggle ngoài trang list bị che.
+                   State nằm ở parent (v-model:language) để đồng bộ cả trang. -->
+              <div class="flex items-center rounded-md bg-white/10 p-0.5">
+                <button
+                  v-for="lang in (['en', 'vi'] as const)"
+                  :key="lang"
+                  type="button"
+                  class="inline-flex h-7 items-center rounded px-2.5 text-[11px] font-semibold uppercase transition-colors"
+                  :class="language === lang
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-white/70 hover:text-white'"
+                  :aria-pressed="language === lang"
+                  @click="emit('update:language', lang)"
+                >
+                  {{ lang }}
+                </button>
+              </div>
               <button
                 type="button"
                 class="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5b4eea] px-3.5 text-[12px] font-medium text-white shadow-sm transition-colors hover:bg-[#4a3ed1]"
@@ -80,7 +103,11 @@ const templateId = computed<number>(() => props.cv?.templateId ?? 1)
 
           <!-- ===== Sheet A4 — cùng khung trang /test6 ===== -->
           <div class="overflow-hidden rounded-lg bg-white shadow-xl ring-1 ring-slate-900/5">
-            <CVTemplateRenderer :template-id="templateId" :data="renderData" />
+            <CVTemplateRenderer
+              :template-id="templateId"
+              :data="renderData"
+              :language="language"
+            />
           </div>
         </div>
       </div>

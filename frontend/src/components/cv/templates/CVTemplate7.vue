@@ -12,14 +12,20 @@
 import { computed } from 'vue';
 import { Phone, Mail, MapPin, Globe } from 'lucide-vue-next';
 import type { CvRenderData } from '@/types/cv';
+import { CV_LABELS, type CvLanguage, type CvSectionKey } from '@/utils/cvLabels';
 
 const props = withDefaults(
   defineProps<{
     data: CvRenderData;
     disableLinks?: boolean;
+    /** Ngôn ngữ tiêu đề section ('vi' | 'en' — default 'en'). */
+    language?: CvLanguage;
   }>(),
-  { disableLinks: false },
+  { disableLinks: false, language: 'en' },
 );
+
+/** Tra nhãn section theo ngôn ngữ hiện tại — xem [cvLabels.ts](../../utils/cvLabels.ts). */
+const t = (k: CvSectionKey): string => CV_LABELS[props.language][k];
 
 /** Khoảng thời gian (start – end) */
 const dateRange = (start: string | undefined, end: string | undefined): string => {
@@ -124,7 +130,7 @@ const webDisplay = computed<string>(() => {
       <main class="body-left">
         <!-- WORK EXPERIENCE -->
         <section v-if="data.experiences?.length" class="section-block">
-          <h3 class="section-heading">WORK EXPERIENCE</h3>
+          <h3 class="section-heading">{{ t('experience') }}</h3>
           <div class="exp-list">
             <article v-for="(exp, i) in data.experiences" :key="i" class="exp-item">
               <h4 class="exp-role">{{ exp.position }}</h4>
@@ -144,7 +150,7 @@ const webDisplay = computed<string>(() => {
 
         <!-- PROJECTS -->
         <section v-if="data.projects?.length" class="section-block">
-          <h3 class="section-heading">PROJECTS</h3>
+          <h3 class="section-heading">{{ t('projects') }}</h3>
           <div class="exp-list">
             <article v-for="(proj, i) in data.projects" :key="i" class="exp-item">
               <h4 class="exp-role">{{ proj.name }}</h4>
@@ -166,7 +172,7 @@ const webDisplay = computed<string>(() => {
 
         <!-- ACTIVITIES -->
         <section v-if="data.activities?.length" class="section-block">
-          <h3 class="section-heading">ACTIVITIES</h3>
+          <h3 class="section-heading">{{ t('activities') }}</h3>
           <div class="exp-list">
             <article v-for="(act, i) in data.activities" :key="i" class="exp-item">
               <h4 class="exp-role">{{ act.name }}</h4>
@@ -182,7 +188,7 @@ const webDisplay = computed<string>(() => {
       <aside class="body-right">
         <!-- SKILLS -->
         <section v-if="data.skills?.length" class="section-block">
-          <h3 class="section-heading">SKILLS</h3>
+          <h3 class="section-heading">{{ t('skills') }}</h3>
           <div class="skills-grid">
             <span v-for="(s, i) in data.skills" :key="i" class="skill-pill">
               {{ s.name }}
@@ -192,10 +198,10 @@ const webDisplay = computed<string>(() => {
 
         <!-- EDUCATION -->
         <section v-if="data.educations?.length" class="section-block">
-          <h3 class="section-heading">EDUCATION</h3>
+          <h3 class="section-heading">{{ t('education') }}</h3>
           <div class="edu-list">
             <article v-for="(edu, i) in data.educations" :key="i" class="edu-item">
-              <h4 class="edu-degree">{{ edu.degree || edu.major || 'Degree' }}</h4>
+              <h4 class="edu-degree">{{ edu.degree || edu.major || t('degree') }}</h4>
               <div v-if="edu.startYear || edu.endYear" class="edu-years">
                 {{ edu.startYear ? `${edu.startYear}${edu.endYear ? `-${edu.endYear}` : ''}` : (edu.endYear ?? '') }}
               </div>
@@ -207,7 +213,7 @@ const webDisplay = computed<string>(() => {
 
         <!-- CERTIFICATES / REFERENCES -->
         <section v-if="data.certificates?.length" class="section-block">
-          <h3 class="section-heading">CERTIFICATES</h3>
+          <h3 class="section-heading">{{ t('certificates') }}</h3>
           <div class="ref-grid">
             <article v-for="(cert, i) in data.certificates" :key="i" class="ref-card">
               <div class="ref-title-row">
@@ -220,7 +226,7 @@ const webDisplay = computed<string>(() => {
           </div>
         </section>
         <section v-else class="section-block">
-          <h3 class="section-heading">REFERENCES</h3>
+          <h3 class="section-heading">{{ t('references') }}</h3>
           <div class="ref-grid">
             <article class="ref-card">
               <div class="ref-title-row">
@@ -243,7 +249,7 @@ const webDisplay = computed<string>(() => {
 
         <!-- INTERESTS -->
         <section v-if="data.interests?.length" class="section-block">
-          <h3 class="section-heading">INTERESTS</h3>
+          <h3 class="section-heading">{{ t('interests') }}</h3>
           <div class="skills-grid">
             <span v-for="(it, i) in data.interests" :key="i" class="skill-pill">
               {{ it }}

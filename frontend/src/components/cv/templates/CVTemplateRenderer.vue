@@ -23,6 +23,7 @@ import CVTemplate5 from './CVTemplate5.vue';
 import CVTemplate6 from './CVTemplate6.vue';
 import CVTemplate7 from './CVTemplate7.vue';
 import type { CvRenderData } from '@/types/cv';
+import type { CvLanguage } from '@/utils/cvLabels';
 
 const props = withDefaults(
   defineProps<{
@@ -30,8 +31,10 @@ const props = withDefaults(
     data: CvRenderData;
     /** true = render text-only (no <a>). Default false để giữ behavior cũ. */
     disableLinks?: boolean;
+    /** Ngôn ngữ tiêu đề section ('vi' | 'en'). Default 'en'. */
+    language?: CvLanguage;
   }>(),
-  { disableLinks: false },
+  { disableLinks: false, language: 'en' },
 );
 
 /** Map templateId → component. */
@@ -56,5 +59,6 @@ const ResolvedTemplate = computed(() => {
     :is="ResolvedTemplate"
     :data="data"
     :disable-links="disableLinks"
+    :language="language"
   />
 </template>

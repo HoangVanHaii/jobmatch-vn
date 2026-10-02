@@ -17,6 +17,9 @@ const directCvContactSchema = z.object({
   name: z.string().trim().max(200).optional(),
   email: z.string().trim().email().max(200).optional(),
   phone: z.string().trim().max(50).optional(),
+  // Địa chỉ (template 1/6 render khối "Address / Location", template 2 render
+  // contact MapPin). Không phải URL nên không nullable-patch.
+  address: z.string().trim().max(500).optional(),
   // URL fields cho phép null: theo RFC 7396 (JSON Merge Patch), null = "xoá field".
   // Cần thiết cho PATCH update direct CV khi user muốn clear 1 link.
   portfolio: z.string().url().max(2000).nullable().optional(),
@@ -85,12 +88,14 @@ const directCvContentSchema = z.object({
   languages: z.array(directCvLanguageSchema).max(10).optional(),
   projects: z.array(directCvProjectSchema).max(20).optional(),
   certifications: z.array(directCvCertificationSchema).max(20).optional(),
+  /** Sở thích — list string đơn giản, template render section INTERESTS. */
+  interests: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
 });
 
 
 export const createDirectCvSchema = z.object({
   title: z.string().trim().min(1).max(200),
-  templateId: z.number().int().min(1).max(5),
+  templateId: z.number().int().min(1).max(7),
   isPrimary: z.boolean().optional(),
 }).merge(directCvContentSchema);
 

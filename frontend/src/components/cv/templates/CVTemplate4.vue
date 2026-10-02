@@ -26,8 +26,15 @@ import {
   Phone, Mail, GraduationCap, Briefcase, Star, FolderGit2,
 } from 'lucide-vue-next';
 import type { CvRenderData } from '@/types/cv';
+import { CV_LABELS, type CvLanguage, type CvSectionKey } from '@/utils/cvLabels';
 
-defineProps<{ data: CvRenderData }>();
+const props = withDefaults(
+  defineProps<{ data: CvRenderData; language?: CvLanguage }>(),
+  { language: 'en' },
+);
+
+/** Tra nhãn section theo ngôn ngữ hiện tại — xem [cvLabels.ts](../../utils/cvLabels.ts). */
+const t = (k: CvSectionKey): string => CV_LABELS[props.language][k];
 
 /** Chữ cái đầu của tên làm avatar fallback. */
 const initial = (name: string | undefined | null): string => {
@@ -55,13 +62,13 @@ const initial = (name: string | undefined | null): string => {
           class="font-bold uppercase leading-tight break-words"
           style="font-size: 32px; color: #164D70; letter-spacing: 0.5px;"
         >
-          {{ data.personalInfo.fullName || 'HỌ VÀ TÊN' }}
+          {{ data.personalInfo.fullName || t('fullName') }}
         </h1>
         <p
           class="font-bold uppercase mt-2 break-words"
           style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
         >
-          {{ data.personalInfo.position || 'Vị trí ứng tuyển' }}
+          {{ data.personalInfo.position || t('desiredPosition') }}
         </p>
 
         <!-- Đường ngang navy ngắn dưới job title -->
@@ -137,7 +144,7 @@ const initial = (name: string | undefined | null): string => {
               class="font-bold uppercase whitespace-nowrap"
               style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
             >
-              Mục tiêu nghề nghiệp
+              {{ t('objective') }}
             </span>
             <span class="flex-1 h-[1.5px]" style="background: #164D70;" />
           </h2>
@@ -156,7 +163,7 @@ const initial = (name: string | undefined | null): string => {
               class="font-bold uppercase whitespace-nowrap"
               style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
             >
-              Kỹ năng
+              {{ t('skills') }}
             </span>
             <span class="flex-1 h-[1.5px]" style="background: #164D70;" />
           </h2>
@@ -182,7 +189,7 @@ const initial = (name: string | undefined | null): string => {
               class="font-bold uppercase whitespace-nowrap"
               style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
             >
-              Chứng chỉ
+              {{ t('certificates') }}
             </span>
             <span class="flex-1 h-[1.5px]" style="background: #164D70;" />
           </h2>
@@ -210,7 +217,7 @@ const initial = (name: string | undefined | null): string => {
               class="font-bold uppercase whitespace-nowrap"
               style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
             >
-              Sở thích
+              {{ t('interests') }}
             </span>
             <span class="flex-1 h-[1.5px]" style="background: #164D70;" />
           </h2>
@@ -243,7 +250,7 @@ const initial = (name: string | undefined | null): string => {
               class="font-bold uppercase whitespace-nowrap"
               style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
             >
-              Trình độ học vấn
+              {{ t('education') }}
             </span>
             <span class="flex-1 h-[1.5px]" style="background: #164D70;" />
           </h2>
@@ -256,14 +263,14 @@ const initial = (name: string | undefined | null): string => {
                   class="text-neutral-500 italic whitespace-nowrap"
                   style="font-size: 11.5px;"
                 >
-                  {{ e.startYear || '' }}<span v-if="e.startYear || e.endYear"> — </span>{{ e.endYear || 'Nay' }}
+                  {{ e.startYear || '' }}<span v-if="e.startYear || e.endYear"> — </span>{{ e.endYear || t('present') }}
                 </span>
               </div>
               <p
                 v-if="e.major || e.degree"
                 class="text-neutral-700 leading-tight mt-1 break-words"
               >
-                <span v-if="e.major">Chuyên ngành: {{ e.major }}</span>
+                <span v-if="e.major">{{ t('major') }}: {{ e.major }}</span>
                 <span v-if="e.major && e.degree"> — </span>
                 <span v-if="e.degree">{{ e.degree }}</span>
               </p>
@@ -286,7 +293,7 @@ const initial = (name: string | undefined | null): string => {
               class="font-bold uppercase whitespace-nowrap"
               style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
             >
-              Kinh nghiệm làm việc
+              {{ t('experience') }}
             </span>
             <span class="flex-1 h-[1.5px]" style="background: #164D70;" />
           </h2>
@@ -299,7 +306,7 @@ const initial = (name: string | undefined | null): string => {
                   class="text-neutral-500 italic whitespace-nowrap"
                   style="font-size: 11.5px;"
                 >
-                  {{ x.startDate || '' }}<span v-if="x.startDate || x.endDate"> — </span>{{ x.endDate || 'Nay' }}
+                  {{ x.startDate || '' }}<span v-if="x.startDate || x.endDate"> — </span>{{ x.endDate || t('present') }}
                 </span>
               </div>
               <p
@@ -326,7 +333,7 @@ const initial = (name: string | undefined | null): string => {
               class="font-bold uppercase whitespace-nowrap"
               style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
             >
-              Hoạt động
+              {{ t('activities') }}
             </span>
             <span class="flex-1 h-[1.5px]" style="background: #164D70;" />
           </h2>
@@ -346,7 +353,7 @@ const initial = (name: string | undefined | null): string => {
                 v-if="a.role"
                 class="text-neutral-700 leading-tight mt-1 break-words"
               >
-                Vai trò: {{ a.role }}
+                {{ t('role') }}: {{ a.role }}
               </p>
               <p
                 v-if="a.description"
@@ -367,7 +374,7 @@ const initial = (name: string | undefined | null): string => {
               class="font-bold uppercase whitespace-nowrap"
               style="font-size: 15px; color: #164D70; letter-spacing: 1px;"
             >
-              Dự án tham gia
+              {{ t('projects') }}
             </span>
             <span class="flex-1 h-[1.5px]" style="background: #164D70;" />
           </h2>

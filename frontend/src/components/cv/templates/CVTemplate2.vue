@@ -20,8 +20,19 @@
 import { computed } from 'vue';
 import { Phone, Mail, MapPin } from 'lucide-vue-next';
 import type { CvRenderData } from '@/types/cv';
+import { CV_LABELS, type CvLanguage, type CvSectionKey } from '@/utils/cvLabels';
 
-const props = defineProps<{ data: CvRenderData }>();
+const props = withDefaults(
+  defineProps<{
+    data: CvRenderData;
+    /** Ngôn ngữ tiêu đề section ('vi' | 'en'). Default 'en'. */
+    language?: CvLanguage;
+  }>(),
+  { language: 'en' },
+);
+
+/** Tra nhãn section theo ngôn ngữ hiện tại — xem [cvLabels.ts](../../utils/cvLabels.ts). */
+const t = (k: CvSectionKey): string => CV_LABELS[props.language][k];
 
 /** Accent vàng mustard của design. */
 const ACCENT = '#F2B72E';
@@ -80,13 +91,13 @@ const contacts = computed(() => {
               color: #111827;
             "
           >
-            {{ data.personalInfo.fullName || 'Họ và Tên' }}
+            {{ data.personalInfo.fullName || t('fullName') }}
           </h1>
           <p
             class="uppercase m-0"
             style="margin-top: 4px; font-size: 10px; font-weight: 600; letter-spacing: 4px; color: #6b7280;"
           >
-            {{ data.personalInfo.position || 'Vị trí ứng tuyển' }}
+            {{ data.personalInfo.position || t('desiredPosition') }}
           </p>
         </div>
 
@@ -121,7 +132,7 @@ const contacts = computed(() => {
               class="uppercase m-0 font-bold"
               style="font-size: 14px; letter-spacing: 2px; color: #111827;"
             >
-              Education
+              {{ t('education') }}
             </h2>
             <div class="flex items-center" style="margin: 6px 0 12px;">
               <span :style="{ height: '3px', width: '24px', background: ACCENT }" />
@@ -152,7 +163,7 @@ const contacts = computed(() => {
               class="uppercase m-0 font-bold"
               style="font-size: 14px; letter-spacing: 2px; color: #111827;"
             >
-              Skills
+              {{ t('skills') }}
             </h2>
             <div class="flex items-center" style="margin: 6px 0 12px;">
               <span :style="{ height: '3px', width: '24px', background: ACCENT }" />
@@ -177,7 +188,7 @@ const contacts = computed(() => {
               class="uppercase m-0 font-bold"
               style="font-size: 14px; letter-spacing: 2px; color: #111827;"
             >
-              Activities
+              {{ t('activities') }}
             </h2>
             <div class="flex items-center" style="margin: 6px 0 12px;">
               <span :style="{ height: '3px', width: '24px', background: ACCENT }" />
@@ -214,7 +225,7 @@ const contacts = computed(() => {
               class="uppercase m-0 font-bold"
               style="font-size: 14px; letter-spacing: 2px; color: #111827;"
             >
-              Work Experience
+              {{ t('experience') }}
             </h2>
             <div class="flex items-center" style="margin: 6px 0 14px;">
               <span :style="{ height: '3px', width: '24px', background: ACCENT }" />
@@ -268,7 +279,7 @@ const contacts = computed(() => {
               class="uppercase m-0 font-bold"
               style="font-size: 14px; letter-spacing: 2px; color: #111827;"
             >
-              Certificates
+              {{ t('certificates') }}
             </h2>
             <div class="flex items-center" style="margin: 6px 0 14px;">
               <span :style="{ height: '3px', width: '24px', background: ACCENT }" />
@@ -295,7 +306,7 @@ const contacts = computed(() => {
               class="uppercase m-0 font-bold"
               style="font-size: 14px; letter-spacing: 2px; color: #111827;"
             >
-              Interest
+              {{ t('interests') }}
             </h2>
             <div class="flex items-center" style="margin: 6px 0 14px;">
               <span :style="{ height: '3px', width: '24px', background: ACCENT }" />
