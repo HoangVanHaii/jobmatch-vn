@@ -2,7 +2,7 @@ import axios from "axios";
 import crypto from "crypto";
 import { PayOS } from "@payos/node";
 import { db } from "../config/database";
-import { payments, plans, subscriptions } from "../db/schema";
+import { payments, plans } from "../db/schema";
 import { eq, and, sql, desc, lt, gt, asc } from "drizzle-orm";
 import { AppError } from "../middleware/errorHandler";
 import { env } from "../config/env";
@@ -455,8 +455,10 @@ export const paymentService = {
         // Không leak ra response → tránh lộ internal PayOS payload.
       })
       .from(payments)
-      .leftJoin(subscriptions, eq(payments.subscriptionId, subscriptions.id))
-      .leftJoin(plans, eq(subscriptions.planId, plans.id))
+      // LEFT JOIN qua planId TRỰC TIẾP (như list) — KHÔNG join qua subscriptions,
+      // vì đơn PENDING chưa có subscriptionId (chỉ tạo sau khi paid) → nếu join
+      // qua subscriptions thì planCode/planName = null → modal mất tên gói.
+      .leftJoin(plans, eq(payments.planId, plans.id))
       .where(eq(payments.id, id))
       .limit(1);
 

@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
-import { Loader2, XCircle, Copy, CheckCircle2, CreditCard, Calendar, Hash, ExternalLink, Receipt, AlertTriangle } from 'lucide-vue-next';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { Loader2, X, XCircle, Copy, CheckCircle2, CreditCard, Calendar, Clock, Hash, ExternalLink, Receipt, AlertTriangle } from 'lucide-vue-next';
 import QRCode from 'qrcode';
 import { paymentApi } from '@services/payment.api';
 import { connectSocket } from '@services/socket';
 import { usePaymentUpdates } from '@composables/usePaymentUpdates';
 import type { PaymentWithPlan } from '@/types/payment';
 import type { PaymentStatus } from '@/types/payment';
-import type { PayosLinkInfo } from '@/types/payment';
 
 const props = defineProps<{
     open: boolean;
@@ -31,11 +30,16 @@ const qrDataUrl = ref<string>('');
 const cancelling = ref(false);
 /** Step 1 của cancel: show inline confirmation UI (thay vì window.confirm). */
 const confirmingCancel = ref(false);
+/** Card modal — focus vào đây khi mở (a11y: dialog nhận focus). */
+const modalCard = ref<HTMLElement | null>(null);
+/** Element đã focus trước khi mở modal — trả focus lại khi đóng (a11y). */
+let lastFocused: HTMLElement | null = null;
 
 async function fetchDetail(id: string) {
     loading.value = true;
     errorMsg.value = '';
-    data.value = null;
+    // Refetch (realtime paid/failed): giữ nội dung cũ trong lúc tải để không flash spinner
+    if (!data.value || data.value.id !== id) data.value = null;
     try {
         const result = await paymentApi.getById(id);
         data.value = result;
@@ -51,13 +55,19 @@ watch(
     () => [props.open, props.paymentId] as const,
     async ([isOpen, id]) => {
         if (isOpen && id) {
+            lastFocused = document.activeElement as HTMLElement | null;
             await fetchDetail(id);
+            // Focus vào card modal khi mở (a11y)
+            nextTick(() => modalCard.value?.focus());
         } else if (!isOpen) {
             data.value = null;
             errorMsg.value = '';
             loading.value = false;
             copied.value = false;
             qrDataUrl.value = '';
+            // Trả focus về element đã mở modal (a11y)
+            lastFocused?.focus?.();
+            lastFocused = null;
         }
     },
 );
@@ -100,7 +110,25 @@ usePaymentUpdates(currentOrderCode, {
 onMounted(() => {
     // Defensive — NotificationBell thường đã connect socket rồi, nhưng gọi lại để idempotent an toàn.
     connectSocket();
+    document.addEventListener('keydown', onKeydown);
 });
+
+onUnmounted(() => {
+    document.removeEventListener('keydown', onKeydown);
+});
+
+/** Tên gói hiển thị NGUYÊN VĂN theo database (plans.name do BE trả về). */
+const planDisplayName = computed(() => data.value?.planName || '—');
+
+/** Escape đóng modal — nếu đang ở bước confirm hủy thì chỉ gỡ confirm. */
+function onKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !props.open) return;
+    if (confirmingCancel.value) {
+        dismissCancel();
+        return;
+    }
+    close();
+}
 
 function openPayOS() {
     const url = data.value?.payosInfo?.checkoutUrl;
@@ -182,15 +210,16 @@ function formatDateTime(iso: string | null | undefined): string {
     });
 }
 
-// Local copy of payStatusBadge (same shape used in BillingHistoryView lines ~195-201).
-// Duplicated intentionally to avoid cross-component coupling.
+// Local copy of payStatusBadge (same shape used in BillingHistoryView).
+// Duplicated intentionally to avoid cross-component coupling — giữ cùng palette
+// slate + ring với danh sách để 1 trạng thái không có 2 màu tuỳ nơi xem.
 const payStatusBadge: Record<PaymentStatus, { label: string; cls: string }> = {
-    paid:      { label: 'Thành công',  cls: 'bg-green-100 text-green-700' },
-    pending:   { label: 'Đang xử lý', cls: 'bg-blue-100 text-blue-700' },
-    failed:    { label: 'Thất bại',   cls: 'bg-red-100 text-red-700' },
-    cancelled: { label: 'Đã huỷ',     cls: 'bg-gray-100 text-gray-600' },
-    refunded:  { label: 'Đã hoàn tiền', cls: 'bg-purple-100 text-purple-700' },
-    expired:   { label: 'Hết hạn',    cls: 'bg-amber-100 text-amber-700' },
+    paid:      { label: 'Thành công',  cls: 'bg-green-50 text-green-700 ring-1 ring-green-200' },
+    pending:   { label: 'Đang xử lý', cls: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' },
+    failed:    { label: 'Thất bại',   cls: 'bg-red-50 text-red-700 ring-1 ring-red-200' },
+    cancelled: { label: 'Đã huỷ',     cls: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200' },
+    refunded:  { label: 'Đã hoàn tiền', cls: 'bg-purple-50 text-purple-700 ring-1 ring-purple-200' },
+    expired:   { label: 'Hết hạn',    cls: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' },
 };
 </script>
 
@@ -198,28 +227,35 @@ const payStatusBadge: Record<PaymentStatus, { label: string; cls: string }> = {
     <Teleport to="body">
         <div
             v-if="open"
-            class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto"
+            class="fixed inset-0 z-50 bg-black/40 flex justify-center p-4 overflow-y-auto overscroll-contain"
             @click.self="close"
         >
-            <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full my-8">
-                <!-- Header -->
-                <div class="flex items-center justify-between p-5 border-b">
-                    <h2 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <div
+                ref="modalCard"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="payment-detail-title"
+                tabindex="-1"
+                class="bg-white rounded-xl shadow-2xl w-full max-w-[560px] my-auto outline-none"
+            >
+                <!-- Header (~56px) -->
+                <div class="flex items-center justify-between px-5 py-3 border-b">
+                    <h2 id="payment-detail-title" class="text-lg font-semibold text-gray-900 flex items-center gap-2">
                         <Receipt class="w-5 h-5 text-primary-600" />
                         Chi tiết thanh toán
                     </h2>
                     <button
                         type="button"
-                        class="text-gray-400 hover:text-gray-600 transition"
+                        class="p-1.5 -m-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
                         aria-label="Đóng"
                         @click="close"
                     >
-                        ✕
+                        <X class="w-5 h-5" />
                     </button>
                 </div>
 
-                <!-- Body -->
-                <div class="p-5 min-h-[200px]">
+                <!-- Body — compact, không scroll nội bộ -->
+                <div class="px-5 py-4 space-y-3">
                     <!-- Loading -->
                     <div v-if="loading" class="flex items-center justify-center gap-2 py-12 text-gray-500">
                         <Loader2 class="w-5 h-5 animate-spin" />
@@ -233,123 +269,142 @@ const payStatusBadge: Record<PaymentStatus, { label: string; cls: string }> = {
                     </div>
 
                     <!-- Data -->
-                    <div v-else-if="data" class="space-y-4">
-                        <!-- Plan + amount + QR (QR chen vào bên phải khi pending + có qrCode) -->
-                        <div class="bg-gray-50 rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-4">
+                    <div v-else-if="data" class="space-y-3">
+                        <!-- Thông tin gói + QR bên phải (QR chỉ với đơn pending có qrCode), QR ~96px -->
+                        <div class="rounded-xl border border-gray-100 bg-gray-50 p-4 flex gap-4">
                             <div class="flex-1 min-w-0">
-                                <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">Gói</p>
-                                <p class="text-base font-semibold text-gray-900">
-                                    {{ data.planName ?? '—' }}
+                                <p class="text-xs font-medium uppercase tracking-wider text-gray-400">Gói</p>
+                                <div class="mt-1 flex items-baseline justify-between gap-3">
+                                    <p class="text-base font-semibold text-gray-900 truncate">{{ planDisplayName }}</p>
                                     <span
                                         v-if="data.planDurationDays"
-                                        class="ml-2 text-xs text-gray-500 font-normal"
-                                    >
-                                        {{ data.planDurationDays }} ngày
-                                    </span>
-                                </p>
-                                <p class="text-2xl font-bold text-primary-700 mt-2">
-                                    {{ formatPrice(data.amountVnd) }}
-                                </p>
+                                        class="shrink-0 text-xs text-gray-500"
+                                    >{{ data.planDurationDays }} ngày</span>
+                                </div>
+                                <p class="mt-1.5 text-2xl font-bold text-primary-700">{{ formatPrice(data.amountVnd) }}</p>
                             </div>
 
-                            <!-- QR bên phải (chỉ khi pending + có qrCode) -->
                             <div
                                 v-if="data.status === 'pending' && data.payosInfo?.qrCode"
-                                class="shrink-0 self-center sm:self-start"
+                                class="shrink-0 w-[96px] self-center text-center"
                             >
                                 <img
                                     v-if="qrDataUrl"
                                     :src="qrDataUrl"
                                     alt="QR thanh toán PayOS"
-                                    class="w-24 h-24 border border-gray-200 rounded p-1 bg-white"
+                                    class="w-[96px] h-[96px] rounded-lg border border-gray-200 bg-white"
                                 />
                                 <div
                                     v-else
-                                    class="w-24 h-24 border border-gray-200 rounded bg-white flex items-center justify-center text-[10px] text-gray-400"
+                                    class="w-[96px] h-[96px] rounded-lg bg-white flex items-center justify-center text-[10px] text-gray-400"
                                 >
                                     Tạo QR...
                                 </div>
-                                <p class="text-[10px] text-gray-500 text-center mt-1">
-                                    Quét QR
-                                </p>
+                                <p class="mt-1 text-[10px] text-gray-500">Quét QR</p>
                             </div>
                         </div>
 
-                        <!-- Status -->
-                        <div class="flex items-center justify-between border-t pt-4">
+                        <!-- Hướng dẫn thanh toán PayOS — chỉ hiện với đơn pending -->
+                        <div
+                            v-if="data.status === 'pending'"
+                            class="rounded-lg border border-blue-100 bg-blue-50/50 p-2.5 space-y-1.5 text-sm"
+                        >
+                            <p class="font-medium text-slate-900 flex items-center gap-2">
+                                <CreditCard class="w-4 h-4 text-blue-600" />
+                                Chuyển khoản theo thông tin sau:
+                            </p>
+                            <dl class="space-y-1.5 text-gray-700">
+                                <div v-if="data.payosInfo?.accountNumber" class="flex justify-between gap-3">
+                                    <dt class="text-gray-500">Số tài khoản</dt>
+                                    <dd class="font-mono font-medium">{{ data.payosInfo.accountNumber }}</dd>
+                                </div>
+                                <div v-if="data.payosInfo?.accountName" class="flex justify-between gap-3">
+                                    <dt class="text-gray-500">Chủ tài khoản</dt>
+                                    <dd class="font-medium">{{ data.payosInfo.accountName }}</dd>
+                                </div>
+                                <div v-if="data.payosInfo?.description" class="flex justify-between gap-3">
+                                    <dt class="text-gray-500">Nội dung CK</dt>
+                                    <dd class="font-mono font-medium">{{ data.payosInfo.description }}</dd>
+                                </div>
+                            </dl>
+                            <button
+                                v-if="data.payosInfo?.checkoutUrl"
+                                type="button"
+                                class="w-full inline-flex items-center justify-center gap-2 px-4 py-1.5 rounded-lg bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition"
+                                @click="openPayOS"
+                            >
+                                <ExternalLink class="w-4 h-4" />
+                                Mở trang thanh toán PayOS
+                            </button>
+                        </div>
+
+                        <!-- Trạng thái — cùng lưới 2 cột với meta bên dưới: badge bắt đầu
+                             tại cột 2 (cùng trục dọc "Tạo lúc"), không đẩy sát mép phải -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 items-center">
                             <span class="text-sm text-gray-600">Trạng thái</span>
                             <span
+                                class="justify-self-start inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium"
                                 :class="[
-                                    'inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium',
-                                    payStatusBadge[data.status]?.cls ?? 'bg-gray-100 text-gray-600',
+                                    payStatusBadge[data.status]?.cls ?? 'bg-slate-100 text-slate-600 ring-1 ring-slate-200',
                                 ]"
                             >
                                 <CheckCircle2 v-if="data.status === 'paid'" class="w-3.5 h-3.5" />
                                 <XCircle v-else-if="data.status === 'failed'" class="w-3.5 h-3.5" />
-                                <Loader2 v-else-if="data.status === 'pending'" class="w-3.5 h-3.5 animate-spin" />
+                                <!-- Clock tĩnh — spinner chỉ dành cho action loading, không dùng cho badge trạng thái -->
+                                <Clock v-else-if="data.status === 'pending'" class="w-3.5 h-3.5" />
                                 {{ payStatusBadge[data.status]?.label ?? data.status }}
                             </span>
                         </div>
 
                         <!-- (Pending QR đã được đặt trong card Gói+giá ở trên) -->
 
-                        <!-- Order code with copy -->
-                        <div class="flex items-center justify-between border-t pt-4">
-                            <span class="text-sm text-gray-600 flex items-center gap-1.5">
-                                <Hash class="w-4 h-4" />
-                                Mã đơn
-                            </span>
-                            <div class="flex items-center gap-2">
-                                <span class="font-mono text-sm text-gray-900">{{ data.orderCode }}</span>
-                                <button
-                                    type="button"
-                                    class="text-gray-400 hover:text-primary-600 transition"
-                                    :title="copied ? 'Đã copy' : 'Copy'"
-                                    @click="copyOrderCode(data.orderCode)"
-                                >
-                                    <CheckCircle2 v-if="copied" class="w-4 h-4 text-green-600" />
-                                    <Copy v-else class="w-4 h-4" />
-                                </button>
+                        <!-- Meta: lưới 2 cột gọn (nhãn nhỏ + giá trị), không divider mỗi hàng -->
+                        <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div class="min-w-0">
+                                <dt class="text-xs text-gray-500 flex items-center gap-1.5">
+                                    <Hash class="w-3.5 h-3.5" />
+                                    Mã đơn
+                                </dt>
+                                <dd class="mt-1 flex items-center gap-2 min-w-0">
+                                    <span class="font-mono text-gray-900 truncate">{{ data.orderCode }}</span>
+                                    <button
+                                        type="button"
+                                        class="shrink-0 text-gray-400 hover:text-primary-600 transition"
+                                        :title="copied ? 'Đã copy' : 'Copy'"
+                                        @click="copyOrderCode(data.orderCode)"
+                                    >
+                                        <CheckCircle2 v-if="copied" class="w-4 h-4 text-green-600" />
+                                        <Copy v-else class="w-4 h-4" />
+                                    </button>
+                                </dd>
                             </div>
-                        </div>
-
-                        <!-- PayOS ref -->
-                        <div class="flex items-center justify-between border-t pt-4">
-                            <span class="text-sm text-gray-600 flex items-center gap-1.5">
-                                <ExternalLink class="w-4 h-4" />
-                                PayOS ref
-                            </span>
-                            <span class="font-mono text-sm text-gray-900">
-                                {{ data.payosTxnId ?? '—' }}
-                            </span>
-                        </div>
-
-                        <!-- Subscription ID -->
-                        <div class="flex items-center justify-between border-t pt-4">
-                            <span class="text-sm text-gray-600 flex items-center gap-1.5">
-                                <CreditCard class="w-4 h-4" />
-                                Subscription
-                            </span>
-                            <span class="font-mono text-sm text-gray-900">
-                                {{ data.subscriptionId ?? '—' }}
-                            </span>
-                        </div>
-
-                        <!-- Created at -->
-                        <div class="flex items-center justify-between border-t pt-4">
-                            <span class="text-sm text-gray-600 flex items-center gap-1.5">
-                                <Calendar class="w-4 h-4" />
-                                Tạo lúc
-                            </span>
-                            <span class="text-sm text-gray-900">
-                                {{ formatDateTime(data.createdAt) }}
-                            </span>
-                        </div>
+                            <div class="min-w-0">
+                                <dt class="text-xs text-gray-500 flex items-center gap-1.5">
+                                    <Calendar class="w-3.5 h-3.5" />
+                                    Tạo lúc
+                                </dt>
+                                <dd class="mt-1 text-gray-900">{{ formatDateTime(data.createdAt) }}</dd>
+                            </div>
+                            <div class="min-w-0">
+                                <dt class="text-xs text-gray-500 flex items-center gap-1.5">
+                                    <ExternalLink class="w-3.5 h-3.5" />
+                                    PayOS ref
+                                </dt>
+                                <dd class="mt-1 font-mono text-gray-900">{{ data.payosTxnId ?? '—' }}</dd>
+                            </div>
+                            <div class="min-w-0">
+                                <dt class="text-xs text-gray-500 flex items-center gap-1.5">
+                                    <Calendar class="w-3.5 h-3.5" />
+                                    Cập nhật
+                                </dt>
+                                <dd class="mt-1 text-gray-900">{{ data.updatedAt ? formatDateTime(data.updatedAt) : '—' }}</dd>
+                            </div>
+                        </dl>
                     </div>
                 </div>
 
                 <!-- Footer -->
-                <div class="p-5 border-t bg-gray-50 rounded-b-xl">
+                <div class="px-5 py-3 border-t bg-gray-50 rounded-b-xl">
                     <!--
                       Mode 1 (bình thường): 2 buttons — Hủy thanh toán (nếu pending) + Đóng.
                       Mode 2 (đang confirm hủy): thay thế footer bằng confirm card với icon + 2 buttons.
