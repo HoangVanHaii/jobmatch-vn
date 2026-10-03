@@ -3,7 +3,7 @@
  * PricingView — bảng giá các gói dịch vụ. Dùng chung cho candidate + employer.
  *
  * Phân nhánh theo `authStore.user?.role`:
- *  - `candidate`: features = apply + ai_cv_parsed + ai_cv_analysis
+ *  - `candidate`: features = ai_cv_match + ai_cv_parsed + ai_cv_analysis
  *  - `employer`:  features = job_post + job_generation (đơn giản hoá theo yêu cầu)
  *
  * Theme: cả 2 role dùng chung palette blue/purple (đồng bộ với toàn site).
@@ -19,7 +19,6 @@ import { usePlanStore } from '@stores/plan';
 import { paymentApi } from '@services/payment.api';
 import PaymentQRModal from '@components/payment/PaymentQRModal.vue';
 import {
-  Send,
   FileSearch,
   Sparkles,
   Briefcase,
@@ -103,7 +102,6 @@ const SHARED_THEME = {
 };
 
 const FEATURE_ICON_BASE: Record<CountableQuotaKey, typeof Briefcase> = {
-  apply: Send,
   job_post: Briefcase,
   job_generation: Wand2,
   ai_cv_parsed: FileSearch,
@@ -116,14 +114,13 @@ const ROLE_CONFIG: Record<'candidate' | 'employer', RoleConfig> = {
     heading: 'Chọn gói phù hợp với nhu cầu của bạn',
     subtitle: 'Bắt đầu miễn phí, nâng cấp khi bạn cần nhiều lượt sử dụng hơn.',
     quotaLabel: {
-      apply: 'Ứng tuyển',
       job_post: 'Lượt tạo việc làm',
       ai_cv_parsed: 'Phân tích CV',
       ai_cv_analysis: 'Chấm điểm CV bằng AI',
       ai_cv_match: 'AI match hồ sơ',
       job_generation: 'Lượt tạo mô tả việc làm (AI)',
     },
-    featureKeys: ['apply', 'ai_cv_parsed', 'ai_cv_analysis'],
+    featureKeys: ['ai_cv_match', 'ai_cv_parsed', 'ai_cv_analysis'],
     ...SHARED_THEME,
     loginRedirect: '/candidate/pricing',
     successRouteName: 'billing-success',
@@ -133,7 +130,6 @@ const ROLE_CONFIG: Record<'candidate' | 'employer', RoleConfig> = {
     heading: 'Mở khóa sức mạnh tuyển dụng',
     subtitle: 'Đăng tin nhiều hơn, dùng AI sàng lọc CV, tìm ứng viên phù hợp nhanh hơn.',
     quotaLabel: {
-      apply: 'Ứng tuyển',
       job_post: 'Lượt đăng việc làm',
       ai_cv_parsed: 'Phân tích CV',
       ai_cv_analysis: 'Chấm điểm CV bằng AI',

@@ -102,7 +102,6 @@ const TIER_META: Record<TierCode, { icon: Component; featured: boolean }> = {
 
 /** Nhãn quota + thứ tự feature hiển thị trên card (candidate). */
 const QUOTA_LABEL: Record<CountableQuotaKey, string> = {
-  apply: "Ứng tuyển",
   job_post: "Lượt đăng việc làm",
   job_generation: "Lượt tạo mô tả việc làm (AI)",
   ai_cv_parsed: "Phân tích CV",
@@ -111,7 +110,7 @@ const QUOTA_LABEL: Record<CountableQuotaKey, string> = {
 };
 
 const FEATURE_KEYS: CountableQuotaKey[] = [
-  "apply",
+  "ai_cv_match",
   "ai_cv_parsed",
   "ai_cv_analysis",
 ];

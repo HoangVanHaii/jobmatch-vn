@@ -76,7 +76,6 @@ const displayPlanName = (code: string | undefined, fallback = ''): string =>
 
 /** Quota label Tiếng Việt — phải đồng bộ với backend CountableQuotaKey. */
 const quotaLabel: Record<CountableQuotaKey, string> = {
-  apply: 'Ứng tuyển',
   job_post: 'Lượt đăng việc làm',
   ai_cv_parsed: 'Phân tích CV',
   ai_cv_analysis: 'Chấm điểm CV bằng AI',
@@ -86,7 +85,6 @@ const quotaLabel: Record<CountableQuotaKey, string> = {
 
 /** Icon cho từng quota key. */
 const quotaIcon: Record<CountableQuotaKey, typeof Briefcase> = {
-  apply: Briefcase,
   job_post: Briefcase,
   job_generation: Wand2,
   ai_cv_parsed: FileSearch,

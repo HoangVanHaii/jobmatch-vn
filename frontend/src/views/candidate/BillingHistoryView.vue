@@ -104,7 +104,6 @@ const displayPlanName = (code: string | undefined, fallback = ''): string =>
  * Phải đồng bộ với backend CountableQuotaKey (xem frontend/src/types/billing.ts).
  */
 const quotaLabel: Record<CountableQuotaKey, string> = {
-    apply: 'Ứng tuyển',
     job_post: 'Lượt tạo việc làm',
     ai_cv_parsed: 'Phân tích CV',
     ai_cv_analysis: 'Chấm điểm CV bằng AI',
@@ -114,7 +113,6 @@ const quotaLabel: Record<CountableQuotaKey, string> = {
 
 /** Icon cho từng quota key — semantic để dễ scan. */
 const quotaIcon: Record<CountableQuotaKey, typeof Send> = {
-    apply: Send,
     ai_cv_parsed: FileText,
     ai_cv_analysis: Sparkles,
     ai_cv_match: Target,
@@ -124,7 +122,7 @@ const quotaIcon: Record<CountableQuotaKey, typeof Send> = {
 
 /** Candidate view chỉ show 3 quota relevant tới ứng viên. */
 const CANDIDATE_QUOTA_KEYS: CountableQuotaKey[] = [
-    'apply',
+    'ai_cv_match',
     'ai_cv_parsed',
     'ai_cv_analysis',
 ];
@@ -137,7 +135,7 @@ const visibleUsage = computed(() =>
 
 /** Phân nhóm quota — AI có token usage + style gradient nhẹ. */
 const isAiQuota = (key: CountableQuotaKey): boolean =>
-    key === 'ai_cv_parsed' || key === 'ai_cv_analysis' || key === 'job_generation';
+    key === 'ai_cv_match' || key === 'ai_cv_parsed' || key === 'ai_cv_analysis' || key === 'job_generation';
 
 function quotaPercent(item: { used: number; limit: number; unlimited: boolean }): number {
     if (item.unlimited) return 0;
@@ -151,10 +149,10 @@ function quotaPercent(item: { used: number; limit: number; unlimited: boolean })
  * Mỗi card lấy full color stack (background / border / icon / number / progress)
  * từ config này — không hard-code màu rải rác trong template.
  *
- * Color story: BLUE (apply, primary action) → TEAL (CV parsing, utility) → VIOLET (AI premium).
+ * Color story: INDIGO (AI match, premium) → CYAN (CV parsing, utility) → VIOLET (AI analysis).
  * Tone pastel nhạt để giữ cảm giác SaaS dashboard, không saturated.
  */
-type QuotaCardKey = 'apply' | 'ai_cv_parsed' | 'ai_cv_analysis';
+type QuotaCardKey = 'ai_cv_match' | 'ai_cv_parsed' | 'ai_cv_analysis';
 
 interface QuotaCardTheme {
     /** Card background (pastel rất nhạt, gần trắng). */
@@ -172,13 +170,13 @@ interface QuotaCardTheme {
 }
 
 const quotaCardTheme: Record<QuotaCardKey, QuotaCardTheme> = {
-    apply: {
-        background: 'bg-blue-50',
-        border: 'border-blue-100',
-        iconBg: 'bg-blue-100',
-        iconText: 'text-blue-600',
-        numberText: 'text-blue-700',
-        progressBar: 'bg-blue-500',
+    ai_cv_match: {
+        background: 'bg-indigo-50',
+        border: 'border-indigo-100',
+        iconBg: 'bg-indigo-100',
+        iconText: 'text-indigo-600',
+        numberText: 'text-indigo-700',
+        progressBar: 'bg-indigo-500',
     },
     ai_cv_parsed: {
         background: 'bg-cyan-50',

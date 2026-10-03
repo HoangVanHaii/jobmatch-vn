@@ -14,7 +14,6 @@ import type { Plan } from './plan';
  * Quota key — đồng bộ 1-1 với `plans.features` JSONB trong backend + CountableQuotaKey.
  * Phải khớp với key BE trả về từ GET /plans/me/usage.
  *
- *  - `apply`           ← applications (candidate đã apply bao nhiêu job)
  *  - `job_post`        ← jobs.posted_by (đã đăng bao nhiêu job)
  *  - `ai_cv_parsed`    ← usage_logs (cvParse worker)
  *  - `ai_cv_analysis`  ← usage_logs (cvAnalysis worker)
@@ -22,7 +21,6 @@ import type { Plan } from './plan';
  *  - `job_generation`  ← usage_logs (generateDraft)
  */
 export type CountableQuotaKey =
-    | 'apply'
     | 'job_post'
     | 'ai_cv_parsed'
     | 'ai_cv_analysis'

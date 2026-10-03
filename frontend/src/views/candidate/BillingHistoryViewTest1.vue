@@ -28,6 +28,7 @@ import {
     Send,
     FileText,
     Sparkles,
+    Target,
     TrendingUp,
     XCircle,
 } from 'lucide-vue-next';
@@ -105,7 +106,7 @@ const displayPlanName = (code: string | undefined, fallback = ''): string =>
  * Phải đồng bộ với backend CountableQuotaKey (xem frontend/src/types/billing.ts).
  */
 const quotaLabel: Record<CountableQuotaKey, string> = {
-    apply: 'Ứng tuyển',
+    ai_cv_match: 'AI match hồ sơ',
     job_post: 'Lượt tạo việc làm',
     ai_cv_parsed: 'Phân tích CV',
     ai_cv_analysis: 'Chấm điểm CV bằng AI',
@@ -114,7 +115,7 @@ const quotaLabel: Record<CountableQuotaKey, string> = {
 
 /** Icon cho từng quota key — semantic để dễ scan. */
 const quotaIcon: Record<CountableQuotaKey, typeof Send> = {
-    apply: Send,
+    ai_cv_match: Target,
     ai_cv_parsed: FileText,
     ai_cv_analysis: Sparkles,
     job_post: Package,
@@ -123,7 +124,7 @@ const quotaIcon: Record<CountableQuotaKey, typeof Send> = {
 
 /** Candidate view chỉ show 3 quota relevant tới ứng viên. */
 const CANDIDATE_QUOTA_KEYS: CountableQuotaKey[] = [
-    'apply',
+    'ai_cv_match',
     'ai_cv_parsed',
     'ai_cv_analysis',
 ];
@@ -136,7 +137,7 @@ const visibleUsage = computed(() =>
 
 /** Phân nhóm quota — AI có token usage. */
 const isAiQuota = (key: CountableQuotaKey): boolean =>
-    key === 'ai_cv_parsed' || key === 'ai_cv_analysis' || key === 'job_generation';
+    key === 'ai_cv_match' || key === 'ai_cv_parsed' || key === 'ai_cv_analysis' || key === 'job_generation';
 
 function quotaPercent(item: { used: number; limit: number; unlimited: boolean }): number {
     if (item.unlimited) return 0;
@@ -154,10 +155,10 @@ function quotaState(q: QuotaItem): 'ok' | 'warn' | 'full' {
 }
 
 // Class viết đầy đủ để Tailwind không purge.
-// Màu accent định danh theo TỪNG QUOTA (Ứng tuyển blue · Phân tích CV amber · AI violet) —
-// trùng palette Tailwind của project (#3B82F6 / #F59E0B / #8B5CF6).
+// Màu accent định danh theo TỪNG QUOTA (AI match indigo · Phân tích CV amber · AI violet) —
+// trùng palette Tailwind của project (#6366F1 / #F59E0B / #8B5CF6).
 const QUOTA_ACCENT: Record<CountableQuotaKey, { line: string; chip: string }> = {
-    apply: { line: 'bg-blue-500', chip: 'bg-blue-50 text-blue-600' },
+    ai_cv_match: { line: 'bg-indigo-500', chip: 'bg-indigo-50 text-indigo-600' },
     ai_cv_parsed: { line: 'bg-amber-500', chip: 'bg-amber-50 text-amber-600' },
     ai_cv_analysis: { line: 'bg-violet-500', chip: 'bg-violet-50 text-violet-600' },
     job_post: { line: 'bg-slate-500', chip: 'bg-slate-100 text-slate-600' },
