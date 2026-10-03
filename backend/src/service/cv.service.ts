@@ -8,6 +8,7 @@ import { logger } from "../config/logger";
 import { redis } from "../config/redis";
 import { cvAnalysisQueue, cvParsingQueue } from "../config/queue";
 import { AppError } from "../middleware/errorHandler";
+import { usageLogService } from "./usageLog.service";
 
 
 
@@ -17,6 +18,7 @@ const buildParsedData = (input: CreateDirectCvInput): NonNullable<typeof cvs.$in
     if (input.contact.name !== undefined) parsedData.name = input.contact.name;
     if (input.contact.email !== undefined) parsedData.email = input.contact.email;
     if (input.contact.phone !== undefined) parsedData.phone = input.contact.phone;
+    if (input.contact.address !== undefined) parsedData.address = input.contact.address;
     if (input.contact.portfolio !== undefined) parsedData.portfolio = input.contact.portfolio;
     if (input.contact.github !== undefined) parsedData.github = input.contact.github;
     if (input.contact.linkedin !== undefined) parsedData.linkedin = input.contact.linkedin;
@@ -46,6 +48,7 @@ const buildParsedData = (input: CreateDirectCvInput): NonNullable<typeof cvs.$in
     parsedData.projects = input.projects as unknown as Record<string, unknown>[];
   }
   if (input.certifications) parsedData.certifications = input.certifications as unknown as Record<string, unknown>[];
+  if (input.interests) parsedData.interests = input.interests;
   return parsedData;
 };
 
@@ -119,19 +122,44 @@ export const cvService = {
    * - status='parsing' ngay (worker sẽ xử lý tới 'ready' / 'failed').
    */
   upload: async (input: CreateCvInput, candidateId: string): Promise<Cv> => {
-    const [cv] = await db
-      .insert(cvs)
-      .values({
-        candidateId,
-        title: input.title,
-        fileUrl: input.fileUrl,
-        fileType: input.fileType,
-        isPrimary: input.isPrimary ?? false,
+    // Reserve quota TRƯỚC khi INSERT — hết lượt → 402 QUOTA_EXCEEDED ngay,
+    // không tạo row mồ côi. (Trước đây reserve trong worker.)
+    await usageLogService.reserveQuota(candidateId, "ai_cv_parsed");
+
+    let cv: Cv;
+    try {
+      const [row] = await db
+        .insert(cvs)
+        .values({
+          candidateId,
+          title: input.title,
+          fileUrl: input.fileUrl,
+          fileType: input.fileType,
+          isPrimary: input.isPrimary ?? false,
           source: "upload",
-        status: "parsing"
-      })
-      .returning();
-    await cvParsingQueue.add("cv-parse", { cvId: cv.id });
+          status: "parsing",
+        })
+        .returning();
+      cv = row;
+    } catch (e) {
+      // INSERT fail sau khi đã reserve → hoàn lượt để không mất oan.
+      await usageLogService.decrementCount(candidateId, "ai_cv_parsed");
+      throw e;
+    }
+
+    // Enqueue fail (Redis down...) → hard-delete row vừa tạo (chưa có gì
+    // tham chiếu) + hoàn lượt, trả 503 để FE biết retry.
+    try {
+      await cvParsingQueue.add("cv-parse", { cvId: cv.id, candidateId });
+    } catch (e) {
+      await db.delete(cvs).where(eq(cvs.id, cv.id));
+      await usageLogService.decrementCount(candidateId, "ai_cv_parsed");
+      throw new AppError(
+        503,
+        "QUEUE_UNAVAILABLE",
+        "Hệ thống bận, vui lòng thử lại.",
+      );
+    }
 
     return cv;
   },
@@ -382,9 +410,10 @@ export const cvService = {
    * sẽ pick up job. Phân biệt 'parsing' (đang parse text) vs 'analyzing'
    * (đang AI analysis) → FE hiển thị message khác nhau.
    *
-   * Lưu ý: KHÔNG tính quota ở đây — quota reserve trong worker (cvAnalysis.worker.ts)
-   * sau khi nhận job. Lý do: nếu quota hết, worker tự mark failed + emit socket,
-   * user không cần API trả 402 rồi mới biết.
+   * Lưu ý quota: reserve Ở ĐÂY qua `usageLogService.reserveQuota` — hết lượt
+   * → 402 QUOTA_EXCEEDED ngay (FE mở modal nâng cấp gói), job không vào queue.
+   * Reserve đặt TRƯỚC changeStatus để 402 không để lại side-effect DB nào.
+   * (Trước đây worker tự reserve trong job — xem cvAnalysis.worker.ts.)
    */
   triggerAnalysis: async (
     candidateId: string,
@@ -418,10 +447,24 @@ export const cvService = {
       );
     }
 
+    // Reserve quota TRƯỚC changeStatus — 402 không để lại side-effect DB nào.
+    await usageLogService.reserveQuota(candidateId, "ai_cv_analysis");
+
     await cvService.changeStatus(candidateId, cvId, "analyzing");
 
-    // Enqueue job.
-    await cvAnalysisQueue.add("cv-analysis", { cvId });
+    // Enqueue job. Enqueue fail (Redis down) → hoàn lượt + revert status,
+    // tránh CV treo ở 'analyzing' mãi mà worker không chạy.
+    try {
+      await cvAnalysisQueue.add("cv-analysis", { cvId, candidateId });
+    } catch (e) {
+      await usageLogService.decrementCount(candidateId, "ai_cv_analysis");
+      await cvService.changeStatus(candidateId, cvId, cv.status);
+      throw new AppError(
+        503,
+        "QUEUE_UNAVAILABLE",
+        "Hệ thống bận, vui lòng thử lại.",
+      );
+    }
 
     return { ...cv, status: "analyzing" };
   },
@@ -529,7 +572,7 @@ export const cvService = {
         const contact = (mergedParsedData as Record<string, unknown>).contact;
         if (contact && typeof contact === "object" && !Array.isArray(contact)) {
           const promoted: Array<keyof NonNullable<typeof cvs.$inferSelect.parsedData>> = [
-            "name", "email", "phone", "portfolio",
+            "name", "email", "phone", "address", "portfolio",
             "github", "linkedin", "facebook", "avatarUrl",
           ];
           for (const key of promoted) {
@@ -541,15 +584,35 @@ export const cvService = {
         }
       }
 
-      // 4. Build SET fields — luôn reset status/ai_analysis/scoreUpdatedAt vì
-      // content (có thể) đã đổi, analysis cũ stale. Set 'analyzing' (không
-      // phải 'parsing') vì đây là re-analysis flow — không re-parse text.
-      const setFields: Partial<typeof cvs.$inferInsert> = {
-        status: "analyzing",
-        ai_analysis: null,
-        scoreUpdatedAt: null,
-        updatedAt: new Date(),
-      };
+      // 4. Reserve quota re-analysis TRƯỚC tx — hết lượt là "degraded
+      // success" chứ không phải lỗi (quyết định product: user sửa CV không
+      // bị chặn vì hết quota): vẫn lưu nội dung, GIỮ nguyên điểm + status
+      // cũ, không enqueue. Dùng createOrIncrementUsage trực tiếp lấy
+      // boolean (không throw như reserveQuota).
+      // (Reserve TRƯỚC tx để rollback tx không mất lượt đã charge.)
+      const reserved = await usageLogService.createOrIncrementUsage(
+        candidateId,
+        "ai_cv_analysis",
+      );
+
+      // 5. Build SET fields:
+      //   - reserved  → như cũ: reset status/ai_analysis/scoreUpdatedAt vì
+      //     content đã đổi, analysis stale. Set 'analyzing' (re-analysis flow).
+      //   - !reserved → chỉ lưu content + failureReason='quota_exceeded'
+      //     (persist để FE banner "hết lượt" survive reload — parity với
+      //     behavior cũ của worker). status + ai_analysis + scoreUpdatedAt
+      //     GIỮ NGUYÊN — điểm cũ là điểm user đang dùng.
+      const setFields: Partial<typeof cvs.$inferInsert> = reserved
+        ? {
+            status: "analyzing",
+            ai_analysis: null,
+            scoreUpdatedAt: null,
+            updatedAt: new Date(),
+          }
+        : {
+            failureReason: "quota_exceeded",
+            updatedAt: new Date(),
+          };
       if (input.title !== undefined) {
         setFields.title = input.title;
       }
@@ -563,30 +626,46 @@ export const cvService = {
         .where(eq(cvs.id, cvId))
         .returning();
 
-      return row ?? null;
+      // Trả cả `reserved` ra ngoài tx — cờ quyết định có enqueue re-analysis.
+      return { row: row ?? null, reserved };
     });
 
-    if (!updated) return null;
+    if (!updated?.row) return null;
 
-    // 4. Enqueue analysis worker SAU khi transaction commit thành công.
+    // 6. Enqueue analysis worker SAU khi transaction commit thành công
+    // (CHỈ khi reserve OK — hết lượt không enqueue).
     //
-    // Lý do:
-    //   - update() set status='analyzing' nhưng nếu không enqueue job thì CV
-    //     treo ở 'analyzing' mãi mãi (worker không pick up được). Đây là
-    //     pre-existing bug — fix ngay khi bật edit UI để user edit → save
-    //     không phải đợi vô ích.
-    //   - Đặt NGOÀI transaction: nếu transaction rollback thì không enqueue
-    //     (worker sẽ không tìm thấy CV ở status='analyzing' nên guard fail).
-    //   - Nếu enqueue throw (Redis disconnect, queue overflow) → log + emit
-    //     quota/parse_error cho FE qua socket. Hiện tại best-effort: throw
-    //     ra ngoài để controller trả 500, user retry. Tránh silent failure.
+    // Lý do enqueue ngoài transaction: nếu tx rollback thì không enqueue
+    // (worker sẽ không tìm thấy CV ở status='analyzing' nên guard fail).
     //
-    // Quota check: tương tự triggerAnalysis — KHÔNG tính quota ở đây. Worker
-    // tự reserve quota khi nhận job, nếu hết sẽ revert 'analyzing' → 'ready'
-    // + emit socket `cv:quota-warning` (xem cvAnalysis.worker.ts).
-    await cvAnalysisQueue.add("cv-analysis", { cvId });
+    // Enqueue fail (Redis disconnect) → hoàn lượt + revert status về giá trị
+    // trước PATCH + 503 để FE retry. Edge hiếm: ai_analysis đã reset trong tx
+    // (mất điểm cũ) — chấp nhận vì Redis down là sự cố hạ tầng.
+    if (updated.reserved) {
+      try {
+        await cvAnalysisQueue.add("cv-analysis", { cvId, candidateId });
+      } catch (e) {
+        await usageLogService.decrementCount(candidateId, "ai_cv_analysis");
+        await cvService.changeStatus(candidateId, cvId, updated.row.status);
+        throw new AppError(
+          503,
+          "QUEUE_UNAVAILABLE",
+          "Hệ thống bận, vui lòng thử lại.",
+        );
+      }
+    } else {
+      // Degraded — báo FE qua socket (context 'analyze' → App.vue mở modal
+      // nâng cấp gói). emitToUser là best-effort (io chưa init chỉ warn).
+      notificationGateway.emitToUser(candidateId, "cv:quota-warning", {
+        cvId,
+        context: "analyze",
+        reason: "quota_exceeded",
+        message:
+          "Đã lưu CV. Đã hết lượt AI nên giữ nguyên điểm phân tích trước đó.",
+      });
+    }
 
-    return updated;
+    return updated.row;
   },
   softDelete: async (cvId: string, candidateId: string): Promise<Cv | null> => {
     return db.transaction(async (tx) => {

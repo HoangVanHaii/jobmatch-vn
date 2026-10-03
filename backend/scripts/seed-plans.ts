@@ -47,7 +47,12 @@ import { logger } from '../src/config/logger';
 /**
  * Features JSON theo convention backend — `usageLogService.createOrIncrementUsage`
  * resolve quota qua các key: apply, job_post, ai_cv_parsed, ai_cv_analysis,
- * job_generation. Đổi key ở đây cần đổi cả ở service.
+ * ai_cv_match, job_generation. Đổi key ở đây cần đổi cả ở service.
+ *
+ * ⚠️ `ai_cv_match` là quota cho AI matching khi candidate nộp hồ sơ — TRƯỚC
+ * đây key này KHÔNG có trong features của mọi gói → `resolveFeatureLimit`
+ * trả 0 → mọi cv-match job rơi nhánh quota_exceeded (matching chết). Bắt
+ * buộc phải có key này trong mọi gói.
  *
  * Drizzle `jsonb` với `$type<Record<string, unknown>>()` yêu cầu index
  * signature → dùng type này (không phải interface khai báo field cụ thể)
@@ -102,6 +107,7 @@ const planSeeds: PlanSeed[] = [
       job_post: 5,
       ai_cv_parsed: 5,
       ai_cv_analysis: 10,
+      ai_cv_match: 10,
       job_generation: 5,
     },
     isActive: true,
@@ -119,6 +125,7 @@ const planSeeds: PlanSeed[] = [
       job_post: 10,
       ai_cv_parsed: 15,
       ai_cv_analysis: 30,
+      ai_cv_match: 20,
       job_generation: 10,
     },
     isActive: true,
@@ -135,6 +142,7 @@ const planSeeds: PlanSeed[] = [
       job_post: 30,
       ai_cv_parsed: 30,
       ai_cv_analysis: 60,
+      ai_cv_match: 40,
       job_generation: 30,
     },
     isActive: true,
@@ -152,6 +160,7 @@ const planSeeds: PlanSeed[] = [
       job_post: 12,
       ai_cv_parsed: 18,
       ai_cv_analysis: 36,
+      ai_cv_match: 24,
       job_generation: 12,
     },
     isActive: true,
@@ -168,6 +177,7 @@ const planSeeds: PlanSeed[] = [
       job_post: 36,
       ai_cv_parsed: 36,
       ai_cv_analysis: 72,
+      ai_cv_match: 48,
       job_generation: 36,
     },
     isActive: true,

@@ -10,12 +10,31 @@ import {
 } from "../prompts/cvAnalysis";
 import { invokeCvAnalysis } from "../lib/llm/cvAnalysis";
 import { cvService } from "../service/cv.service";
-import { notificationGateway } from "../socket/notificationGateway";
-import type { CvStatus } from "../interface/cv";
 
 const QUEUE_NAME = "cvAnalysis";
 import { isRateLimited, waitForRateLimit } from "../lib/llm/errors";
 import { usageLogService } from "../service/usageLog.service";
+
+/**
+ * Hoàn 1 lượt `ai_cv_analysis` khi job early-exit TRƯỚC khi LLM chạy (lượt đã
+ * được service reserve trước khi enqueue — job không chạy thì không được tiêu).
+ *
+ * `candidateId` lấy từ job payload — job cũ pre-deploy (payload thiếu field)
+ * sẽ warn + skip refund (an toàn, chỉ lệch ±1 lượt).
+ */
+const refundAnalysisQuota = async (
+    candidateId: string | undefined,
+    why: string,
+): Promise<void> => {
+    if (!candidateId) {
+        logger.warn(
+            { why },
+            "cvAnalysisWorker: refund skipped — payload thiếu candidateId (job cũ pre-deploy)",
+        );
+        return;
+    }
+    await usageLogService.decrementCount(candidateId, "ai_cv_analysis");
+};
 
 
 export const cvAnalysisWorker = new Worker(
@@ -23,15 +42,24 @@ export const cvAnalysisWorker = new Worker(
     async (job) => {
         if (job.name !== "cv-analysis") return;
 
-        const { cvId } = job.data as { cvId: string };
+        // `candidateId` từ payload (enqueue site thêm từ refactor
+        // reserve-tại-service) — dùng cho refund early-exit. Job cũ
+        // pre-deploy thiếu field → refund tự skip (warn).
+        const { cvId, candidateId } = job.data as {
+            cvId: string;
+            candidateId?: string;
+        };
 
         const dbCv = await db.query.cvs.findFirst({ where: eq(cvs.id, cvId) });
 
+        // Early-exit trước LLM → hoàn lượt đã reserve ở service.
         if (!dbCv) {
+            await refundAnalysisQuota(candidateId, 'CV deleted after enqueue');
             return;
         }
 
         if (dbCv.status !== 'pending' && dbCv.status !== 'analyzing') {
+            await refundAnalysisQuota(dbCv.candidateId, 'status guard skip (duplicate/processed job)');
             return;
         }
 
@@ -45,7 +73,10 @@ export const cvAnalysisWorker = new Worker(
         }
 
         if (!dbCv?.parsedData) {
-            if (dbCv) await cvService.changeAnalysisAsNotCv(dbCv.candidateId, cvId);
+            if (dbCv) {
+                await refundAnalysisQuota(dbCv.candidateId, 'no parsedData');
+                await cvService.changeAnalysisAsNotCv(dbCv.candidateId, cvId);
+            }
             return;
         }
 
@@ -64,51 +95,16 @@ export const cvAnalysisWorker = new Worker(
             parsed.certifications?.length;
 
         if (!hasContent) {
+            await refundAnalysisQuota(dbCv.candidateId, 'parsedData empty (not a CV content)');
             await cvService.changeAnalysisAsNotCv(dbCv.candidateId, cvId);
             return;
         }
-        try {
-            const reservedThisAttempt = job.attemptsMade === 0; // ⬅️ chỉ attempt đầu reserve
 
-            if (reservedThisAttempt) {
-                const reserved = await usageLogService.createOrIncrementUsage(
-                    dbCv.candidateId,
-                    "ai_cv_analysis",
-                );
-                if (!reserved) {
-                    // Hết lượt AI.
-                    //   - CV đã có parsedData (parse xong, content OK) → KHÔNG
-                    //     downgrade về 'failed'. CV vẫn dùng được, status cuối
-                    //     cùng vẫn 'ready' (ai_analysis cũ được giữ nếu có).
-                    //     Lý do 'quota_exceeded' sẽ bị changeStatus bỏ qua vì
-                    //     status không phải 'failed'. Emit socket 'cv:quota-warning'
-                    //     RIÊNG để FE biết hiển thị toast (vì status='ready' trông
-                    //     như thành công — user không biết quota fail).
-                    //   - CV chưa có parsedData → mark 'failed'/'quota_exceeded'.
-                    let status: CvStatus = "failed";
-                    if (dbCv.parsedData) status = "ready";
-                    await cvService.changeStatus(
-                        dbCv.candidateId,
-                        dbCv.id,
-                        status,
-                        "quota_exceeded",
-                    );
-                    if (status === "ready") {
-                        notificationGateway.emitToUser(
-                            dbCv.candidateId,
-                            "cv:quota-warning",
-                            {
-                                cvId: dbCv.id,
-                                context: "analyze",
-                                reason: "quota_exceeded",
-                                message:
-                                    "Đã hết lượt AI. Điểm phân tích trước đó được giữ nguyên.",
-                            },
-                        );
-                    }
-                    return;
-                }
-            }
+        // QUOTA: đã được service reserve (reserveQuota) TRƯỚC khi enqueue —
+        // worker KHÔNG reserve/check nữa. Refund early-exit phía trên;
+        // lỗi LLM → catch cuối vẫn decrement như cũ.
+
+        try {
             const result = await invokeCvAnalysis(
                 CV_ANALYSIS_SYSTEM_PROMPT,
                 buildCvAnalysisUserPrompt(dbCv.parsedData),

@@ -1,1500 +1,795 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
-import { storeToRefs } from 'pinia';
-import {
-  FileText,
-  Plus,
-  Upload,
-  Eye,
-  Star,
-  Loader2,
-  AlertCircle,
-  Trash2,
-  X,
-  ChevronLeft,
-  ChevronRight,
-  Sparkles,
-  Search,
-  MoreVertical,
-  Brain,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
-  Clock,
-  Download,
-  ExternalLink,
-  Pencil,
-} from 'lucide-vue-next';
-import { useCvStore } from '@stores/cv';
-import { usePlanStore } from '@stores/plan';
-import { useToastStore } from '@stores/toast';
-import { useCvDownload } from '@/composables/useCvDownload';
-import CvPreview from '@components/cv/CvPreview.vue';
-import CvThumbnail from '@components/cv/thumbnails/CvThumbnail.vue';
-import CvAiAnalysisView from '@components/cv/CvAiAnalysisView.vue';
-import type { CvSource, CvStatus, Cv, CvFailureReason } from '@/types/cv';
-import { getAiScore } from '@/types/cv';
-import { scoreLabel } from '@/utils/aiScore';
-import { useSocket } from '@composables/useSocket';
-
-const router = useRouter();
-const cvStore = useCvStore();
-const planStore = usePlanStore();
-const toast = useToastStore();
-const { items, total, page, pageSize, totalPages, loading, error } = storeToRefs(cvStore);
-
-/* ============================================================================
- * Error → toast.
+/**
+ * MockupResumeView — Mockup cho trang list CV của candidate (Forma-style card).
  *
- * Trước: store set `error.value` (qua setError trong catch), template render
- * banner đỏ inline. Nhưng banner lại sticky ngay đầu trang — nếu user bấm
- * "Phân tích lại" CV chưa parse xong, banner hiện ngay trên đầu list làm
- * giật layout. Đổi sang toast: transient, không chiếm chỗ trên trang, hiện
- * rồi tự dismiss sau 4s.
+ * Sections:
+ *   - Hero (welcome + search by role/style)
+ *   - Filters + view toggle (grid/list)
+ *   - Resume grid — render thật từ useCvStore (xem MyResumesView để biết API)
+ *   - Bottom feature cards (Popular / ATS)
  *
- * Watch fire toast khi `error` set (non-null). Sau đó clear `error.value`
- * để lần fetchList sau không re-fire (store cũng clear error.value = null
- * ở đầu fetchList — double-clear, OK).
- * ==========================================================================*/
-watch(error, (msg) => {
-  if (msg) {
-    toast.error(msg);
-    error.value = null;
-  }
-});
-
-// Set loading=true NGAY TRONG setup() — trước frame render đầu tiên —
-// để spinner loading hiện ra thay vì empty state "Bạn chưa có CV nào" flash
-// trong tích tắc (khi `loading=false` initial → render empty → onMounted
-// fire → loading=true → re-render spinner). Set ở đây đảm bảo frame đầu
-// đã là spinner.
-cvStore.loading = true;
-
-/* ============================================================================
- * Filter theo source — server-side qua query string.
- * Search theo title — server-side (?q=), FE debounce 400ms trước khi gọi
- * → mỗi lần user gõ là 1 round-trip DB, không phải filter 1000+ row ở client.
- * ==========================================================================*/
-const sourceFilter = ref<'all' | CvSource>('all');
-const searchQuery = ref('');
-
-const sourceOptions: Array<{ value: 'all' | CvSource; label: string; shortLabel: string }> = [
-  { value: 'all', label: 'Tất cả', shortLabel: 'Tất cả' },
-  { value: 'upload', label: 'CV Upload', shortLabel: 'Upload' },
-  { value: 'direct', label: 'CV tạo trực tiếp', shortLabel: 'Trực tiếp' },
-];
-
-const sourceToQuery = (s: 'all' | CvSource): CvSource | undefined =>
-  s === 'all' ? undefined : s;
-
-const loadList = async () => {
-  // RESET trước khi FETCH — đảm bảo API đồng bộ với UI mặc định "Tất cả".
-  //
-  // Bối cảnh bug:
-  //   - Component re-mount (quay lại từ route khác) → `sourceFilter` /
-  //     `searchQuery` là refs MỚI → mặc định 'all' và '' (đúng theo yêu cầu
-  //     "Tất cả" là default khi quay lại).
-  //   - NHƯNG `cvStore.query.source` + `query.q` vẫn giữ 'upload'/'direct'/
-  //     searchTerm từ lần visit trước — Pinia store SỐNG QUA route navigation,
-  //     KHÔNG tự reset.
-  //   - `fetchList` mặc định coi `source` / `q` undefined = "giữ nguyên
-  //     store.query" (cơ chế dùng cho `watch(searchQuery)` — tránh reset tab
-  //     khi user chỉ gõ search). Nếu chỉ pass undefined → API call vẫn
-  //     filter theo source cũ → UI "Tất cả" nhưng data upload-only → MISMATCH.
-  //
-  // Cách fix: truyền `resetFilters=true` → store clear nguyên `query.value`
-  // (drop source + q + mọi key cũ) TRƯỚC khi build axios params → API không
-  // có source/q → khớp với UI "Tất cả".
-  //
-  // Không duplicate fetch vì:
-  //   - `watch(() => router.currentRoute.value.fullPath, ...)` KHÔNG fire
-  //     giá trị đầu (Vue watch default `immediate: false`) → không thêm
-  //     fetch ngoài `onMounted`.
-  //   - `watch(searchQuery)` không fire vì searchQuery đã là '' (fresh ref).
-  //   - `handleSourceChange` không liên quan (chỉ chạy khi user click tab).
-  await cvStore.fetchList(undefined, undefined, undefined, true);
-};
-
-const handleSourceChange = async (s: 'all' | CvSource) => {
-  sourceFilter.value = s;
-  // Khi chuyển sang tab 'all' (source=undefined), phải truyền resetFilters=true
-  // để store clear query.source — vì mặc định fetchList coi undefined =
-  // "giữ nguyên source hiện tại" (cơ chế dùng cho watch(searchQuery) để search
-  // không reset tab). Nếu không có flag này, click 'Tất cả' từ tab Upload/Direct
-  // sẽ bị stuck filter theo tab cũ.
-  await cvStore.fetchList(sourceToQuery(s), 1, undefined, s === 'all');
-};
-
-const goToPage = async (p: number) => {
-  const target = Math.min(Math.max(1, p), totalPages.value);
-  if (target === page.value) return;
-  await cvStore.fetchList(sourceToQuery(sourceFilter.value), target, undefined);
-};
-
-onMounted(loadList);
-onMounted(() => {
-  // Fetch quota usage song song — populate planStore.usage để hasQuota() đúng.
-  // Không await: nếu chậm, list CV vẫn hiện; quota check kích hoạt sau khi data về.
-  void planStore.fetchMyUsage();
-});
-watch(() => router.currentRoute.value.fullPath, () => loadList());
-
-/* ============================================================================
- * Search debounce 400ms — gọi BE ?q= thay vì filter client.
- *
- * Lý do:
- *   - 100+ CV thì filter client OK; nếu user có 5000 CV thì download cả trang
- *     về rồi filter .includes() → lag. Đẩy xuống DB (ILIKE %q%) tận dụng index.
- *   - Mỗi keystroke không nên spam 1 request. 400ms = đủ người dùng dừng tay,
- *     đủ ngắn để không cảm thấy chậm.
- *
- * Trim trước khi gửi để ' ' (space-only) được BE coi là no-search (validator
- * đã reject nhưng vẫn trim để phòng).
- * ==========================================================================*/
-let searchTimer: ReturnType<typeof setTimeout> | null = null;
-const SEARCH_DEBOUNCE_MS = 400;
-watch(searchQuery, (val) => {
-  if (searchTimer) clearTimeout(searchTimer);
-  const trimmed = val.trim();
-  // Empty sau trim → undefined (không gửi param `q`), vì BE validator
-  // reject empty string là "Invalid input". undefined = no-search.
-  const q = trimmed.length > 0 ? trimmed : undefined;
-  searchTimer = setTimeout(() => {
-    void cvStore.fetchList(undefined, undefined, q);
-  }, SEARCH_DEBOUNCE_MS);
-});
-onBeforeUnmount(() => {
-  if (searchTimer) clearTimeout(searchTimer);
-});
-
-/* ============================================================================
- * Socket: BE worker / PATCH emit `cv:status-changed` khi status CV đổi.
- *
- * Payload gồm: cvId, status, failureReason (BE changeStatus gửi kèm — xem
- * cv.service.ts). QUAN TRỌNG: phải forward `failureReason` xuống store
- * updateStatus, không thì CV fail do quota sẽ mất reason ở local → strip
- * "Hết lượt" không hiện cho tới khi user F5 (lúc đó fetchList mới load
- * lại từ DB có reason). Bug này xảy ra vì listener cũ chỉ destructure
- * { cvId, status } rồi bỏ qua failureReason.
- *
- * Lưu ý: cv:quota-warning đăng ký ở App.vue (global) để SURVIVE navigation —
- * xem comment trong App.vue. Banner ở view này đọc từ store.
- * ==========================================================================*/
-useSocket(
-  'cv:status-changed',
-  async (payload: { cvId: string; status: CvStatus; failureReason?: CvFailureReason | null }) => {
-      const { cvId, status, failureReason } = payload;
-    if (!cvId || !status) return;
-    // Update status trong store ngay để UI hiện "Đang phân tích" / "Sẵn sàng"
-    // mà không cần fetch lại.
-    cvStore.updateStatus(cvId, status, failureReason ?? null);
-
-    // Re-fetch full row khi status về TERMINAL — BE vừa ghi `ai_analysis`
-    // mới (worker `changeAnalysisAsReady`) hoặc reset về `isCv=false`
-    // (worker `changeAnalysisAsNotCv`) nên store local đang giữ data cũ.
-    // `updateStatus` chỉ patch 2 field trên — KHÔNG đụng `ai_analysis` — nên
-    // nếu không fetch lại thì:
-    //   - card score badge (`getAiScore`) hiển thị điểm cũ,
-    //   - nút Brain (xem phân tích AI) chỉ hiện khi `isCv=true` cũ,
-    //   - mở analysis modal cũng thấy strengths/weaknesses cũ.
-    //
-    // `void` để fire-and-forget — handler async không cần đợi fetch xong
-    // mới resolve; lỗi (nếu có) đã được `refreshDetail` nuốt im lặng.
-    //
-    // Chỉ re-fetch cho status TERMINAL ('ready' / 'failed'). 3 status tạm
-    // ('parsing' / 'analyzing' / 'pending') không làm `ai_analysis` đổi
-    // → giữ nguyên tối ưu patch-only để khỏi tốn GET thừa mỗi lần worker
-    // vào queue.
-    if (status === 'ready' || status === 'failed') {
-      void cvStore.refreshDetail(cvId);
-    }
-  },
-);
-
-/* ============================================================================
- * Display helpers — tiny Tailwind classes cho status dot strip trên card.
- * ==========================================================================*/
-const statusDotClass: Record<CvStatus, string> = {
-  pending: 'bg-amber-500',
-  parsing: 'bg-blue-500',
-  analyzing: 'bg-violet-500',
-  ready: 'bg-emerald-500',
-  failed: 'bg-red-500',
-  deleted: 'bg-slate-300',
-};
-
-const getTemplateId = (cv: Cv): number | null => {
-  if (cv.source !== 'direct') return null;
-  const id = cv.templateId;
-  return id !== null && id >= 1 && id <= 5 ? id : 1;
-};
-
-const fileTypeLabel = (cv: Cv): string => {
-  const mime = (cv.fileType || '').toLowerCase();
-  if (mime === 'application/pdf') return 'PDF';
-  if (
-    mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    mime === 'application/msword'
-  ) return 'DOCX';
-  if (mime.startsWith('image/')) return mime.replace('image/', '').toUpperCase();
-  return 'FILE';
-};
-
-const getDisplayTitle = (cv: Cv): string => {
-  if (cv.title && cv.title.trim().length > 0) return cv.title;
-  return 'CV chưa đặt tên';
-};
-
-/** Subtitle ưu tiên:
- *  - direct: vị trí ứng tuyển từ parsedData (nếu có), fallback "CV tạo trực tiếp"
- *  - upload: "Tải lên — {mimetype}"
+ * UI pattern giữ nguyên mockup ban đầu; chỉ thay nguồn dữ liệu từ mock → API.
  */
-const getSubtitle = (cv: Cv): string => {
-  if (cv.source === 'direct') {
-    const pos = ((cv.parsedData as Record<string, unknown> | null)?.position as string | undefined) ?? '';
-    if (pos.trim()) return pos.trim();
-    return 'CV tạo trực tiếp';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useRouter } from 'vue-router'
+import {
+  Search,
+  ChevronLeft,
+  ChevronDown,
+  ChevronRight,
+  Bookmark,
+  Upload,
+  ListFilter,
+  Palette,
+  Sparkles,
+  Brain,
+  Loader2,
+  AlertTriangle,
+  X,
+} from 'lucide-vue-next'
+import { useCvStore } from '@stores/cv'
+import { useToastStore } from '@stores/toast'
+import { uploadApi } from '@services/upload.api'
+import { useSocket } from '@composables/useSocket'
+import type { Cv, CvSource, CvStatus, CvFailureReason } from '@/types/cv'
+import { getAiScore } from '@/types/cv'
+import { scoreLabel } from '@/utils/aiScore'
+import type { CvLanguage } from '@/utils/cvLabels'
+import { clampTemplateId } from '@/utils/cvTemplates'
+import CvThumbnail from '@components/cv/thumbnails/CvThumbnail.vue'
+import UploadFilesDialog from '@components/upload/UploadFilesDialog.vue'
+import type { UploadItem } from '@components/upload/UploadFilesDialog.vue'
+import CvDetailView from '@components/cv/CvDetailView.vue'
+import CvTemplateLightbox from '@components/cv/CvTemplateLightbox.vue'
+import CvBuilderEditor from '@components/cv/builder/CvBuilderEditor.vue'
+
+// ===== Wire API — lấy CV list từ cvStore (cùng pattern MyResumesView) =====
+const cvStore = useCvStore()
+const { items, loading, total, page, pageSize, totalPages } = storeToRefs(cvStore)
+const router = useRouter()
+const toast = useToastStore()
+
+/* ===== Upload dialog — mở từ nút Upload trong FILTERS =====
+ * Flow 2 bước: dialog đã upload file lên MinIO (item success có result.url/
+ * key/mime). "Đính kèm" chỉ còn bước 2 — POST /cvs/upload tạo CV row
+ * (source='upload', status='parsing'), BE tự enqueue job parse AI; FE theo
+ * dõi kết quả qua socket `cv:status-changed` ở trang list CV.
+ * Dialog đã cap 3 file/lần để khớp `cvAiRateLimiter` (3 req/phút/user). */
+const showUpload = ref<boolean>(false)
+const isAttaching = ref<boolean>(false)
+const onUploadAttach = async (files: UploadItem[]): Promise<void> => {
+  if (!files.length || isAttaching.value) return
+  isAttaching.value = true
+  let ok = 0
+  let lastError: string | null = null
+  try {
+    // Tuần tự (không Promise.all) — lỗi từng file tách bạch, dừng sớm gọn.
+    for (const f of files) {
+      if (!f.result) continue
+      const created = await cvStore.upload({
+        // Filename gốc (bỏ extension) làm title — listCV dễ nhận biết.
+        title: f.name.replace(/\.[^.]+$/, ''),
+        fileUrl: f.result.url,
+        fileType: f.result.mime,
+      })
+      if (created) ok++
+      else {
+        lastError = cvStore.error ?? 'Không tạo được CV.'
+        // Dọn orphan: file đã nằm trên MinIO nhưng không có CV row trỏ tới.
+        // Best-effort — lỗi xoá không đổi outcome của toast.
+        if (f.result.key) uploadApi.removeFile(f.result.key).catch(() => {})
+      }
+    }
+  } finally {
+    isAttaching.value = false
   }
-  return `Tải lên — ${fileTypeLabel(cv)}`;
-};
+  if (ok > 0 && ok === files.length) {
+    toast.success(`Đã thêm ${ok} CV. Đang phân tích...`)
+    router.push('/candidate/resumes')
+  } else if (ok > 0) {
+    toast.warning(`Đã thêm ${ok}/${files.length} CV. ${lastError ?? 'Phần còn lại lỗi.'}`)
+  } else {
+    toast.error(lastError ?? 'Không tạo được CV. Vui lòng thử lại.')
+  }
+}
 
 const formatDate = (cv: Cv): string => {
-  const raw = cv.updatedAt || cv.createdAt;
-  if (!raw) return '';
+  const raw = cv.updatedAt || cv.createdAt
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+onMounted(async () => {
+  await cvStore.fetchList(undefined, undefined, undefined, true)
+})
+
+/* ===== Socket `cv:status-changed` — tắt spinner khi parse xong =====
+ * Mirror MyResumesView: worker emit status mới → store updateStatus patch
+ * local, card tự bỏ overlay "Đang phân tích" mà không cần refetch. Status
+ * terminal ('ready'/'failed') re-fetch full row để lấy ai_analysis mới
+ * (score badge + brain icon hiện đúng). */
+useSocket(
+  'cv:status-changed',
+  (payload: { cvId: string; status: CvStatus; failureReason?: CvFailureReason | null }) => {
+    const { cvId, status, failureReason } = payload
+    if (!cvId || !status) return
+    cvStore.updateStatus(cvId, status, failureReason ?? null)
+    if (status === 'ready' || status === 'failed') void cvStore.refreshDetail(cvId)
+  },
+)
+
+/** CV đang trong pipeline parse/analyze → hiện overlay spinner trên card. */
+const isProcessing = (cv: Cv): boolean =>
+  cv.status === 'pending' || cv.status === 'parsing' || cv.status === 'analyzing'
+
+/* ===== Re-analyze — nút brain hiện khi hover card CV đã parse =====
+ * POST /cvs/:cvId/analyze qua cvStore.triggerAnalysis — store applyRow patch
+ * row local (status='analyzing') nên overlay spinner hiện ngay, không đợi
+ * socket. Fail (kể cả hết lượt 402 — modal UpgradePricing cũng mở kèm) →
+ * toast lỗi từ cvStore.error. */
+const analyzingId = ref<string | null>(null)
+const handleAnalyze = async (cv: Cv): Promise<void> => {
+  if (analyzingId.value) return
+  analyzingId.value = cv.id
   try {
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch {
-    return '';
-  }
-};
-
-/* ============================================================================
- * Card reason box — hiển thị LÝ DO inline ngay trên card (thay vì banner
- * chiếm chỗ phía trên hay modal riêng). Áp dụng cho mọi failureReason
- * persist trong DB (BE giữ qua reload — xem store/scanQuotaWarningFromItems).
- *
- * Tone mapping (theo palette mục 9 của spec):
- *   - red:    lỗi nghiêm trọng (parse fail, analysis fail) — user cần hành động.
- *   - amber:  cảnh báo quota (CV vẫn dùng được, điểm cũ giữ nguyên) — warning.
- *   - null:   không hiển thị box.
- *
- * Body text giải thích NGẮN để user hiểu lý do ngay, không phải click
- * "Chi tiết" mở modal → giảm friction. Format "Lý do: ..." cho failed,
- * ngắn gọn cho quota.
- * ==========================================================================*/
-type ReasonBox = { tone: 'red' | 'amber'; title: string };
-
-const cardReason = (cv: Cv): ReasonBox | null => {
-  // 1. Parse quota fail (status=failed, không có parsedData — CV vô dụng)
-  if (cv.status === 'failed' && cv.failureReason === 'quota_exceeded') {
-    return {
-      tone: 'red',
-      title: 'Đã hết lượt upload CV',
-    };
-  }
-  // 2. Parse error (network / bad content sau 3 retry BullMQ)
-  if (cv.status === 'failed' && cv.failureReason === 'parse_error') {
-    return {
-      tone: 'red',
-      title: 'Không thể xử lý CV',
-    };
-  }
-  // 3. Invalid file (no fileUrl / fileType — validate fail)
-  if (cv.status === 'failed' && cv.failureReason === 'invalid_file') {
-    return {
-      tone: 'red',
-      title: 'File không hợp lệ',
-    };
-  }
-  // 3b. Not a CV — AI detect nội dung không phải CV (vd. screenshot game, ảnh
-  // ngẫu nhiên, tài liệu không liên quan). BE emit kèm status='failed' +
-  // reason='not_a_cv' sau khi parse xong. Hiện message cụ thể để user hiểu
-  // không phải lỗi kỹ thuật mà là sai nội dung.
-  if (cv.status === 'failed' && cv.failureReason === 'not_a_cv') {
-    return {
-      tone: 'red',
-      title: 'Nội dung không phải CV',
-    };
-  }
-  // 4. Analysis quota fail (status=ready, điểm cũ vẫn được giữ trong DB).
-  if (cv.status === 'ready' && cv.failureReason === 'quota_exceeded') {
-    return {
-      tone: 'amber',
-      title: 'Đã hết lượt phân tích AI',
-    };
-  }
-  // 5. Analysis error (sau retry exhausted — BE giữ reason trong DB)
-  if (cv.failureReason === 'analysis_error') {
-    return {
-      tone: 'red',
-      title: 'Phân tích AI thất bại',
-    };
-  }
-  return null;
-};
-
-/* ============================================================================
- * Status badge cho card body — tone + label ngắn gọn (English để gọn trong
- * pill, khớp mockup). Mapping theo palette mục 9:
- *   - ready   → green
- *   - failed  → red
- *   - pending → amber
- *   - parsing → blue
- *   - deleted → slate
- * ==========================================================================*/
-type BadgeTone = 'green' | 'red' | 'amber' | 'blue' | 'slate';
-
-const statusBadge = (cv: Cv): { tone: BadgeTone; label: string } => {
-  switch (cv.status) {
-    case 'ready':
-      return { tone: 'green', label: 'Ready' };
-    case 'failed':
-      return { tone: 'red', label: 'Failed' };
-    case 'pending':
-      return { tone: 'amber', label: 'Pending' };
-    case 'parsing':
-      return { tone: 'blue', label: 'Parsing' };
-    case 'analyzing':
-      return { tone: 'blue', label: 'Analyzing' };
-    case 'deleted':
-      return { tone: 'slate', label: 'Đã xoá' };
-  }
-};
-
-/* ============================================================================
- * Set primary
- * ==========================================================================*/
-const settingPrimaryId = ref<string | null>(null);
-const handleSetPrimary = async (cvId: string) => {
-  settingPrimaryId.value = cvId;
-  openMenuId.value = null; // đóng menu nếu mở
-  try {
-    await cvStore.setPrimary(cvId);
+    const ok = await cvStore.triggerAnalysis(cv.id)
+    if (!ok) toast.error(cvStore.error ?? 'Không gọi được phân tích AI.')
   } finally {
-    settingPrimaryId.value = null;
+    analyzingId.value = null
   }
-};
+}
 
-/* ============================================================================
- * Re-analyze — POST /cvs/:cvId/analyze (store: cvStore.triggerAnalysis).
- * Disable button khi đang pending/parsing; backend cũng 409 nếu lỡ click.
- * ==========================================================================*/
-const analyzingId = ref<string | null>(null);
-const handleAnalyze = async (cvId: string) => {
-  openMenuId.value = null;
-  analyzingId.value = cvId;
-  try {
-    await cvStore.triggerAnalysis(cvId);
-  } catch {
-    // store đã set error; watch ở setup() fire toast tương ứng.
-  } finally {
-    analyzingId.value = null;
+/* ===== Tab filter "CV của tôi" — Tất cả / Upload / Thủ công =====
+ * Server-side qua cvStore.fetchList (?source=) — mirror handleSourceChange
+ * ở MyResumesView: tab 'all' cần resetFilters=true để clear query.source
+ * vì fetchList mặc định coi undefined = "giữ nguyên source hiện tại". */
+type SourceTab = 'all' | CvSource
+const sourceTab = ref<SourceTab>('all')
+const sourceTabs: Array<{ value: SourceTab; label: string }> = [
+  { value: 'all', label: 'Tất cả' },
+  { value: 'upload', label: 'Upload' },
+  { value: 'direct', label: 'Thủ công' },
+]
+const sourceToQuery = (s: SourceTab): CvSource | undefined =>
+  s === 'all' ? undefined : s
+
+const handleSourceChange = async (s: SourceTab): Promise<void> => {
+  sourceTab.value = s
+  await cvStore.fetchList(sourceToQuery(s), 1, undefined, s === 'all')
+}
+
+/* ===== Phân trang — server-side qua store (page/total/totalPages) =====
+ * fetchList(source, pageNum) với q=undefined nghĩa là "giữ nguyên q hiện tại"
+ * — search/source đổi đã tự reset page=1 phía store và watch. */
+const goToPage = async (p: number): Promise<void> => {
+  const target = Math.min(Math.max(1, p), totalPages.value)
+  if (target === page.value) return
+  await cvStore.fetchList(sourceToQuery(sourceTab.value), target, undefined)
+}
+
+/* ===== Chi tiết CV — click card mở CvDetailView =====
+ * detailId ref theo store items (computed find) → sau setPrimary/remove ở
+ * parent, modal tự cập nhật theo row mới mà không cần giữ object cũ. */
+const detailId = ref<string | null>(null)
+const detailCv = computed<Cv | null>(
+  () => items.value.find((c) => c.id === detailId.value) ?? null,
+)
+const openDetail = (cv: Cv): void => {
+  detailId.value = cv.id
+}
+const closeDetail = (): void => {
+  detailId.value = null
+}
+const settingPrimaryId = ref<string | null>(null)
+const onSetPrimary = async (cvId: string): Promise<void> => {
+  settingPrimaryId.value = cvId
+  const ok = await cvStore.setPrimary(cvId)
+  settingPrimaryId.value = null
+  if (ok) toast.success('Đã đặt làm CV chính.')
+  else toast.error(cvStore.error ?? 'Không đặt được CV chính.')
+}
+const deletingId = ref<string | null>(null)
+const onDeleteCv = async (cv: Cv): Promise<void> => {
+  deletingId.value = cv.id
+  const ok = await cvStore.remove(cv.id)
+  deletingId.value = null
+  if (ok) {
+    toast.success('Đã xóa CV.')
+    closeDetail() // row đã bị xoá khỏi list — đóng modal để không render row mồ côi
+  } else {
+    toast.error(cvStore.error ?? 'Không xóa được CV.')
   }
-};
+}
+/* ===== Builder overlay — CvBuilderEditor nhúng ngay trong trang =====
+ * Mở từ 3 entry: nút "Tạo mới" (create), lightbox "Dùng mẫu này" (create
+ * kèm templateId + ngôn ngữ đang chọn), menu "Sửa" CV direct (edit kèm cvId).
+ * Lưu thành công → đóng overlay + refresh list (reset filter để CV mới
+ * chắc chắn hiển thị). Không còn route sang CreateResumeView. */
+const builderOpen = ref(false)
+const builderCvId = ref<string | null>(null)
+const builderTemplateId = ref(1)
+const builderLanguage = ref<CvLanguage>('en')
 
-/**
- * Cho phép re-analyze khi status ở terminal state (ready | failed).
- *
- * KHÔNG check parsedData ở đây — để button luôn hiện cho mọi CV ready/failed,
- * kể cả khi parsedData bị null (vd. status='failed' + reason='not_a_cv' do
- * parse worker không tạo được data). Nếu BE reject vì thiếu parsedData
- * (400 CV_NOT_PARSED) → toast báo lỗi cho user biết, vẫn tốt hơn ẩn nút.
- *
- * KHÔNG check quota ở đây — chỉ disable ở `:disabled="!hasAnalyzeQuota"`.
- *
- * Không lọt theo source: direct CV luôn có parsedData; upload CV đã parse xong
- * cũng hợp lệ. Đây là điểm khác biệt so với bản cũ (chỉ source='upload').
- */
-const canAnalyze = (cv: Cv): boolean =>
-  cv.status === 'ready' || cv.status === 'failed';
+const openCreateBuilder = (): void => {
+  builderCvId.value = null
+  builderTemplateId.value = 1
+  builderOpen.value = true
+}
 
-/**
- * Còn quota analyze AI không? Worker `cvAnalysis.worker.ts:165` ghi
- * `ai_cv_analysis` vào usage_logs khi re-analyze. Nếu `hasQuota` trả false →
- * usage đã đạt limit → disable nút Sparkles để khỏi tốn bandwidth + 5-30s đợi
- * worker rồi fail.
- *
- * Lưu ý: BE worker vẫn chạy và ghi `failureReason='quota_exceeded'` cho race
- * case (quota hết giữa lúc click). UI vẫn có banner + quota modal xử lý case
- * đó — chỉ là chặn trước khi user wasted thời gian.
- */
-const hasAnalyzeQuota = computed<boolean>(() => planStore.hasQuota('ai_cv_analysis'));
+/** Lưu thành công trong builder → đóng overlay + refresh list (reset filter
+ *  về mặc định để CV mới/chỉnh sửa chắc chắn hiển thị). */
+const onBuilderSaved = (): void => {
+  builderOpen.value = false
+  void cvStore.fetchList(undefined, undefined, undefined, true)
+}
 
-/* ============================================================================
- * Delete — soft-delete + confirm modal.
- * ==========================================================================*/
-const confirmDeleteId = ref<string | null>(null);
+const onEditCv = (cv: Cv): void => {
+  closeDetail()
+  builderCvId.value = cv.id
+  builderOpen.value = true
+}
+/** Adapter — dialog emit cvId, handleAnalyze nhận Cv. */
+const onAnalyzeFromDetail = (cvId: string): void => {
+  const cv = detailCv.value
+  if (cv) void handleAnalyze(cv)
+}
 
-const askDelete = (cvId: string): void => {
-  openMenuId.value = null;
-  confirmDeleteId.value = cvId;
-};
-const cancelDelete = (): void => {
-  confirmDeleteId.value = null;
-};
-const confirmDeleteAction = async (): Promise<void> => {
-  const id = confirmDeleteId.value;
-  if (!id) return;
-  confirmDeleteId.value = null;
-  try {
-    await cvStore.remove(id);
-    if (cvStore.items.length === 0 && cvStore.page > 1) {
-      await cvStore.fetchList(undefined, 1);
-    }
-  } catch {
-    // store đã set error; watch ở setup() fire toast tương ứng.
-  }
-};
+/* ===== Chi tiết template demo — click card "Mẫu CV từ hệ thống" =====
+ * Fake Cv (direct, templateId 1-7) mở CvDetailView chế độ demo: chỉ tab
+ * Chi tiết + CTA "Dùng mẫu này" → route sang CreateResumeView kèm templateId. */
+const tplDetailCv = ref<Cv | null>(null)
 
-/* ============================================================================
- * Click-to-preview.
- *
- * Lưu ý: store.setPrimary REPLACE items bằng `items.value.map(c => ...)`
- * (object mới, không mutate ref cũ) — nên nếu giữ `previewData = ref<Cv>`
- * snapshot 1 lần, sau setPrimary previewData.isPrimary vẫn false → button
- * "Đặt làm CV chính" vẫn hiện, user click lại → API 409 hoặc no-op.
- *
- * Cách fix: chỉ lưu `previewDataId`, derive `previewCv` qua computed từ
- * `items` theo id. Mọi mutation của store (setPrimary / refreshDetail /
- * socket cv:status-changed) đều tự đội sync mà không cần manual refresh.
- * ==========================================================================*/
-const previewOpen = ref(false);
-const previewDataId = ref<string | null>(null);
+/** Ngôn ngữ tiêu đề section khi xem chi tiết mẫu (lightbox "Mẫu CV từ
+ *  hệ thống"). UI-only — không persist; default 'en' theo yêu cầu. */
+const templateLanguage = ref<CvLanguage>('en')
 
-/** CV đang xem trong modal — lookup từ items theo id để auto-sync store mutations. */
-const previewCv = computed<Cv | null>(() => {
-  const id = previewDataId.value;
-  if (!id) return null;
-  return items.value.find((c) => c.id === id) ?? null;
-});
+const onUseTemplate = (cv: Cv): void => {
+  tplDetailCv.value = null
+  builderCvId.value = null
+  builderTemplateId.value = clampTemplateId(cv.templateId ?? 1)
+  // Đồng bộ mode ngôn ngữ tiêu đề đang chọn ở lightbox sang builder.
+  builderLanguage.value = templateLanguage.value
+  builderOpen.value = true
+}
 
-const openPreview = (cv: Cv): void => {
-  previewDataId.value = cv.id;
-  previewOpen.value = true;
-};
-const closePreview = (): void => {
-  previewOpen.value = false;
-  previewDataId.value = null;
-};
+/* ===== Search theo title — server-side (?q=), debounce 400ms =====
+ * Mirror watch(searchQuery) ở MyResumesView: giữ nguyên source filter
+ * (fetchList(undefined, ...) = không đổi source), q đổi → store tự về page 1.
+ * Trim trước khi gửi; empty sau trim → undefined (BE reject empty string). */
+const searchQuery = ref('')
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+const SEARCH_DEBOUNCE_MS = 400
+watch(searchQuery, (val) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  const trimmed = val.trim()
+  // Empty sau trim → null (CLEAR q) — undefined nghĩa là "giữ nguyên q cũ"
+  // → list sẽ không về ban đầu khi user xoá hết text.
+  const q = trimmed.length > 0 ? trimmed : null
+  searchTimer = setTimeout(() => {
+    void cvStore.fetchList(undefined, undefined, q)
+  }, SEARCH_DEBOUNCE_MS)
+})
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
 
-/* ============================================================================
- * Quota detail modal — mở khi user click "Chi tiết" trên warning strip.
- *
- * Tại sao modal (không phải inline popover):
- *   - Inline popover (slide-down dưới strip) đẩy thumbnail xuống → card
- *     dưới nhảy theo → ugly. Modal tách hẳn khỏi grid, không ảnh hưởng layout.
- *   - Tách biệt với CV preview modal (khác max-w, khác theme, khác nội dung):
- *     preview = xem CV; quota modal = giải thích lý do + CTA retry/upgrade.
- *   - Đóng bằng: backdrop click, nút X, hoặc nút "Đóng" trong footer.
- * ==========================================================================*/
-const quotaDetailCvId = ref<string | null>(null);
+/* ===== AI-Generated Templates — render 5 template thật từ components/cv =====
+ * Mỗi card dựng 1 Cv "direct" giả (templateId 1-7) + parsedData mẫu chung,
+ * đưa qua CvThumbnail để render đúng CvThumbnailTemplate{1-5} (cùng đường
+ * render như card "CV của tôi"). parsedData key khớp buildRenderData
+ * (name/position/summary/education/experience/skills/...). */
+const aiParsedData: Record<string, unknown> = {
+  name: 'Edward Smith',
+  position: 'UI/UX Designer',
+  email: 'info@email.com',
+  phone: '+112 456 890099',
+  portfolio: 'www.example.com',
+  address: '1234, Address, 4rd/New york Street, New York City 4560',
+  avatarUrl: '/avatars/template1-portrait.jpg',
+  summary:
+    "I'm Edward Smith, Lorem ipsum dolor sit amet, dolor consectetur adipiscing elit. Vivamus volutpat amet dolor sit id. Consectetur adipiscing elit vivamus volutpat libero lorem ipsum dolor. Vivamus volutpat sit id. Lorem ipsum dolor sit amet, consectetur adipiscing elit vivamus. Volutpat sit id.\nAutem dolor consectetur adipiscing elit vivamus. Mauris sit amet adipiscing elit vivamus. Volutpat libero lorem ipsum dolor vivamus.",
+  education: [
+    {
+      school: 'University Name / Location',
+      degree: 'Degree name here',
+      startYear: '2015',
+      endYear: '2016',
+    },
+    {
+      school: 'University Name / Location',
+      degree: 'Degree name here',
+      startYear: '2010',
+      endYear: '2015',
+    },
+    {
+      school: 'University Name / Location',
+      degree: 'Degree name here',
+      startYear: '2008',
+      endYear: '2010',
+    },
+  ],
+  experience: [
+    {
+      company: 'Company Name / Location',
+      position: 'Job position title here',
+      startDate: '2024',
+      endDate: '2029',
+      description:
+        'Lorem ipsum dolor sit amet, dolor consectetur adipiscing elit. Vivamus volutpat amet dolor sit id. Consectetur adipiscing elit vivamus volutpat libero lorem ipsum dolor. Vivamus volutpat sit id.\nLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus volutpat sit idolor.\nAmet dolor elit dolor sit amet. Consectetur adipiscing elit vivamus.\nLorem ipsum dolor volutpat lorem consectetur adipiscing elit vivamus.',
+    },
+    {
+      company: 'Company Name / Location',
+      position: 'Job position title here',
+      startDate: '2020',
+      endDate: '2024',
+      description:
+        'Lorem ipsum dolor sit amet, dolor consectetur adipiscing elit. Vivamus volutpat amet dolor sit id. Consectetur adipiscing elit vivamus volutpat libero lorem ipsum dolor. Vivamus volutpat sit id.\nLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus volutpat sit idolor.\nAmet dolor elit dolor sit amet. Consectetur adipiscing elit vivamus.\nLorem ipsum dolor volutpat lorem consectetur adipiscing elit vivamus.',
+    },
+    {
+      company: 'Company Name / Location',
+      position: 'Job position title here',
+      startDate: '2016',
+      endDate: '2020',
+      description:
+        'Lorem ipsum dolor sit amet, dolor consectetur adipiscing elit. Vivamus volutpat amet dolor sit id. Consectetur adipiscing elit vivamus volutpat libero lorem ipsum dolor. Vivamus volutpat sit id.\nLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus volutpat sit idolor.\nAmet dolor elit dolor sit amet. Consectetur adipiscing elit vivamus.\nLorem ipsum dolor volutpat lorem consectetur adipiscing elit vivamus.',
+    },
+  ],
+  skills: [
+    { name: 'Graphic Design', level: 4 },
+    { name: 'Project Management', level: 4 },
+    { name: 'Market Research', level: 3 },
+    { name: 'Branding', level: 4 },
+    { name: 'UI/UX Design', level: 5 },
+    { name: 'Web Design', level: 4 },
+    { name: 'Web Development', level: 3 },
+    { name: 'Team Development', level: 4 },
+  ],
+  certifications: [
+    { name: 'Joseph Daniel', issuer: 'Position Here / Company Name', date: '+112 456 8900995' },
+    { name: 'Joseph Daniel', issuer: 'Position Here / Company Name', date: '+112 456 8900995' },
+  ],
+  projects: [
+    {
+      name: 'JobMatch VN',
+      role: 'Frontend Lead',
+      time: '2023 — 2024',
+      description: 'Nền tảng matching việc làm cho thị trường Việt Nam.',
+    },
+  ],
+  interests: [
+    'Graphic Design',
+    'Project Management',
+    'Market Research',
+    'Branding',
+    'UI/UX Design',
+    'Photography',
+  ],
+}
 
-/** CV đang hiển thị trong quota modal — lookup từ items theo id. */
-const quotaCv = computed<Cv | null>(() => {
-  const id = quotaDetailCvId.value;
-  if (!id) return null;
-  return items.value.find((c) => c.id === id) ?? null;
-});
+/** Tên hiển thị theo style của CVTemplate{1-5}. */
+/** Tên hiển thị theo style thật của CVTemplate{1-5}. */
+const aiTemplateMeta = [
+  { name: 'Cam Hiện Đại' },      // 1 — header cam full-width + 2 cột 35/65
+  { name: 'Teal Hình Học' },     // 2 — góc chữ L teal + avatar viền đen
+  { name: 'Serif Cổ Điển' },     // 3 — serif 1 cột, header căn giữa
+  { name: 'Navy Chuyên Nghiệp' },// 4 — thanh navy + header nền xanh nhạt
+  { name: 'Sidebar Cá Tính' },   // 5 — sidebar trái xanh + tam giác decor
+  { name: 'Mustard Editorial' }, // 6 — navy/yellow, tên dọc + ảnh chân dung
+  { name: 'Ocean Teal Executive' }, // 7 — serif xanh biển, thanh liên hệ ngang
+] as const
 
-const closeQuotaDetail = (): void => {
-  quotaDetailCvId.value = null;
-};
+/** Dựng Cv giả cho CvThumbnail + lightbox — title = tên mẫu (lightbox header). */
+const makeAiTemplateCv = (templateId: number, name: string): Cv => ({
+  id: `ai-template-${templateId}`,
+  candidateId: '',
+  title: name,
+  fileUrl: null,
+  fileType: null,
+  isPrimary: false,
+  status: 'ready',
+  source: 'direct',
+  templateId,
+  parsedData: aiParsedData,
+  ai_analysis: null,
+  failureReason: null,
+  scoreUpdatedAt: null,
+  createdAt: '',
+  updatedAt: '',
+})
 
-/* ============================================================================
- * AI analysis modal — hiện chi tiết trường `ai_analysis` (total / strengths /
- * weaknesses / suggestions / verificationWarnings). Mở từ card quick-actions.
- *
- * Tách riêng khỏi preview modal:
- *   - preview modal = xem CV render thật / file PDF.
- *   - analysis modal = xem điểm AI + nhận xét (text-only, không cần iframe).
- *
- * Tránh mở khi CV chưa phân tích (button không hiện) hoặc `isCv=false` (sẽ
- * hiện warning riêng).
- * ==========================================================================*/
-const analysisOpen = ref(false);
-const analysisDataId = ref<string | null>(null);
-
-/**
- * CV đang xem trong analysis modal — lookup từ `items` theo id (cùng pattern
- * `previewDataId`/`previewCv` và `quotaDetailCvId`/`quotaCv` ở trên) để
- * auto-sync store mutations, đặc biệt là socket `cv:status-changed` →
- * `refreshDetail` sẽ `applyRow` full row mới vào `items` → modal re-render
- * với `ai_analysis` mới NGAY KHÔNG CẦN đóng/mở lại.
- *
- * Trước đây dùng `ref<Cv | null>` snapshot được gán qua `openAnalysis(cv)`
- * — nếu user mở modal đúng lúc worker re-analyze đang chạy, modal giữ data
- * CŨ cho tới khi user đóng/mở lại. Đây là bug mà user báo "CV đổi nhưng
- * điểm chưa cập nhật" khi open modal ngay giữa analyze.
- */
-const analysisCv = computed<Cv | null>(() => {
-  const id = analysisDataId.value;
-  if (!id) return null;
-  return items.value.find((c) => c.id === id) ?? null;
-});
-
-const openAnalysis = (cv: Cv): void => {
-  analysisDataId.value = cv.id;
-  analysisOpen.value = true;
-};
-const closeAnalysis = (): void => {
-  analysisOpen.value = false;
-  analysisDataId.value = null;
-};
-
-/** Dùng cho UI: CV có mở nút "Xem phân tích" hay không. Có analysis + isCv. */
-const canShowAnalysis = (cv: Cv): boolean =>
-  cv.ai_analysis !== null && cv.ai_analysis.isCv === true;
-
-/**
- * CV có warning quota hiển thị trên thẻ không?
- * ĐK: failureReason='quota_exceeded' (BE persist reason này trong DB nên
- * hiển thị survive reload — không phụ thuộc vào Pinia state).
- *
- * Áp dụng cho CẢ 2 case quota fail:
- *   - status='ready'  → analyze quota fail: parsedData còn, điểm cũ giữ,
- *                        CV vẫn dùng được, chỉ không tạo điểm mới.
- *   - status='failed' → parse quota fail:    CV không parse được, không có
- *                        parsedData, status='failed'/'quota_exceeded'.
- *
- * Hàm helper `isParseQuotaFail(cv)` phân biệt 2 case để strip + modal
- * hiển thị message + action phù hợp (parse không có nút "Thử lại" vì
- * không thể re-parse khi chưa upload lại).
- */
-/** True nếu quota fail từ PARSE stage (CV không có parsedData). */
-const isParseQuotaFail = (cv: Cv): boolean =>
-  cv.status === 'failed' && cv.failureReason === 'quota_exceeded';
-
-/** True nếu quota fail từ ANALYZE stage (CV có parsedData + điểm cũ). */
-const isAnalyzeQuotaFail = (cv: Cv): boolean =>
-  cv.status === 'ready' && cv.failureReason === 'quota_exceeded';
-
-/** True nếu CV đang xem trong quota modal là case parse (dùng cho modal
- *  body + footer khác biệt). */
-const quotaIsParse = computed<boolean>(() =>
-  quotaCv.value ? isParseQuotaFail(quotaCv.value) : false,
-);
-
-/* ============================================================================
- * Thumbnail constants — scale CV template khi nhúng vào thumbnail A4.
- *
- * Template render min-width full, min-h-[1100px] → dùng 850×1100 làm inner.
- * Paper width = 132px → scale = 132/850 ≈ 0.1553.
- *
- * Preview-related computed (`previewRenderData`, `previewTemplateId`,
- * `previewPdfUrl`, `previewIsOffice`) đã được MOVE VÀO [CvPreview.vue](../components/cv/CvPreview.vue)
- * — parent chỉ giữ `previewOpen` + `previewDataId` (state) + `previewCv`
- * (derived từ items theo id, auto-sync store mutations).
- *
- * Lý do tách:
- *   - Chỉ phục vụ preview modal, không ai khác dùng.
- *   - Khi buildRenderData / office viewer logic đổi → sửa 1 chỗ trong
- *     CvPreview, không rò rỉ vào view quản lý CV.
- *   - MyResumesView gọn lại — chỉ lo list + state, không ôm cả logic preview.
- * ==========================================================================*/
-const THUMBNAIL_RENDER_WIDTH = 850;
-const THUMBNAIL_RENDER_HEIGHT = 1100;
-const PAPER_WIDTH_PX = 132;
-const THUMBNAIL_SCALE = PAPER_WIDTH_PX / THUMBNAIL_RENDER_WIDTH;
-
-/** Hiệu ứng "xếp chồng giấy" phía sau thumbnail — thuần box-shadow, không thêm DOM. */
-const PAPER_STACK_SHADOW =
-  '0 1px 2px rgba(15,23,42,0.06), 4px 4px 0 -1px #fff, 4px 4px 0 0 rgba(15,23,42,0.07), 8px 8px 0 -1px #fff, 8px 8px 0 0 rgba(15,23,42,0.05)';
-
-const handleCreate = (): void => {
-  router.push('/candidate/resumes/new');
-};
-const handleUploadClick = (): void => {
-  router.push('/candidate/resumes/new?mode=upload');
-};
-
-/* ============================================================================
- * Action menu (⋮) — Xem chi tiết / Tải PDF / Mở file gốc / Xóa.
- * ==========================================================================*/
-const openMenuId = ref<string | null>(null);
-const toggleMenu = (cvId: string, ev?: MouseEvent) => {
-  ev?.stopPropagation();
-  openMenuId.value = openMenuId.value === cvId ? null : cvId;
-};
-const previewFromMenu = (cv: Cv) => {
-  openMenuId.value = null;
-  openPreview(cv);
-};
-/** Tải CV — dùng composable chung với CvPreview modal (cùng handler/toast). */
-const {
-  downloading: menuDownloading,
-  canOpenOriginal: menuCanOpenOriginal,
-  openOriginalTooltip: menuOpenOriginalTooltip,
-  handleDownload: menuHandleDownload,
-  handleOpenOriginal: menuHandleOpenOriginal,
-} = useCvDownload();
-const downloadFromMenu = (cv: Cv) => {
-  // Không đóng menu ngay — để user thấy spinner trên nút trong lúc tải.
-  void menuHandleDownload(cv);
-};
-const openOriginalFromMenu = (cv: Cv) => {
-  menuHandleOpenOriginal(cv);
-  openMenuId.value = null;
-};
-
-/* ============================================================================
- * Edit CV — nav tới /candidate/resumes/:cvId/edit.
- *
- * Guard: chỉ cho phép khi CV không đang trong "đang xử lý" (pending/parsing/
- * analyzing). Sửa CV đang được worker chạy có thể conflict với deepMerge
- * của PATCH — BE update() KHÔNG check status đó, nhưng để chắc chắn UX
- * đúng, disable nút. Status 'failed' thì OK (BE update() chấp nhận).
- *
- * CV đã 'deleted' không thể edit (BE softDelete đã set status='deleted'
- * → row bị filter khỏi list, nhưng defensive check vẫn có).
- * ==========================================================================*/
-const menuCanEdit = (cv: Cv): boolean =>
-  cv.status !== 'pending' &&
-  cv.status !== 'parsing' &&
-  cv.status !== 'analyzing' &&
-  cv.status !== 'deleted';
-
-const menuEditTooltip = (cv: Cv): string => {
-  if (cv.status === 'pending') return 'CV đang chờ xử lý, chưa thể sửa';
-  if (cv.status === 'parsing') return 'CV đang được parse, chưa thể sửa';
-  if (cv.status === 'analyzing') return 'CV đang được AI phân tích, chưa thể sửa';
-  if (cv.status === 'deleted') return 'CV đã bị xoá';
-  return 'Chỉnh sửa nội dung CV';
-};
-
-const editFromMenu = (cv: Cv) => {
-  openMenuId.value = null;
-  router.push({ name: 'edit-resume', params: { cvId: cv.id } });
-};
-
-/**
- * Edit từ CvPreview modal — user bấm nút "Sửa CV" trong header modal.
- * Đóng modal trước để cleanup, sau đó navigate. Tận dụng `editFromMenu` để
- * không nhân đôi logic route — chỉ khác entry point.
- */
-const onEditFromPreview = (cvId: string) => {
-  closePreview();
-  const cv = items.value.find((c) => c.id === cvId);
-  if (cv) editFromMenu(cv);
-};
-/** Đóng menu khi click ra ngoài (delegate trên document, dùng data attr `data-cv-menu`).
- *  Quota modal đóng qua backdrop @click.self riêng — không cần check ở đây. */
-const onDocClick = (e: MouseEvent) => {
-  const target = e.target as HTMLElement | null;
-  if (!target) return;
-  if (!target.closest('[data-cv-menu]')) openMenuId.value = null;
-};
-onMounted(() => document.addEventListener('click', onDocClick));
-onBeforeUnmount(() => document.removeEventListener('click', onDocClick));
-
-/** True nếu đang có filter/search khác mặc định — dùng để hiện chip "Xoá lọc".
- *  Đọc RAW searchQuery (chưa debounce) để chip hiện ngay khi user bắt đầu gõ,
- *  không phải đ�i 400ms. */
-const hasActiveFilter = computed<boolean>(
-  () => sourceFilter.value !== 'all' || searchQuery.value.trim().length > 0,
-);
-const clearAllFilters = async (): Promise<void> => {
-  // Bug H1 — race condition với watch(searchQuery):
-  //   Set searchQuery TRƯỚC trigger watch(searchQuery) (Vue 3 watch default
-  //   `flush: 'pre'` chạy async sau current sync code). Watch cancel timer cũ
-  //   rồi SET TIMER MỚI 400ms với `q=undefined`. Nếu không cancel timer mới
-  //   này → 400ms sau, setTimeout fire `fetchList(undefined, undefined, undefined)`
-  //   KHÔNG có resetFilters=true, clobber state do user đổi trong lúc chờ.
-  //
-  //   Fix: await nextTick() TRƯỚC khi clear timer lần 2 — buộc watch fire đồng
-  //   bộ, set timer mới, rồi mới clear timer mới này. Cuối cùng mới gọi
-  //   fetchList với resetFilters=true (caller chính thức, không qua watch).
-  if (searchTimer) clearTimeout(searchTimer);
-  searchQuery.value = '';
-  await nextTick();
-  if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = null;
-  sourceFilter.value = 'all';
-  // ResetFilters=true → store clear query.source + query.q về undefined rồi
-  // fetch lại từ DB. Nếu không có flag này, fetchList coi undefined = "giữ
-  // nguyên" → API vẫn filter theo source cũ → list không đổi.
-  await cvStore.fetchList(undefined, 1, undefined, true);
-};
+const aiTemplateCvs = aiTemplateMeta.map((meta, i) => ({
+  cv: makeAiTemplateCv(i + 1, meta.name),
+  name: meta.name,
+}))
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#F7F8FA]">
-    <div class="max-w-7xl mx-auto px-5 md:px-8 py-8 md:py-11">
-
-      <!-- ============ Page Header ============ -->
-      <header class="mb-7 flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
-        <div class="flex items-center gap-3.5">
-          <div class="w-11 h-11 rounded-2xl bg-slate-900 flex items-center justify-center shrink-0">
-            <FileText class="w-5 h-5 text-white" />
+  <div class="font-poppins min-h-screen overflow-auto bg-white text-slate-700">
+    <!-- ============== MAIN ============== -->
+    <main class="min-w-0 flex-1 overflow-auto px-10 pb-7 pt-10">
+      <!-- HERO -->
+      <section class="relative flex h-[138px] items-center justify-center overflow-hidden rounded-[13px] bg-gradient-to-r from-[#faf3e8] via-white to-[#eef6ee] text-center">
+        <!-- Left paper -->
+        <div class="absolute -left-2 top-6 w-[94px] rotate-[-7deg] rounded-[9px] bg-white p-3 shadow-[0_8px_20px_rgba(0,0,0,0.06)]">
+          <div class="text-[9px] font-bold text-slate-900">
+            Resume
           </div>
-          <div>
-            <div class="flex items-center gap-2.5">
-              <h1 class="text-xl md:text-[24px] font-bold text-slate-900 tracking-tight">
-                CV của tôi
-              </h1>
-              <span
-                v-if="total > 0"
-                class="text-[11px] font-semibold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5 tabular-nums"
-              >
-                {{ total }}
-              </span>
-            </div>
-            <p class="text-sm text-slate-500 mt-0.5 max-w-xs sm:max-w-none">
-              Quản lý, tổ chức và phân tích AI cho tất cả CV của bạn tại một nơi.
-            </p>
+          <div class="mt-2 flex flex-col gap-1">
+            <span class="h-1 rounded bg-slate-200" />
+            <span class="h-1 w-4/5 rounded bg-slate-200" />
+            <span class="h-1 w-3/5 rounded bg-slate-200" />
+            <span class="h-1 rounded bg-slate-200" />
+            <span class="h-1 w-4/5 rounded bg-slate-200" />
+            <span class="h-1 rounded bg-slate-200" />
           </div>
         </div>
-        <div class="flex items-center gap-2.5 shrink-0 self-stretch md:self-auto">
-          <button
-            type="button"
-            class="btn-secondary flex-1 sm:flex-none inline-flex items-center justify-center gap-2 h-10 px-4 text-sm font-medium"
-            @click="handleUploadClick"
-          >
-            <Upload class="w-4 h-4" /> <span class="hidden sm:inline">Upload CV</span><span class="sm:hidden">Upload</span>
-          </button>
-          <button
-            type="button"
-            class="btn-primary flex-1 sm:flex-none inline-flex items-center justify-center gap-2 h-10 px-4 text-sm font-semibold shadow-sm shadow-primary-600/20"
-            @click="handleCreate"
-          >
-            <Plus class="w-4 h-4" /> Tạo CV
-          </button>
-        </div>
-      </header>
 
-      <!-- ============ Toolbar / Filter ============ -->
-      <div class="mb-6 bg-white ring-1 ring-slate-200/70 rounded-2xl px-3.5 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between shadow-sm shadow-slate-900/[0.02]">
-        <!-- Segmented tabs: mỗi loại nguồn có icon riêng để nhận diện nhanh.
-             Mobile: tabs phân bổ đều full-width; Desktop: gọn theo nội dung. -->
-        <div
-          class="tabs-scroll flex w-full md:w-auto md:inline-flex bg-slate-100/70 rounded-xl p-1 self-start shrink-0 overflow-x-auto"
-          role="tablist"
-        >
-          <button
-            v-for="opt in sourceOptions"
-            :key="opt.value"
-            type="button"
-            role="tab"
-            :aria-selected="sourceFilter === opt.value"
-            @click="handleSourceChange(opt.value)"
-            class="flex-1 md:flex-none justify-center px-2.5 sm:px-3.5 h-9 text-xs sm:text-sm font-medium rounded-lg transition-all duration-150 inline-flex items-center gap-1.5 whitespace-nowrap min-w-0"
-            :class="sourceFilter === opt.value
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'text-slate-500 hover:text-slate-800 hover:bg-white/70'"
-          >
-            <!-- Mobile (xs): icon-only + label ngắn. sm+: icon + label đầy đủ.
-                 Để "CV tạo trực tiếp" không overflow 1/3 width (~106px) ở 320px. -->
-            <Upload v-if="opt.value === 'upload'" class="w-3.5 h-3.5 shrink-0" :class="sourceFilter === opt.value ? 'opacity-90' : 'opacity-60'" />
-            <FileText v-else-if="opt.value === 'direct'" class="w-3.5 h-3.5 shrink-0" :class="sourceFilter === opt.value ? 'opacity-90' : 'opacity-60'" />
-            <span class="sm:hidden">{{ opt.shortLabel }}</span>
-            <span class="hidden sm:inline">{{ opt.label }}</span>
-          </button>
+        <!-- Right paper -->
+        <div class="absolute -right-1.5 top-6 w-[94px] rotate-[7deg] rounded-[9px] bg-white p-3 shadow-[0_8px_20px_rgba(0,0,0,0.06)]">
+          <div class="text-[9px] font-bold text-slate-900">
+            Resume
+          </div>
+          <div class="mt-2 flex flex-col gap-1">
+            <span class="h-1 rounded bg-slate-200" />
+            <span class="h-1 w-4/5 rounded bg-slate-200" />
+            <span class="h-1 w-3/5 rounded bg-slate-200" />
+            <span class="h-1 rounded bg-slate-200" />
+            <span class="h-1 w-4/5 rounded bg-slate-200" />
+            <span class="h-1 rounded bg-slate-200" />
+          </div>
         </div>
 
-        <!-- Search + trạng thái filter -->
-        <div class="flex items-center gap-2 flex-wrap md:flex-nowrap w-full md:w-auto">
-          <!-- Search input: mobile full-width (flex-1 trong flex-wrap row),
-               desktop cố định 240px. min-w-[10rem] để không bị squish khi clear
-               button chiếm chỗ. -->
-          <div class="relative flex-1 min-w-[10rem] md:flex-none md:w-60 order-1">
-            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+        <div>
+          <h1 class="mb-1.5 text-[20px] font-semibold text-slate-900">
+            Chào mừng bạn đến với thư viện CV của JobMatch
+          </h1>
+          <p class="mb-3 text-[14px] text-slate-500">
+            Quản lý tất cả CV của bạn, khám phá các mẫu CV được tạo bởi hệ thống JobMatch.
+          </p>
+          <div class="mx-auto flex h-[30px] w-[480px] max-w-[70%] overflow-hidden rounded-lg border border-slate-200 bg-white p-0.5">
             <input
               v-model="searchQuery"
               type="text"
-              placeholder="Tìm theo tiêu đề..."
-              class="h-9 pl-9 pr-4 w-full text-sm rounded-xl border border-slate-200 bg-slate-50/60 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/25 focus:border-primary-400 focus:bg-white transition"
+              placeholder="Tìm CV theo tên..."
+              class="min-w-0 flex-1 border-0 px-2 text-[14px] text-slate-500 outline-none placeholder:text-slate-400 focus:ring-0 focus-visible:ring-0"
+            >
+            <button class="grid h-[24px] w-[24px] place-items-center rounded-md bg-blue-700 text-white">
+              <Search :size="13" />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- FILTERS -->
+      <div class="my-3 flex items-center gap-1.5">
+        <button
+          type="button"
+          class="flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[14px] text-slate-600"
+          @click="showUpload = true"
+        >
+          <Upload :size="13" />
+          Upload
+        </button>
+        
+        <button
+          type="button"
+          class="flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[14px] text-slate-600"
+          @click="openCreateBuilder"
+        >
+          <Palette :size="13" />
+          Tạo mới
+        </button>
+      </div>
+
+      <!-- FRESHLY PUBLISHED -->
+      <section class="mb-[18px]">
+        <div class="mb-0.5 flex items-center gap-1.5">
+          <h2 class="m-0 text-[15px] font-semibold">
+            CV của tôi
+          </h2>
+          <ChevronRight :size="14" class="text-slate-500" />
+
+          <!-- Source tabs — Tất cả / Upload / Thủ công (filter client-side) -->
+          <div class="ml-auto flex overflow-hidden rounded-md border border-slate-200">
+            <button
+              v-for="(tab, i) in sourceTabs"
+              :key="tab.value"
+              class="flex h-[27px] items-center px-3 text-[14px] font-medium transition-colors"
+              :class="[
+                sourceTab === tab.value
+                  ? 'bg-blue-700 text-white'
+                  : 'bg-white text-slate-600 hover:bg-slate-50',
+                i > 0 ? 'border-l border-slate-100' : '',
+              ]"
+              :aria-pressed="sourceTab === tab.value"
+              @click="handleSourceChange(tab.value)"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
+        </div>
+        <div class="mb-2.5 text-[12px] text-slate-500">
+          Danh sách CV thực tế từ hồ sơ của bạn.
+        </div>
+
+        <!-- Loading state -->
+        <div
+          v-if="loading && items.length === 0"
+          class="flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white py-12 text-xs text-slate-500"
+          role="status"
+        >
+          <Loader2 :size="14" class="animate-spin text-slate-400" />
+          Đang tải CV của bạn…
+        </div>
+
+        <!-- Empty state — theo query server-side hiện tại -->
+        <div
+          v-else-if="!loading && items.length === 0"
+          class="rounded-md border border-slate-200 bg-white py-12 text-center text-xs text-slate-500"
+        >
+          {{ searchQuery.trim() || sourceTab !== 'all' ? 'Không có CV nào phù hợp.' : 'Bạn chưa có CV nào. Tạo CV mới để bắt đầu.' }}
+        </div>
+
+        <!-- Grid — render thật từ API, preview PDF/template qua CvThumbnail.
+             Card đã AI phân tích thì hiện chip điểm ở góc dưới phải
+             (overlay trên gradient, tone theo scoreLabel). -->
+        <div v-else class="grid w-full grid-cols-4 gap-2.5">
+          <div
+            v-for="cv in items"
+            :key="cv.id"
+            class="template-card group cursor-pointer"
+            @click="openDetail(cv)"
+          >
+            <div class="resume-preview bg-white">
+              <CvThumbnail :cv="cv" fit="cover" class="w-full h-full" />
+            </div>
+
+            <div class="template-info">
+              <div class="truncate text-[13px] font-semibold text-slate-700">
+                {{ cv.title?.trim() || 'CV chưa đặt tên' }}
+              </div>
+              <div class="text-[11px] text-slate-500">
+                {{ formatDate(cv) || '—' }}
+              </div>
+            </div>
+
+            <!-- Icon chỉ báo "đã AI phân tích" — absolute góc trên phải,
+                 nằm trên vùng preview (z-index cao hơn .resume-preview z=1). -->
+            <!-- Brain icon tĩnh đã bỏ — CV ready chỉ hiện brain khi hover
+                 (nút "phân tích lại" ở dưới, group-hover:opacity-100). -->
+
+            <!-- Icon "lỗi phân tích" — góc trên phải, CV parse fail. Màu đỏ
+                 override .cv-ai-icon, tooltip kèm lý do failureReason từ BE. -->
+            <span
+              v-if="cv.status === 'failed'"
+              class="cv-ai-icon !bg-red-100 !text-red-600"
+              :title="`Phân tích thất bại - Đây có thể không phải CV chuẩn`"
+            >
+              <AlertTriangle :size="12" />
+            </span>
+
+            <!-- AI score badge (chỉ CV đã phân tích) — absolute góc dưới phải,
+                 z-index cao hơn .template-info (z=10) để nằm trên gradient. -->
+            <span
+              v-if="getAiScore(cv) !== null"
+              class="cv-ai-score"
+              :class="scoreLabel(getAiScore(cv) as number).tone"
+              :title="`Điểm AI: ${getAiScore(cv)}/100`"
+            >
+              {{ getAiScore(cv) }}
+            </span>
+
+            <!-- Nút "phân tích lại" — hiện khi hover card CV đã parse (ready).
+                 Đè lên brain badge (cùng vị trí góc trên phải, sau trong DOM).
+                 Trong lúc gọi hiện spinner; xong thì overlay "Đang phân tích"
+                 phủ card (store applyRow → status='analyzing'). -->
+            <button
+              v-if="cv.status === 'ready'"
+              type="button"
+              class="cv-ai-icon cursor-pointer !bg-white !text-[#5b4eea] opacity-0 shadow-[0_2px_6px_rgba(15,23,42,0.15)] transition-opacity duration-150 group-hover:opacity-100"
+              title="Phân tích lại bằng AI"
+              @click.stop="handleAnalyze(cv)"
+            >
+              <Loader2 v-if="analyzingId === cv.id" :size="12" class="animate-spin" />
+              <Brain v-else :size="12" />
+            </button>
+
+            <!-- Overlay "đang phân tích" — CV upload mới chờ worker parse xong.
+                 inset-0 + overflow:hidden của .template-card tự clip bo góc. -->
+            <div
+              v-if="isProcessing(cv)"
+              class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 bg-white/75"
+            >
+              <Loader2 :size="18" class="animate-spin text-[#5b4eea]" />
+              <span class="text-[14px] font-medium text-slate-600">Đang phân tích…</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pagination — server-side qua store (page/total/totalPages), chỉ
+             hiện khi tổng CV vượt 1 trang (pageSize=8). -->
+        <nav
+          v-if="total > pageSize"
+          class="mt-3 flex items-center justify-between text-[11px] text-slate-500"
+          aria-label="Phân trang"
+        >
+          <p>
+            Trang <strong class="font-semibold text-slate-800">{{ page }}</strong>
+            <span class="mx-1 text-slate-300">/</span>
+            <strong class="font-semibold text-slate-800">{{ totalPages }}</strong>
+            <span class="mx-1.5 text-slate-300">·</span>
+            {{ total }} CV
+          </p>
+          <div class="flex items-center gap-1">
+            <button
+              type="button"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="page <= 1 || loading"
+              aria-label="Trang trước"
+              @click="goToPage(page - 1)"
+            >
+              <ChevronLeft :size="13" />
+            </button>
+            <button
+              type="button"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="page >= totalPages || loading"
+              aria-label="Trang sau"
+              @click="goToPage(page + 1)"
+            >
+              <ChevronRight :size="13" />
+            </button>
+          </div>
+        </nav>
+      </section>
+
+      <!-- AI GENERATED -->
+      <section class="mb-[18px]">
+        <div class="mb-0.5 flex items-center gap-1.5">
+          <h2 class="m-0 text-[15px] font-semibold">
+            Mẫu CV từ hệ thống JobMatch
+          </h2>
+          <ChevronRight :size="14" class="text-slate-500" />
+        </div>
+        <div class="mb-2.5 text-[12px] text-slate-500">
+          Mẫu CV được tạo bởi hệ thống dựa trên các vai trò công việc, cấp độ kinh nghiệm và nhu cầu của ngành nghề.
+        </div>
+
+        <div class="grid w-full grid-cols-4 gap-2.5">
+          <div
+            v-for="tpl in aiTemplateCvs"
+            :key="tpl.cv.id"
+            class="template-card template-card--tall group cursor-pointer"
+            @click="tplDetailCv = tpl.cv"
+          >
+            <div class="resume-preview bg-white">
+              <CvThumbnail :cv="tpl.cv" fit="cover" class="w-full h-full" />
+            </div>
+
+            <div class="template-info">
+              <div class="truncate text-[13px] font-medium text-slate-700">
+                {{ tpl.name }}
+              </div>
+              <div class="text-[11px] text-slate-500">
+                Từ hệ thống JobMatch
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- BOTTOM FEATURES -->
+      <div class="mt-1 grid grid-cols-2 gap-2.5">
+        <div class="feature-card">
+          <Sparkles class="absolute right-3 top-3 text-[#ff8b24]" :size="14" />
+          <h3 class="m-0 mb-1 text-[12px] font-semibold">
+            Most Popular Templates
+          </h3>
+          <p class="m-0 w-[57%] text-[9px] leading-relaxed text-slate-500">
+            Frequently used templates with proven results.
+          </p>
+          <div class="feature-link">
+            View popular templates　›
+          </div>
+          <div class="feature-paper">
+            <div class="paper-row" />
+            <div class="paper-row" />
+            <div class="paper-row short" />
+            <div class="paper-row" />
+            <div class="paper-row" />
+          </div>
+        </div>
+
+        <div class="feature-card">
+          <h3 class="m-0 mb-1 text-[12px] font-semibold">
+            Designed to Pass ATS
+          </h3>
+          <p class="m-0 w-[57%] text-[9px] leading-relaxed text-slate-500">
+            Clean, structured templates optimized for applicant tracking systems.
+          </p>
+          <div class="feature-link">
+            View popular templates　›
+          </div>
+          <div class="feature-paper">
+            <div class="paper-row" />
+            <div class="paper-row" />
+            <div class="paper-row short" />
+            <div class="paper-row" />
+            <div class="paper-row" />
+            <div class="paper-row" />
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Upload dialog — bind v-model với nút Upload trong FILTERS row. -->
+    <UploadFilesDialog v-model="showUpload" @attach="onUploadAttach" />
+
+    <!-- Detail dialog — click card mở. cv reactive từ store nên set-primary/
+         delete ở parent xong, nội dung modal tự cập nhật. -->
+    <CvDetailView
+      :open="detailCv !== null"
+      :cv="detailCv"
+      :setting-primary="settingPrimaryId !== null"
+      :deleting="deletingId !== null"
+      :analyzing="detailCv !== null && analyzingId === detailCv.id"
+      :language="templateLanguage"
+      @close="closeDetail"
+      @set-primary="onSetPrimary"
+      @edit="onEditCv"
+      @delete="onDeleteCv"
+      @analyze="onAnalyzeFromDetail"
+    />
+
+    <!-- Template demo lightbox — click card "Mẫu CV từ hệ thống" mở khung
+         full-size A4 như trang /test6. CTA "Dùng mẫu này" → mở builder overlay. -->
+    <CvTemplateLightbox
+      :open="tplDetailCv !== null"
+      :cv="tplDetailCv"
+      v-model:language="templateLanguage"
+      @close="tplDetailCv = null"
+      @use-template="onUseTemplate"
+    />
+
+    <!-- ===== Builder overlay — nền trong suốt (dim + blur trang list phía
+         sau), chỉ nổi 2 ô: preview card (trái) + form card (phải) và các
+         nút. Click ra vùng dim cũng đóng. ===== -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-150 ease-out"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition duration-100 ease-in"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div
+          v-if="builderOpen"
+          class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 px-4 pt-4 backdrop-blur-sm sm:px-6 sm:pt-6 lg:px-8 lg:pt-8"
+          @click.self="builderOpen = false"
+        >
+          <!-- Nút đóng nổi góc phải — không top bar để 2 ô editor là trung tâm -->
+          <button
+            type="button"
+            class="fixed right-4 top-4 z-10 grid h-9 w-9 place-items-center rounded-full bg-white text-slate-600 shadow-lg ring-1 ring-slate-900/10 transition-colors hover:text-slate-900"
+            aria-label="Đóng"
+            @click="builderOpen = false"
+          >
+            <X :size="16" />
+          </button>
+
+          <div class="mx-auto w-full max-w-[1500px]">
+            <CvBuilderEditor
+              :cv-id="builderCvId"
+              :initial-template-id="builderTemplateId"
+              :initial-language="builderLanguage"
+              @saved="onBuilderSaved"
+              @cancel="builderOpen = false"
             />
           </div>
-
-          <!-- Clear button: mobile đứng riêng 1 dòng (basis-full) ngay dưới
-               search cho dễ bấm. Desktop nằm cùng hàng ngang.
-               min-w-[2.25rem] đảm bảo touch target ≥36px dù label "Xoá" ngắn. -->
-          <Transition
-            enter-active-class="transition duration-150 ease-out"
-            enter-from-class="opacity-0 scale-95"
-            enter-to-class="opacity-100 scale-100"
-            leave-active-class="transition duration-100 ease-in"
-            leave-from-class="opacity-100"
-            leave-to-class="opacity-0"
-          >
-            <button
-              v-if="hasActiveFilter"
-              type="button"
-              class="basis-full md:basis-auto h-9 min-w-[2.25rem] px-3 sm:px-3 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200/80 inline-flex items-center justify-center md:justify-start gap-1 transition-colors order-2"
-              @click="clearAllFilters"
-            >
-              <X class="w-3.5 h-3.5 shrink-0" />
-              <span class="hidden sm:inline">Xoá lọc</span>
-              <span class="sm:hidden">Xoá bộ lọc</span>
-            </button>
-          </Transition>
-
-          <!-- Item count: ẩn mobile để không chiếm chỗ, hiện từ lg+ -->
-          <span v-if="items.length > 0" class="text-xs text-slate-400 shrink-0 hidden lg:inline tabular-nums order-3">
-            {{ items.length }}<span class="text-slate-300 mx-0.5">/</span>{{ total }}
-          </span>
-        </div>
-      </div>
-
-      <!-- ============ Error → toast ============
-           Trước: render banner đỏ inline (sticky đầu trang). Giờ chuyển sang
-           toast — watch ở setup() fire toast.error khi store set `error.value`.
-           Xem script block đầu file để biết lý do + cách clear. -->
-
-      <!-- ============ Quota warning hiển thị per-card (xem bên dưới) ============
-           Hiện inline trên từng thẻ CV có `failureReason='quota_exceeded'` +
-           `status='ready'` — banner global đã bỏ vì warning chỉ liên quan
-           đến 1 CV cụ thể. Persist trong DB qua reload (BE giữ reason). -->
-
-      <!-- ============ Loading (initial) — centered spinner trên nền trắng ============
-           Thay vì skeleton grid (dễ bị đọc là "trống / đen" trên nền sáng
-           lúc page vừa mount), hiện 1 icon spinner trắng xanh, text phụ —
-           rõ ràng là "đang tải", không nhầm với empty state.
-           Chiếm full viewport height để không bị "giật" layout khi list về. -->
-      <div
-        v-if="loading && items.length === 0"
-        class="bg-white rounded-2xl border border-slate-200/70 flex flex-col items-center justify-center gap-3 min-h-[60vh]"
-        role="status"
-        aria-live="polite"
-      >
-        <div class="w-12 h-12 rounded-full bg-primary-50 ring-1 ring-primary-100 flex items-center justify-center">
-          <Loader2 class="w-6 h-6 text-primary-600 animate-spin" />
-        </div>
-        <p class="text-sm font-medium text-slate-600">Đang tải CV của bạn…</p>
-        <p class="text-xs text-slate-400">Vui lòng đợi trong giây lát.</p>
-      </div>
-
-      <!-- ============ Empty: no CV at all ============ -->
-      <div
-        v-else-if="items.length === 0 && total === 0"
-        class="bg-white rounded-2xl border border-slate-200/80"
-      >
-        <div class="flex flex-col items-center justify-center py-12 sm:py-16 px-6 text-center">
-          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-50 to-primary-100/60 ring-1 ring-primary-100 flex items-center justify-center mb-4">
-            <FileText class="w-6 h-6 text-primary-600" />
-          </div>
-          <h3 class="text-base font-semibold text-slate-900">Bạn chưa có CV nào</h3>
-          <p class="text-sm text-slate-500 mt-1.5 max-w-sm">
-            Tạo CV trực tiếp trong vài phút hoặc upload CV có sẵn để bắt đầu.
-          </p>
-          <div class="mt-6 flex gap-2.5">
-            <button
-              type="button"
-              class="btn-secondary h-10 px-4 text-sm font-medium inline-flex items-center gap-2"
-              @click="handleUploadClick"
-            >
-              <Upload class="w-4 h-4" /> Upload CV
-            </button>
-            <button
-              type="button"
-              class="btn-primary h-10 px-4 text-sm font-semibold inline-flex items-center gap-2 shadow-sm shadow-primary-600/20"
-              @click="handleCreate"
-            >
-              <Plus class="w-4 h-4" /> Tạo CV
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- ============ Empty: filter returned 0 ============ -->
-      <div
-        v-else-if="items.length === 0"
-        class="bg-white rounded-2xl border border-slate-200/80"
-      >
-        <div class="flex flex-col items-center justify-center py-10 sm:py-14 text-center px-6">
-          <Search class="w-7 h-7 text-slate-300 mb-2" />
-          <p class="text-sm text-slate-500">
-            Không có CV nào khớp với bộ lọc / từ khoá hiện tại.
-          </p>
-          <button
-            type="button"
-            class="mt-3 text-sm text-primary-600 hover:text-primary-700 font-medium underline-offset-4 hover:underline"
-            @click="clearAllFilters"
-          >
-            Xoá bộ lọc
-          </button>
-        </div>
-      </div>
-
-      <!-- ============ Grid: 1 / 2 / 3 / 4 cols ============ -->
-      <div
-        v-else
-        class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-5"
-      >
-        <article
-          v-for="cv in items"
-          :key="cv.id"
-          class="group relative w-full bg-white rounded-2xl border border-slate-200/70 transition-all duration-200 ease-out cursor-pointer overflow-hidden flex flex-col hover:shadow-lg hover:shadow-slate-900/[0.07] hover:-translate-y-0.5 hover:border-slate-300"
-          @click="openPreview(cv)"
-        >
-          <!-- Dải màu trạng thái mảnh ở mép trên — nhận diện nhanh -->
-          <div class="h-[3px] w-full shrink-0" :class="statusDotClass[cv.status]" />
-
-          <!-- Quota warning được chuyển vào CARD BODY (reason box inline) để
-               không chiếm dải ngang dài phía trên thumbnail — xem cardReason()
-               ở script. Strip banner cũ đã bỏ theo spec mục 3. -->
-
-          <!-- ============ Thumbnail (visual trung tâm) ============ -->
-          <div class="relative bg-gradient-to-b from-slate-50/70 to-white px-4 sm:px-7 pt-6 sm:pt-7 pb-5 sm:pb-6 flex items-center justify-center">
-
-            <!-- Action bar (top-right): ⭐ Star + ✨ Sparkles (trigger AI) +
-                 🧠 Brain (view AI) + ⋮ menu.
-                 - Star: đặt CV chính (amber).
-                 - Sparkles: GỌI AI phân tích lại (primary blue) — chỉ khi CV
-                   có parsedData + status terminal. Click sẽ trigger worker.
-                 - Brain: XEM kết quả AI đã có (violet) — chỉ khi CV đã có
-                   analysis hợp lệ + isCv=true. Click mở modal.
-                 Cả 2 icon AI đều hiện rõ 100% (không fade hover) để user
-                 nhận biết ngay chức năng AI. -->
-            <div class="absolute top-3 right-3 z-20 flex items-center gap-1.5" @click.stop>
-              <!-- 1. Set primary quick-action (chỉ khi !isPrimary) -->
-              <button
-                v-if="!cv.isPrimary"
-                type="button"
-                class="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-white shadow-sm ring-1 ring-slate-200/80 inline-flex items-center justify-center transition-all duration-150 text-amber-500 hover:text-amber-600 hover:bg-amber-50"
-                :disabled="settingPrimaryId === cv.id"
-                title="Đặt làm CV chính"
-                @click.stop="handleSetPrimary(cv.id)"
-              >
-                <Loader2 v-if="settingPrimaryId === cv.id" class="w-4 h-4 animate-spin" />
-                <Star v-else class="w-4 h-4" />
-              </button>
-
-              <!-- 2. GỌI AI phân tích lại (chỉ khi CV có parsedData + status terminal).
-                   Tone primary (blue) — phân biệt với Brain (violet). -->
-              <button
-                v-if="canAnalyze(cv)"
-                type="button"
-                class="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-primary-50 shadow-sm ring-1 ring-primary-300/70 inline-flex items-center justify-center transition-all duration-150 text-primary-700 hover:bg-primary-100 hover:text-primary-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="analyzingId === cv.id || !hasAnalyzeQuota"
-                :title="hasAnalyzeQuota ? 'Gọi AI phân tích lại CV' : 'Đã hết lượt phân tích AI — nâng cấp gói để tiếp tục'"
-                @click.stop="handleAnalyze(cv.id)"
-              >
-                <Loader2 v-if="analyzingId === cv.id" class="w-4 h-4 animate-spin" />
-                <Sparkles v-else class="w-4 h-4" />
-              </button>
-
-              <!-- 3. XEM phân tích AI (chỉ khi CV đã có analysis hợp lệ + isCv=true).
-                   Tone violet — phân biệt với Sparkles (primary). -->
-              <button
-                v-if="canShowAnalysis(cv)"
-                type="button"
-                class="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-violet-50 shadow-sm ring-1 ring-violet-300/70 inline-flex items-center justify-center transition-all duration-150 text-violet-700 hover:bg-violet-100 hover:text-violet-800"
-                title="Xem phân tích AI"
-                @click.stop="openAnalysis(cv)"
-              >
-                <Brain class="w-4 h-4" />
-              </button>
-
-              <!-- ⋮ Dropdown wrapper (data-cv-menu cho outside-click handler) -->
-              <div class="relative" data-cv-menu>
-                <button
-                  type="button"
-                  class="w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-white text-slate-500 hover:text-slate-900 shadow-sm ring-1 ring-slate-200/80 inline-flex items-center justify-center transition-all duration-150"
-                  :class="openMenuId === cv.id
-                    ? 'opacity-100 text-slate-900'
-                    : 'opacity-70 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100'"
-                  :aria-expanded="openMenuId === cv.id"
-                  aria-haspopup="menu"
-                  title="Thêm thao tác"
-                  @click="(e) => toggleMenu(cv.id, e)"
-                >
-                  <MoreVertical class="w-4 h-4" />
-                </button>
-
-                <!-- Dropdown (Xem chi tiết + Tải PDF + Mở file gốc + Xóa — quick-actions đã lên trên) -->
-                <Transition
-                  enter-active-class="transition duration-120 ease-out"
-                  enter-from-class="opacity-0 scale-95 -translate-y-1"
-                  enter-to-class="opacity-100 scale-100 translate-y-0"
-                  leave-active-class="transition duration-100 ease-in"
-                  leave-from-class="opacity-100"
-                  leave-to-class="opacity-0"
-                >
-                  <div
-                    v-if="openMenuId === cv.id"
-                    class="absolute right-0 mt-2 w-48 origin-top-right rounded-xl bg-white shadow-xl shadow-slate-900/10 ring-1 ring-slate-900/5 py-1.5 z-30 focus:outline-none"
-                    role="menu"
-                  >
-                    <button
-                      type="button"
-                      class="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                      role="menuitem"
-                      @click="previewFromMenu(cv)"
-                    >
-                      <Eye class="w-3.5 h-3.5 text-slate-400" />
-                      Xem chi tiết
-                    </button>
-                    <button
-                      type="button"
-                      class="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white transition-colors"
-                      role="menuitem"
-                      :disabled="menuDownloading"
-                      :title="cv.source === 'direct' ? 'Tải CV dạng PDF vector (Playwright render)' : 'Tải file CV gốc đã upload'"
-                      @click="downloadFromMenu(cv)"
-                    >
-                      <Loader2 v-if="menuDownloading" class="w-3.5 h-3.5 animate-spin text-slate-400" />
-                      <Download v-else class="w-3.5 h-3.5 text-slate-400" />
-                      <span>Tải PDF</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white transition-colors"
-                      role="menuitem"
-                      :disabled="!menuCanOpenOriginal(cv)"
-                      :title="menuOpenOriginalTooltip(cv)"
-                      @click="openOriginalFromMenu(cv)"
-                    >
-                      <ExternalLink class="w-3.5 h-3.5 text-slate-400" />
-                      <span>Mở file gốc</span>
-                    </button>
-                    <!-- Edit — chỉ cho source='direct'. CV upload chỉnh sửa qua
-                         re-upload, không có endpoint PATCH cho upload source
-                         (BE chỉ accept source='direct' qua cv.service.update). -->
-                    <button
-                      v-if="cv.source === 'direct'"
-                      type="button"
-                      class="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white transition-colors"
-                      role="menuitem"
-                      :disabled="!menuCanEdit(cv)"
-                      :title="menuEditTooltip(cv)"
-                      @click="editFromMenu(cv)"
-                    >
-                      <Pencil class="w-3.5 h-3.5 text-slate-400" />
-                      <span>Sửa</span>
-                    </button>
-                    <div class="my-1 border-t border-slate-100" role="separator" />
-                    <button
-                      type="button"
-                      class="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-                      role="menuitem"
-                      @click="askDelete(cv.id)"
-                    >
-                      <Trash2 class="w-3.5 h-3.5" />
-                      Xóa
-                    </button>
-                  </div>
-                </Transition>
-              </div>
-            </div>
-
-            <!-- A4 paper preview — hiệu ứng "xếp chồng giấy" bằng box-shadow -->
-            <div
-              class="relative bg-white rounded-[3px] ring-1 ring-slate-900/[0.06] overflow-hidden transition-transform duration-200 group-hover:-translate-y-0.5"
-              :class="{
-                'opacity-95': cv.status === 'pending' || cv.status === 'parsing' || cv.status === 'analyzing',
-              }"
-              :style="{
-                width: `${PAPER_WIDTH_PX}px`,
-                aspectRatio: `${THUMBNAIL_RENDER_WIDTH} / ${THUMBNAIL_RENDER_HEIGHT}`,
-                boxShadow: PAPER_STACK_SHADOW,
-              }"
-            >
-              <!-- Render thumbnail — 1 component duy nhất, handle cả upload + direct.
-                   Quyết định render gì (template mini / PDF embed / img / mockup)
-                   được đẩy vào [CvThumbnail.vue](../components/cv/thumbnails/CvThumbnail.vue)
-                   + folder thumbnails/ — folder parallel với templates/ chứa 5
-                   bản thu nhỏ tương ứng CVTemplate1-5. -->
-              <CvThumbnail :cv="cv" class="absolute inset-0" />
-
-              <!-- Loading overlay — hiện cho cả 3 status "đang xử lý":
-                     - 'pending'   — chờ worker pick up
-                     - 'parsing'   — cvParse worker parse text + LLM extract
-                     - 'analyzing' — cvAnalysis worker re-analyze AI score
-                   Giữ ở ngoài CvThumbnail vì status thuộc về CV row, không phải thumbnail. -->
-              <div
-                v-if="cv.status === 'pending' || cv.status === 'parsing' || cv.status === 'analyzing'"
-                class="absolute inset-0 bg-white/70 backdrop-blur-[1px] flex items-center justify-center"
-              >
-                <Loader2 class="w-4 h-4 text-primary-600 animate-spin" />
-              </div>
-
-              <!-- File-type pill (upload only) — overlay góc dưới-phải thumbnail.
-                   Vẫn giữ ở ngoài CvThumbnail vì nó thuộc về 'meta' của card, không
-                   thuộc về thumbnail content. -->
-              <span
-                v-if="cv.source === 'upload'"
-                class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-slate-900/85 text-white z-10"
-              >
-                {{ fileTypeLabel(cv) }}
-              </span>
-            </div>
-          </div>
-
-          <!-- ============ Card body ============ -->
-          <div class="p-3.5 pt-3 sm:p-4 sm:pt-3.5 flex flex-col gap-2.5 flex-1">
-
-            <!-- Status row: badge trái (status) + badge phải (AI score HOẶC quota warning).
-                 AI score ẩn khi analyze quota fail để tránh nhầm lẫn "điểm cũ" với
-                 "điểm mới"; thay bằng badge "Đã hết lượt AI" amber. -->
-            <div class="flex items-center justify-between gap-2 min-h-[1.5rem]">
-              <!-- Status badge (pill với icon theo tone).
-                   leading-none + shrink-0 icon + label trong span để icon và text
-                   thẳng hàng tuyệt đối (lucide icons có baseline padding gây lệch). -->
-              <span
-                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold leading-none ring-1"
-                :class="{
-                  'bg-emerald-50 text-emerald-700 ring-emerald-200/70': statusBadge(cv).tone === 'green',
-                  'bg-red-50 text-red-700 ring-red-200/70': statusBadge(cv).tone === 'red',
-                  'bg-amber-50 text-amber-700 ring-amber-200/70': statusBadge(cv).tone === 'amber',
-                  'bg-blue-50 text-blue-700 ring-blue-200/70': statusBadge(cv).tone === 'blue',
-                  'bg-slate-100 text-slate-500 ring-slate-200/70': statusBadge(cv).tone === 'slate',
-                }"
-              >
-                <CheckCircle2 v-if="statusBadge(cv).tone === 'green'" class="w-3 h-3 shrink-0" />
-                <XCircle v-else-if="statusBadge(cv).tone === 'red'" class="w-3 h-3 shrink-0" />
-                <Clock v-else-if="statusBadge(cv).tone === 'amber'" class="w-3 h-3 shrink-0" />
-                <Loader2 v-else-if="statusBadge(cv).tone === 'blue'" class="w-3 h-3 shrink-0 animate-spin" />
-                <span>{{ statusBadge(cv).label }}</span>
-              </span>
-
-              <!-- Secondary badge (top-right) -->
-              <span
-                v-if="getAiScore(cv) !== null && !isAnalyzeQuotaFail(cv)"
-                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold leading-none bg-violet-50 text-violet-700 ring-1 ring-violet-200/70"
-                :title="`AI score: ${getAiScore(cv)}/100`"
-              >
-                <Sparkles class="w-3 h-3 shrink-0" />
-                <span class="tabular-nums">{{ getAiScore(cv) }}</span>
-                <span class="text-violet-400 font-medium">/100</span>
-              </span>
-              <span
-                v-else-if="isAnalyzeQuotaFail(cv)"
-                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold leading-none bg-amber-50 text-amber-700 ring-1 ring-amber-200/70"
-                :title="'Đã hết lượt phân tích AI'"
-              >
-                <AlertTriangle class="w-3 h-3 shrink-0" />
-                <span>Đã hết lượt AI</span>
-              </span>
-            </div>
-
-            <!-- Title + CV chính badge -->
-            <div class="flex items-start gap-1.5">
-              <h3
-                class="text-[15px] font-semibold text-slate-900 leading-snug line-clamp-2 flex-1 min-w-0"
-                :title="getDisplayTitle(cv)"
-              >
-                {{ getDisplayTitle(cv) }}
-              </h3>
-              <span
-                v-if="cv.isPrimary"
-                class="shrink-0 inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 ring-1 ring-amber-200/70"
-                title="CV chính"
-              >
-                <Star class="w-2.5 h-2.5 fill-current" />
-              </span>
-            </div>
-
-            <!-- Subtitle: vị trí (direct) hoặc "Tải lên — PDF/DOCX" -->
-            <p class="text-[13px] text-slate-500 line-clamp-1 -mt-1" :title="getSubtitle(cv)">
-              {{ getSubtitle(cv) }}
-            </p>
-
-            <!-- Inline reason box — hiển thị LÝ DO ngay trên card (không modal).
-                 Tone red (lỗi) hoặc amber (quota warning).
-                 items-center + leading-none text để icon và title thẳng hàng
-                 (single-line, không cần items-start). -->
-            <div
-              v-if="cardReason(cv)"
-              class="rounded-xl px-3 py-2.5 flex items-center gap-2.5 ring-1"
-              :class="cardReason(cv)!.tone === 'red'
-                ? 'bg-red-50 ring-red-200/70'
-                : 'bg-amber-50 ring-amber-200/70'"
-            >
-              <div
-                class="w-5 h-5 rounded-md flex items-center justify-center shrink-0 ring-1"
-                :class="cardReason(cv)!.tone === 'red'
-                  ? 'bg-red-100 ring-red-200/70'
-                  : 'bg-amber-100 ring-amber-200/70'"
-              >
-                <AlertCircle
-                  v-if="cardReason(cv)!.tone === 'red'"
-                  class="w-3 h-3 text-red-600"
-                />
-                <AlertTriangle v-else class="w-3 h-3 text-amber-600" />
-              </div>
-              <p
-                class="flex-1 min-w-0 text-[12px] font-semibold leading-none"
-                :class="cardReason(cv)!.tone === 'red' ? 'text-red-900' : 'text-amber-900'"
-              >
-                {{ cardReason(cv)!.title }}
-              </p>
-            </div>
-
-            <!-- Footer: date + file type / template -->
-            <div class="flex items-center justify-between gap-2 mt-auto pt-1 text-[11px] text-slate-400">
-              <span class="tabular-nums">
-                {{ formatDate(cv) || '—' }}
-              </span>
-              <span
-                v-if="cv.source === 'upload'"
-                class="inline-flex items-center gap-1 text-slate-500"
-              >
-                <FileText class="w-3 h-3" />
-                {{ fileTypeLabel(cv) }}
-              </span>
-              <span
-                v-else-if="getTemplateId(cv)"
-                class="text-slate-500"
-              >
-                Mẫu {{ getTemplateId(cv) }}
-              </span>
-            </div>
-          </div>
-        </article>
-      </div>
-
-      <!-- ============ Pagination (minimal) ============ -->
-      <nav
-        v-if="total > pageSize"
-        class="mt-8 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 text-sm"
-        aria-label="Pagination"
-      >
-        <p class="text-slate-500">
-          Trang <strong class="text-slate-900 font-semibold">{{ page }}</strong>
-          <span class="text-slate-300 mx-1">/</span>
-          <strong class="text-slate-900 font-semibold">{{ totalPages }}</strong>
-          <span class="mx-2 text-slate-300">·</span>
-          Tổng <strong class="text-slate-900 font-semibold">{{ total }}</strong> CV
-        </p>
-        <div class="flex items-center gap-1.5">
-          <button
-            type="button"
-            class="h-9 px-3 flex-1 sm:flex-none justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent inline-flex items-center gap-1 text-sm font-medium"
-            :disabled="page <= 1 || loading"
-            @click="goToPage(page - 1)"
-          >
-            <ChevronLeft class="w-4 h-4" /> Trước
-          </button>
-          <button
-            type="button"
-            class="h-9 px-3 flex-1 sm:flex-none justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent inline-flex items-center gap-1 text-sm font-medium"
-            :disabled="page >= totalPages || loading"
-            @click="goToPage(page + 1)"
-          >
-            Sau <ChevronRight class="w-4 h-4" />
-          </button>
-        </div>
-      </nav>
-    </div>
-
-    <!-- ============ Preview modal ============ -->
-    <CvPreview
-      :open="previewOpen"
-      :cv="previewCv"
-      :setting-primary="settingPrimaryId === previewCv?.id"
-      @close="closePreview"
-      @set-primary="handleSetPrimary"
-      @edit="onEditFromPreview"
-    />
-
-    <!-- ============ AI analysis modal ============ -->
-    <CvAiAnalysisView
-      :open="analysisOpen"
-      :cv="analysisCv"
-      @close="closeAnalysis"
-    />
-
-    <!-- ============ Delete confirm modal ============ -->
-    <Teleport to="body">
-      <Transition
-        enter-active-class="transition duration-150 ease-out"
-        enter-from-class="opacity-0"
-        enter-to-class="opacity-100"
-        leave-active-class="transition duration-100 ease-in"
-        leave-from-class="opacity-100"
-        leave-to-class="opacity-0"
-      >
-        <div
-          v-if="confirmDeleteId !== null"
-          class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
-          @click.self="cancelDelete"
-        >
-          <Transition
-            appear
-            enter-active-class="transition duration-200 ease-out"
-            enter-from-class="opacity-0 scale-95"
-            enter-to-class="opacity-100 scale-100"
-          >
-            <div class="modal-scroll bg-white rounded-2xl shadow-2xl shadow-slate-900/20 max-w-sm w-full max-h-[85vh] overflow-y-auto p-5 ring-1 ring-slate-900/5">
-              <div class="flex items-start gap-3">
-                <div class="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0 ring-1 ring-red-100">
-                  <Trash2 class="w-5 h-5 text-red-600" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h3 class="text-base font-semibold text-slate-900">Xóa CV</h3>
-                  <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">
-                    Bạn có chắc muốn xóa CV này? Hành động này không thể hoàn tác.
-                  </p>
-                </div>
-              </div>
-              <div class="mt-5 flex justify-end gap-2">
-                <button
-                  type="button"
-                  class="h-9 px-4 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
-                  @click="cancelDelete"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="button"
-                  class="h-9 px-4 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-colors shadow-sm shadow-red-600/20"
-                  @click="confirmDeleteAction"
-                >
-                  Xóa
-                </button>
-              </div>
-            </div>
-          </Transition>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- ============ Quota detail modal ============
-         Centered, amber-themed, tách hẳn khỏi grid (không đẩy thumbnail).
-         Khác CV preview modal: max-w-md (nhỏ hơn), theme amber, nội dung
-         giải thích lý do quota + CTA retry/upgrade thay vì render CV. -->
-    <Teleport to="body">
-      <Transition
-        enter-active-class="transition duration-150 ease-out"
-        enter-from-class="opacity-0"
-        enter-to-class="opacity-100"
-        leave-active-class="transition duration-100 ease-in"
-        leave-from-class="opacity-100"
-        leave-to-class="opacity-0"
-      >
-        <div
-          v-if="quotaDetailCvId !== null && quotaCv"
-          class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          @click.self="closeQuotaDetail"
-        >
-          <Transition
-            appear
-            enter-active-class="transition duration-200 ease-out"
-            enter-from-class="opacity-0 scale-95 translate-y-2"
-            enter-to-class="opacity-100 scale-100 translate-y-0"
-          >
-            <div
-              class="modal-scroll bg-white rounded-2xl shadow-2xl shadow-slate-900/25 max-w-md w-full max-h-[85vh] overflow-y-auto ring-1 ring-slate-900/5"
-              @click.stop
-            >
-              <!-- Header: gradient tone thay đổi theo context (amber=analyze, red=parse) -->
-              <header
-                class="relative px-5 sm:px-6 pt-5 pb-4 border-b"
-                :class="quotaIsParse
-                  ? 'bg-gradient-to-br from-red-50 via-red-50/40 to-white border-red-100/80'
-                  : 'bg-gradient-to-br from-amber-50 via-amber-50/40 to-white border-amber-100/80'"
-              >
-                <div class="flex items-start gap-3">
-                  <div
-                    class="w-10 h-10 rounded-xl ring-1 flex items-center justify-center shrink-0"
-                    :class="quotaIsParse
-                      ? 'bg-gradient-to-br from-red-100 to-red-50 ring-red-200/70'
-                      : 'bg-gradient-to-br from-amber-100 to-amber-50 ring-amber-200/70'"
-                  >
-                    <Sparkles
-                      class="w-5 h-5"
-                      :class="quotaIsParse ? 'text-red-700' : 'text-amber-700'"
-                    />
-                  </div>
-                  <div class="flex-1 min-w-0 pt-0.5">
-                    <h3 class="text-base font-semibold text-slate-900 leading-tight">
-                      {{ quotaIsParse ? 'Hết lượt parse AI' : 'Hết lượt AI' }}
-                    </h3>
-                    <p class="text-xs text-slate-500 mt-1 truncate">
-                      {{ quotaCv.title || 'CV này' }}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    class="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-white/70 transition-colors inline-flex items-center justify-center shrink-0 -mr-1 -mt-1"
-                    @click="closeQuotaDetail"
-                    aria-label="Đóng"
-                  >
-                    <X class="w-4 h-4" />
-                  </button>
-                </div>
-              </header>
-
-              <!-- Body -->
-              <div class="px-5 sm:px-6 py-5 space-y-4">
-                <!-- Body text — context-aware -->
-                <p class="text-sm text-slate-700 leading-relaxed">
-                  <template v-if="quotaIsParse">
-                    Bạn đã dùng hết lượt parse AI trong tháng. CV này không thể xử lý cho tới khi bạn nâng cấp gói hoặc chờ reset đầu tháng sau.
-                  </template>
-                  <template v-else>
-                    Bạn đã dùng hết lượt phân tích AI trong tháng. CV vẫn hiển thị bình thường và điểm phân tích trước vẫn được dùng cho tới khi bạn nâng cấp gói hoặc chờ reset đầu tháng sau.
-                  </template>
-                </p>
-
-                <!-- Current AI score (chỉ analyze case — parse fail thì không có điểm) -->
-                <div
-                  v-if="!quotaIsParse && getAiScore(quotaCv) !== null"
-                  class="flex items-center gap-3 px-3.5 py-3 rounded-xl bg-violet-50/60 ring-1 ring-violet-100/80"
-                >
-                  <div class="w-9 h-9 rounded-lg bg-white ring-1 ring-violet-100 flex items-center justify-center shrink-0">
-                    <Brain class="w-4 h-4 text-violet-600" />
-                  </div>
-                  <div class="flex-1 min-w-0">
-                    <p class="text-[11px] text-slate-500 font-medium leading-tight">Điểm AI hiện tại</p>
-                    <p class="text-base font-bold text-slate-900 tabular-nums leading-tight mt-0.5">
-                      {{ getAiScore(quotaCv) }}<span class="text-slate-400 text-xs font-normal ml-0.5">/100</span>
-                    </p>
-                  </div>
-                  <span
-                    class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 shrink-0"
-                    :class="scoreLabel(getAiScore(quotaCv)!).tone"
-                  >
-                    {{ scoreLabel(getAiScore(quotaCv)!).label }}
-                  </span>
-                </div>
-
-                <!-- Tip: context-aware -->
-                <div class="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-slate-50 ring-1 ring-slate-200/70">
-                  <AlertCircle class="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
-                  <p class="text-[11.5px] text-slate-600 leading-relaxed">
-                    <template v-if="quotaIsParse">
-                      CV này sẽ hiển thị trạng thái "Lỗi" cho tới khi quota được nạp — bạn không cần xóa, chỉ cần nâng cấp gói hoặc chờ reset tháng sau.
-                    </template>
-                    <template v-else>
-                      Hệ thống vẫn giữ điểm cũ để bạn dùng tiếp — chỉ không tạo được điểm mới cho tới khi gói được nạp thêm lượt.
-                    </template>
-                  </p>
-                </div>
-              </div>
-
-              <!-- Actions:
-                   - Analyze case: Nâng cấp gói + Thử lại (re-analyze).
-                   - Parse case:   chỉ Nâng cấp gói (full-width, không có
-                                   Thử lại vì không re-parse được khi chưa
-                                   upload lại — sẽ nhầm lẫn nếu để nút). -->
-              <footer class="px-5 sm:px-6 pb-5 pt-1 flex items-center gap-2.5">
-                <a
-                  href="/candidate/subscription"
-                  class="flex-1 h-10 rounded-xl text-sm font-semibold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-1.5"
-                  @click="closeQuotaDetail"
-                >
-                  Nâng cấp gói
-                </a>
-                <button
-                  v-if="!quotaIsParse"
-                  type="button"
-                  class="flex-1 h-10 rounded-xl text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 transition-colors inline-flex items-center justify-center gap-1.5 shadow-sm shadow-amber-600/20 disabled:opacity-60"
-                  :disabled="analyzingId === quotaCv.id"
-                  @click="handleAnalyze(quotaCv.id); closeQuotaDetail()"
-                >
-                  <Loader2 v-if="analyzingId === quotaCv.id" class="w-4 h-4 animate-spin" />
-                  <Sparkles v-else class="w-4 h-4" />
-                  Thử lại
-                </button>
-              </footer>
-            </div>
-          </Transition>
         </div>
       </Transition>
     </Teleport>
@@ -1502,42 +797,165 @@ const clearAllFilters = async (): Promise<void> => {
 </template>
 
 <style scoped>
-/* Scrollbar mỏng cho toolbar tabs (overflow-x-auto) + modal body. Global
- * page scrollbar (html/body) đã được style ở [style.css](../../style.css)
- * — chỗ này chỉ scope cho in-component scrollable. */
-.tabs-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(203, 213, 225, 0.6) transparent;
+.template-card {
+  position: relative;
+  height: 170px;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid #e6e7e9;
+  background: #fff;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
-.tabs-scroll::-webkit-scrollbar {
-  height: 4px;
-}
-.tabs-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.tabs-scroll::-webkit-scrollbar-thumb {
-  background-color: rgba(203, 213, 225, 0.6);
-  border-radius: 9999px;
-}
-.tabs-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(148, 163, 184, 0.85);
+.template-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.07);
 }
 
-.modal-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(203, 213, 225, 0.6) transparent;
+/* Card mẫu CV (AI-Generated Templates) — cao hơn card "CV của tôi" để preview
+ * hiện được nhiều nội dung hơn. */
+.template-card--tall {
+  height: 270px;
 }
-.modal-scroll::-webkit-scrollbar {
-  width: 4px;
+
+.resume-preview {
+  position: absolute;
+  top: 10px;
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: auto;
+  overflow: hidden;
+  border-radius: 6px 6px 0 0;
+  background: #fff;
+  color: #555;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  z-index: 1;
 }
-.modal-scroll::-webkit-scrollbar-track {
-  background: transparent;
+
+.resume-preview :deep(canvas) {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: top center !important;
 }
-.modal-scroll::-webkit-scrollbar-thumb {
-  background-color: rgba(203, 213, 225, 0.6);
+
+.resume-preview :deep(img.object-cover) {
+  object-position: top center !important;
+}
+
+.resume-preview::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 48px;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.22) 30%,
+    rgba(255, 255, 255, 0.65) 68%,
+    rgba(255, 255, 255, 0.9) 100%
+  );
+  pointer-events: none;
+  z-index: 3;
+}
+
+.template-info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  padding: 16px 12px 9px 12px;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.55) 32%,
+    rgba(255, 255, 255, 0.92) 70%,
+    #ffffff 100%
+  );
+}
+
+/* ===== Icon chỉ báo AI phân tích — góc trên phải =====
+ * Chip tròn trắng nhỏ + icon Sparkles màu accent cam (đồng bộ #ff8b24 dùng
+ * ở hero + feature card). Nằm trên .resume-preview (z=1). */
+.cv-ai-icon {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   border-radius: 9999px;
+  background: #fff;
+  color: #ff8b24;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
-.modal-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(148, 163, 184, 0.85);
+
+/* ===== AI score badge góc dưới phải =====
+ * Overlay trên .template-info (z=10), padding-right của info đã 12px → date
+ * (căn trái, dòng dưới) không chồng badge ở góc phải. Tone class từ
+ * scoreLabel (emerald/primary/amber/red). */
+.cv-ai-score {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 28px;
+  padding: 0 6px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  /* Tăng vùng không chạm để hover dễ — không ảnh hưởng layout. */
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.feature-card {
+  position: relative;
+  height: 118px;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #e8eaec;
+  padding: 14px;
+  background: linear-gradient(100deg, #fff, #fafafa);
+}
+
+.feature-link {
+  position: absolute;
+  bottom: 13px;
+  left: 14px;
+  font-size: 9px;
+  color: #5f6368;
+}
+
+.feature-paper {
+  position: absolute;
+  right: 17px;
+  bottom: -25px;
+  width: 88px;
+  height: 125px;
+  background: #fff;
+  transform: rotate(7deg);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+  padding: 11px;
+}
+
+.paper-row {
+  height: 5px;
+  background: #e0e2e4;
+  border-radius: 5px;
+  margin-bottom: 6px;
+}
+.paper-row.short {
+  width: 60%;
 }
 </style>

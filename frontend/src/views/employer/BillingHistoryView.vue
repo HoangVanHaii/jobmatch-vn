@@ -16,6 +16,7 @@ import {
   Briefcase,
   Wand2,
   FileSearch,
+  Target,
   ArrowRight,
   Filter,
 } from 'lucide-vue-next';
@@ -79,6 +80,7 @@ const quotaLabel: Record<CountableQuotaKey, string> = {
   job_post: 'Lượt đăng việc làm',
   ai_cv_parsed: 'Phân tích CV',
   ai_cv_analysis: 'Chấm điểm CV bằng AI',
+  ai_cv_match: 'AI match hồ sơ',
   job_generation: 'Lượt tạo mô tả việc làm (AI)',
 };
 
@@ -89,6 +91,7 @@ const quotaIcon: Record<CountableQuotaKey, typeof Briefcase> = {
   job_generation: Wand2,
   ai_cv_parsed: FileSearch,
   ai_cv_analysis: Sparkles,
+  ai_cv_match: Target,
 };
 
 /** Employer view chỉ show 2 quota chính — đồng bộ với PricingView.

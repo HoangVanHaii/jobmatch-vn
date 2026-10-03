@@ -11,11 +11,32 @@ import {
 import { invokeCvMatch } from '../lib/llm/cvMatch';
 import { isRateLimited, waitForRateLimit } from '../lib/llm/errors';
 import { usageLogService } from '../service/usageLog.service';
-import { notificationService } from '../service/notification.service';
 import { notificationGateway } from '../socket/notificationGateway';
+import { notifyCandidateOfMatchResult } from '../service/application.service';
 
 const QUEUE_NAME = 'cvMatch';
 const AI_CV_MATCH_FEATURE = 'ai_cv_match';
+
+/**
+ * Hoàn 1 lượt `ai_cv_match` khi job early-exit TRƯỚC khi LLM chạy (lượt đã
+ * được service reserve trước khi enqueue — job không chạy thì không được tiêu).
+ *
+ * `candidateId` lấy từ job payload — job cũ pre-deploy (payload thiếu field)
+ * sẽ warn + skip refund (an toàn, chỉ lệch ±1 lượt).
+ */
+const refundMatchQuota = async (
+  candidateId: string | undefined,
+  why: string,
+): Promise<void> => {
+  if (!candidateId) {
+    logger.warn(
+      { why },
+      'cvMatch worker: refund skipped — payload thiếu candidateId (job cũ pre-deploy)',
+    );
+    return;
+  }
+  await usageLogService.decrementCount(candidateId, AI_CV_MATCH_FEATURE);
+};
 
 export const cvMatchWorker = new Worker(
   QUEUE_NAME,
@@ -23,9 +44,13 @@ export const cvMatchWorker = new Worker(
     // Job name phải khớp với queue.add('cv-match', ...) ở application.service.
     if (job.name !== 'cv-match') return;
 
-    const { applicationId, jobId } = job.data as {
+    const { applicationId, jobId, candidateId } = job.data as {
       applicationId: string;
       jobId: string;
+      // `candidateId` từ payload (enqueue site thêm từ refactor
+      // reserve-tại-service) — dùng cho refund early-exit. Job cũ
+      // pre-deploy thiếu field → refund tự skip (warn).
+      candidateId?: string;
     };
 
     const [app] = await db
@@ -38,8 +63,10 @@ export const cvMatchWorker = new Worker(
       .where(eq(applications.id, applicationId))
       .limit(1);
 
+    // Early-exit trước LLM → hoàn lượt đã reserve ở service.
     if (!app) {
       logger.warn({ applicationId, bullJobId: job.id }, 'cvMatch worker: application không tồn tại, skip');
+      await refundMatchQuota(candidateId, 'application deleted after enqueue');
       return;
     }
 
@@ -61,70 +88,22 @@ export const cvMatchWorker = new Worker(
 
     if (!dbJob) {
       logger.warn({ jobId, applicationId, bullJobId: job.id }, 'cvMatch worker: job không tồn tại, skip');
+      await refundMatchQuota(app.candidateId, 'job deleted after enqueue');
       return;
     }
 
     // Nếu CV không có (candidate apply không kèm CV) → skip matching, không có gì để chấm.
     if (!app.cv?.parsedData) {
       logger.info({ applicationId, bullJobId: job.id }, 'cvMatch worker: application không có CV snapshot, skip');
+      await refundMatchQuota(app.candidateId, 'application has no CV snapshot parsedData');
       return;
     }
 
     // -----------------------------------------------------------------------
-    // 2. Quota check (chỉ reserve ở attempt đầu, retry không double-count)
+    // 2. QUOTA: đã được service reserve (reserveQuota / createOrIncrementUsage
+    //    khi apply) TRƯỚC khi enqueue — worker KHÔNG reserve/check nữa.
+    //    Refund early-exit phía trên; lỗi LLM → catch cuối vẫn decrement.
     // -----------------------------------------------------------------------
-    const reservedThisAttempt = job.attemptsMade === 0;
-    if (reservedThisAttempt) {
-      const reserved = await usageLogService.createOrIncrementUsage(
-        app.candidateId,
-        AI_CV_MATCH_FEATURE,
-      );
-            if (!reserved) {
-              // Hết quota → update application với reason='quota_exceeded' để FE
-              // nhận biết đây là trạng thái TERMINAL (không phải "đang chấm").
-              // Không touch aiMatchScore (vẫn NULL). Lý do phải persist reason:
-              // FE chỉ check `aiMatchScore IS NULL` thì sẽ render spinner mãi.
-              logger.warn(
-                { applicationId, candidateId: app.candidateId },
-                'cvMatch worker: hết quota ai_cv_match, skip LLM',
-              );
-
-              await db
-                .update(applications)
-                .set({
-                  aiMatchReasoning: { reason: 'quota_exceeded' },
-                  updatedAt: new Date(),
-                })
-                .where(eq(applications.id, applicationId));
-
-              // Notify candidate: biết "matching skipped" — bell + realtime.
-              await notifyCandidateOfMatchResult({
-                candidateId: app.candidateId,
-                applicationId,
-                jobId,
-                jobTitle: dbJob.title,
-                reason: 'quota_exceeded',
-                matchPercent: null,
-                rationale: null,
-              });
-
-              // Emit socket với reason để FE patch row realtime (không phải chờ refetch).
-              notificationGateway.emitToUser(app.candidateId, 'application:match-ready', {
-                applicationId,
-                jobId,
-                reason: 'quota_exceeded',
-                matchPercent: null,
-                rationale: null,
-              });
-              // Legacy event giữ backward-compat với listener cũ.
-              notificationGateway.emitToUser(app.candidateId, 'application:match-skipped', {
-                applicationId,
-                jobId,
-                reason: 'quota_exceeded',
-              });
-              return;
-            }
-    }
 
     // -----------------------------------------------------------------------
     // 3. Gọi LLM
@@ -298,58 +277,3 @@ cvMatchWorker.on('completed', (job) => {
     'cvMatch worker: job completed',
   );
 });
-
-/**
- * Best-effort: tạo notification `application_match_ready` cho candidate + emit socket.
- *
- * KHÔNG throw để tránh break worker. Lỗi notification KHÔNG rollback matching
- * (điểm + reasoning đã update DB thành công).
- *
- * Payload gửi FE:
- *   - applicationId: để navigate tới detail hoặc re-fetch
- *   - jobId, jobTitle: hiển thị context ("Job Senior Frontend Developer")
- *   - reason: 'success' | 'quota_exceeded' | 'failed' — để FE render UI phù hợp:
- *       - success: show matchPercent + rationale (xanh)
- *       - quota_exceeded: show "Đã apply thành công, không có AI match (hết quota)"
- *       - failed: show "Matching thất bại, thử lại sau"
- *   - matchPercent, rationale: null nếu không phải success
- */
-const notifyCandidateOfMatchResult = async (params: {
-  candidateId: string;
-  applicationId: string;
-  jobId: string;
-  jobTitle: string;
-  reason: 'success' | 'quota_exceeded' | 'failed';
-  matchPercent: number | null;
-  rationale: string | null;
-}): Promise<void> => {
-  const { candidateId, applicationId, jobId, jobTitle, reason, matchPercent, rationale } = params;
-
-  try {
-    const titleMap: Record<typeof reason, string> = {
-      success: `AI chấm ${matchPercent}% match cho ${jobTitle}`,
-      quota_exceeded: `Đã nộp hồ sơ cho ${jobTitle} — AI match tạm thời không khả dụng`,
-      failed: `AI match cho ${jobTitle} thất bại, thử lại sau`,
-    };
-
-    await notificationService.create({
-      userId: candidateId,
-      type: 'application_match_ready',
-      title: titleMap[reason],
-      payload: {
-        applicationId,
-        jobId,
-        jobTitle,
-        reason,
-        matchPercent,
-        rationale,
-      },
-    });
-  } catch (err) {
-    // Matching đã chạy xong — notification chỉ là UX. Log warn, không throw.
-    logger.warn(
-      { err, applicationId, candidateId, reason },
-      'notifyCandidateOfMatchResult: lỗi (best-effort, match data OK)',
-    );
-  }
-};

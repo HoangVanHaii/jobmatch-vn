@@ -68,7 +68,7 @@ export const cvController = {
       const result = await cvService.getListDetail(candidateId, source, limit, offset, q);
       res.json({ success: true, data: result });
     } catch (err) {
-      console.error('[cv.list] error:', err);
+      // console.error('[cv.list] error:', err);
       next(err);
     }
   },
@@ -84,7 +84,7 @@ export const cvController = {
 
       res.json({ success: true, data: cv });
     } catch (err) {
-      console.error('[cv.getDetail] error:', err);
+      // console.error('[cv.getDetail] error:', err);
       next(err);
     }
   },
@@ -100,7 +100,7 @@ export const cvController = {
 
       res.json({ success: true, data: updated });
     } catch (err) {
-      console.error('[cv.setPrimary] error:', err)
+      // console.error('[cv.setPrimary] error:', err)
       next(err);
     }
   },
@@ -112,7 +112,7 @@ export const cvController = {
       res.status(201).json({ success: true, data: cv });
 
     } catch (err) {
-      console.error('[cv.create] error:', err);
+      // console.error('[cv.create] error:', err);
       next(err);
     }
   },
@@ -155,7 +155,7 @@ notificationGateway.emitToUser(candidateId, "cv:status-changed", {
 
       res.json({ success: true, data: updated });
     } catch (err) {
-      console.error('[cv.update] error:', err);
+      // console.error('[cv.update] error:', err);
       next(err);
     }
   },
@@ -176,7 +176,7 @@ notificationGateway.emitToUser(candidateId, "cv:status-changed", {
 
       res.status(202).json({ success: true, data: cv });
     } catch (err) {
-      console.error('[cv.triggerAnalysis] error:', err);
+      // console.error('[cv.triggerAnalysis] error:', err);
       next(err);
     }
   },
@@ -194,7 +194,7 @@ notificationGateway.emitToUser(candidateId, "cv:status-changed", {
 			res.json({ success: true, data: deleted });
 
     } catch (err) {
-      console.error('[cv.remove] error:', err);
+      // console.error('[cv.remove] error:', err);
       next(err);
     }
   },
@@ -277,7 +277,7 @@ notificationGateway.emitToUser(candidateId, "cv:status-changed", {
       res.setHeader('Cache-Control', 'private, no-store');
       res.status(200).end(pdfBuffer);
     } catch (err) {
-      console.error('[cv.downloadPdf] error:', err);
+      // console.error('[cv.downloadPdf] error:', err);
       next(err);
     }
   },
@@ -330,7 +330,7 @@ notificationGateway.emitToUser(candidateId, "cv:status-changed", {
 
       res.json({ success: true, data: row });
     } catch (err) {
-      console.error('[cv.getRenderData] error:', err);
+      // console.error('[cv.getRenderData] error:', err);
       next(err);
     }
   },

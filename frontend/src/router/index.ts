@@ -48,6 +48,10 @@ const routes: RouteRecordRaw[] = [
   // token trong query string (BE cấp, TTL 120s, scope 1 cvId).
   // KHÔNG có parent layout → page trống, chỉ render CV content, không header/nav.
   { path: '/print/cv/:cvId', name: 'cv-print', component: () => import('@views/print/CvPrintView.vue') },
+  // Test route cho Template 6
+  { path: '/test6', name: 'test6', component: () => import('@views/candidate/Test6View.vue') },
+  // Test route cho Template 7
+  { path: '/test7', name: 'test7', component: () => import('@views/candidate/Test7View.vue') },
 
   // Candidate — bao gồm cả /pricing để có sidebar
   {
@@ -90,6 +94,8 @@ const routes: RouteRecordRaw[] = [
     //   { path: 'cv-score', name: 'cv-score', component: () => import('@views/candidate/CVScoringView.vue') },
       { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
       { path: 'test5', name: 'candidate-test5', component: () => import('@views/candidate/MockupResumeView.vue') },
+      { path: 'test6', name: 'candidate-test6', component: () => import('@views/candidate/Test6View.vue') },
+      { path: 'test7', name: 'candidate-test7', component: () => import('@views/candidate/Test7View.vue') },
 
     ],
   },

@@ -29,15 +29,19 @@
  * (gender/dob/address bị bỏ — không có trong DB).
  */
 import type { CvRenderData } from '@/types/cv';
+import { CV_LABELS, type CvLanguage, type CvSectionKey } from '@/utils/cvLabels';
 
 // `disableLinks` (default false) tự expose cho <template>. Khi true → render
 // text-only (<span>) thay vì <a> cho email/github/portfolio/linkedin/facebook/
 // project link — dùng khi preview/select-template để user không click nhầm
 // vào URL bên trong thumbnail → navigate đi.
-withDefaults(
-  defineProps<{ data: CvRenderData; disableLinks?: boolean }>(),
-  { disableLinks: false },
+const props = withDefaults(
+  defineProps<{ data: CvRenderData; disableLinks?: boolean; language?: CvLanguage }>(),
+  { disableLinks: false, language: 'en' },
 );
+
+/** Tra nhãn section theo ngôn ngữ hiện tại — xem [cvLabels.ts](../../utils/cvLabels.ts). */
+const t = (k: CvSectionKey): string => CV_LABELS[props.language][k];
 
 /** Khoảng thời gian "start — end", fallback 'Nay' nếu thiếu end. */
 const dateRange = (start: string | undefined, end: string | undefined): string => {
@@ -81,13 +85,13 @@ const normalizeUrl = (url: string): string => {
         class="font-bold uppercase tracking-wide leading-tight break-words"
         style="font-size: 28px;"
       >
-        {{ data.personalInfo.fullName || 'HỌ VÀ TÊN' }}
+        {{ data.personalInfo.fullName || t('fullName') }}
       </h1>
       <p
         class="italic mt-2 text-neutral-700 break-words"
         style="font-size: 14px;"
       >
-        {{ data.personalInfo.position || 'Vị trí ứng tuyển' }}
+        {{ data.personalInfo.position || t('desiredPosition') }}
       </p>
 
       <!-- Contact line 1: email | phone -->
@@ -179,7 +183,7 @@ const normalizeUrl = (url: string): string => {
 
     <!-- ==================== CAREER OBJECTIVE ==================== -->
     <section v-if="data.summary" class="mt-7">
-      <h2 class="font-serif font-bold" style="font-size: 19px;">Career Objective</h2>
+      <h2 class="font-serif font-bold" style="font-size: 19px;">{{ t('objective') }}</h2>
       <hr class="border-t border-neutral-500 mt-1.5 mb-2.5" style="border-top-width: 1px;" />
       <p
         class="text-neutral-800 whitespace-pre-wrap"
@@ -191,7 +195,7 @@ const normalizeUrl = (url: string): string => {
 
     <!-- ==================== SKILLS ==================== -->
     <section v-if="data.skills.length" class="mt-6">
-      <h2 class="font-serif font-bold" style="font-size: 19px;">Skills</h2>
+      <h2 class="font-serif font-bold" style="font-size: 19px;">{{ t('skills') }}</h2>
       <hr class="border-t border-neutral-500 mt-1.5 mb-2.5" style="border-top-width: 1px;" />
       <ul class="flex flex-col gap-1" style="font-size: 13.5px; line-height: 1.45;">
         <li
@@ -209,7 +213,7 @@ const normalizeUrl = (url: string): string => {
 
     <!-- ==================== EDUCATION ==================== -->
     <section v-if="data.educations.length" class="mt-6">
-      <h2 class="font-serif font-bold" style="font-size: 19px;">Education</h2>
+      <h2 class="font-serif font-bold" style="font-size: 19px;">{{ t('education') }}</h2>
       <hr class="border-t border-neutral-500 mt-1.5 mb-2.5" style="border-top-width: 1px;" />
       <ul class="flex flex-col gap-4">
         <li v-for="(e, i) in data.educations" :key="i">
@@ -253,7 +257,7 @@ const normalizeUrl = (url: string): string => {
 
     <!-- ==================== FEATURED PROJECTS ==================== -->
     <section v-if="data.projects.length" class="mt-6">
-      <h2 class="font-serif font-bold" style="font-size: 19px;">Featured Projects</h2>
+      <h2 class="font-serif font-bold" style="font-size: 19px;">{{ t('projects') }}</h2>
       <hr class="border-t border-neutral-500 mt-1.5 mb-3" style="border-top-width: 1px;" />
       <ul class="flex flex-col gap-5">
         <li v-for="(p, i) in data.projects" :key="i">
@@ -308,7 +312,7 @@ const normalizeUrl = (url: string): string => {
 
     <!-- ==================== WORK EXPERIENCE (data có thì hiển thị) ==================== -->
     <section v-if="data.experiences.length" class="mt-6">
-      <h2 class="font-serif font-bold" style="font-size: 19px;">Work Experience</h2>
+      <h2 class="font-serif font-bold" style="font-size: 19px;">{{ t('experience') }}</h2>
       <hr class="border-t border-neutral-500 mt-1.5 mb-2.5" style="border-top-width: 1px;" />
       <ul class="flex flex-col gap-4">
         <li v-for="(x, i) in data.experiences" :key="i">
@@ -338,7 +342,7 @@ const normalizeUrl = (url: string): string => {
 
     <!-- ==================== ACTIVITIES ==================== -->
     <section v-if="data.activities.length" class="mt-6">
-      <h2 class="font-serif font-bold" style="font-size: 19px;">Activities</h2>
+      <h2 class="font-serif font-bold" style="font-size: 19px;">{{ t('activities') }}</h2>
       <hr class="border-t border-neutral-500 mt-1.5 mb-2.5" style="border-top-width: 1px;" />
       <ul class="flex flex-col gap-4">
         <li v-for="(a, i) in data.activities" :key="i">
@@ -372,7 +376,7 @@ const normalizeUrl = (url: string): string => {
 
     <!-- ==================== CERTIFICATES ==================== -->
     <section v-if="data.certificates.length" class="mt-6">
-      <h2 class="font-serif font-bold" style="font-size: 19px;">Certificates</h2>
+      <h2 class="font-serif font-bold" style="font-size: 19px;">{{ t('certificates') }}</h2>
       <hr class="border-t border-neutral-500 mt-1.5 mb-2.5" style="border-top-width: 1px;" />
       <ul class="flex flex-col gap-2.5">
         <li

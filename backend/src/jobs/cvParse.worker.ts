@@ -11,7 +11,6 @@ import {CV_PARSE_SYSTEM_PROMPT, buildCvParseUserPrompt} from '../prompts/cvParse
 import { isRateLimited, waitForRateLimit } from "../lib/llm/errors";
 import { cvService } from "../service/cv.service";
 import { usageLogService } from "../service/usageLog.service";
-import { notificationGateway } from "../socket/notificationGateway";
 
 /* ============================================================================
  * LlmParseError — custom error mang theo `reason` (failureReason sẽ ghi DB)
@@ -49,6 +48,27 @@ class LlmParseError extends Error {
 
 
 const QUEUE_NAME = 'cvParsing';
+
+/**
+ * Hoàn 1 lượt `ai_cv_parsed` khi job early-exit TRƯỚC khi LLM chạy (lượt đã
+ * được service reserve trước khi enqueue — job không chạy thì không được tiêu).
+ *
+ * `candidateId` lấy từ job payload — job cũ pre-deploy (payload thiếu field)
+ * sẽ warn + skip refund (an toàn, chỉ lệch ±1 lượt).
+ */
+const refundParseQuota = async (
+    candidateId: string | undefined,
+    why: string,
+): Promise<void> => {
+    if (!candidateId) {
+        logger.warn(
+            { why },
+            "cvParseWorker: refund skipped — payload thiếu candidateId (job cũ pre-deploy)",
+        );
+        return;
+    }
+    await usageLogService.decrementCount(candidateId, "ai_cv_parsed");
+};
 
 /**
  * Trích xuất text thuần (plain text) từ file CV đã được tải về dưới dạng Buffer.
@@ -127,18 +147,28 @@ export const cvParseWorker = new Worker(
     QUEUE_NAME,
     async (job) => {
         if (job.name !== 'cv-parse') return;
-        const { cvId } = job.data as { cvId: string };
+        // `candidateId` từ payload (enqueue site thêm từ refactor
+        // reserve-tại-service) — dùng cho refund early-exit. Job cũ
+        // pre-deploy thiếu field → refund tự skip (warn).
+        const { cvId, candidateId } = job.data as {
+            cvId: string;
+            candidateId?: string;
+        };
 
 
         const dbCv = await db.query.cvs.findFirst({ where: eq(cvs.id, cvId) });
 
+        // Early-exit trước LLM → hoàn lượt đã reserve ở service.
         if (!dbCv) {
+            await refundParseQuota(candidateId, 'CV deleted after enqueue');
             return;
         }
         if (dbCv.status !== 'pending' && dbCv.status !== 'parsing') {
+            await refundParseQuota(dbCv.candidateId, 'status guard skip (duplicate/processed job)');
             return;
         }
         if (!dbCv.fileUrl || !dbCv.fileType) {
+            await refundParseQuota(dbCv.candidateId, 'missing fileUrl/fileType');
             await cvService.changeStatus(
                 dbCv.candidateId,
                 dbCv.id,
@@ -153,41 +183,9 @@ export const cvParseWorker = new Worker(
             const buffer = await fetchFileFromUrl(dbCv.fileUrl);
             const text = await extractText(buffer, dbCv.fileType);
 
-            // Chỉ attempt đầu reserve quota — các retry sau giữ nguyên count
-            // (LLM đã consume token cho attempt trước, không charge lại).
-            const reservedThisAttempt = job.attemptsMade === 0;
-            if (reservedThisAttempt) {
-                const reserved = await usageLogService.createOrIncrementUsage(
-                    dbCv.candidateId,
-                    "ai_cv_parsed",
-                );
-                if (!reserved) {
-                    // Hết lượt parse AI.
-                    //   - Khác analyze worker: parse KHÔNG có parsedData để giữ,
-                    //     nên status='failed' là chính xác (CV không thể dùng được).
-                    //   - Vẫn emit cv:quota-warning với context='parse' để FE
-                    //     hiển thị modal giải thích lý do quota (không phải lỗi
-                    //     file). User không phải đoán tại sao CV fail.
-                    await cvService.changeStatus(
-                        dbCv.candidateId,
-                        dbCv.id,
-                        "failed",
-                        "quota_exceeded",
-                    );
-                    notificationGateway.emitToUser(
-                        dbCv.candidateId,
-                        "cv:quota-warning",
-                        {
-                            cvId: dbCv.id,
-                            context: "parse",
-                            reason: "quota_exceeded",
-                            message:
-                                "Đã hết lượt parse AI. CV không thể xử lý cho tới khi gói được nạp thêm lượt.",
-                        },
-                    );
-                    return;
-                }
-            }
+            // QUOTA: đã được service reserve (reserveQuota) TRƯỚC khi enqueue —
+            // worker KHÔNG reserve/check nữa. Refund early-exit phía trên;
+            // lỗi LLM → catch cuối vẫn decrement như cũ.
 
             const result = await invokeCvParse(
                 CV_PARSE_SYSTEM_PROMPT,

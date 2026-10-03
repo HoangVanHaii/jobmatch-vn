@@ -218,7 +218,7 @@ function formatVnd(n: number): string {
     <Teleport to="body">
         <div
             v-if="open && paymentData"
-            class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto"
+            class="fixed inset-0 z-[80] bg-black/40 flex items-center justify-center p-4 overflow-y-auto"
             @click.self="close"
         >
             <!-- font-poppins: modal teleport ra <body> nên KHÔNG kế thừa

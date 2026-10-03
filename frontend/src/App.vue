@@ -29,9 +29,11 @@ import { useAuthStore } from '@stores/auth';
 import { useChatStore } from '@stores/chat';
 import { useEmployerJobStore } from '@stores/employerJob';
 import { useToastStore } from '@stores/toast';
+import { useCvStore } from '@stores/cv';
 import { useSocket } from '@composables/useSocket';
 import NotificationBell from '@components/notify/NotificationBell.vue';
 import ToastContainer from '@components/notify/ToastContainer.vue';
+import UpgradePricing from '@components/pricing/UpgradePricing.vue';
 
 // Chatbot AI giờ là trang full-page tại `/chatbot` (ChatbotView.vue).
 // Floating ChatbotWidget cũ đã thay thế — import giữ để tương thích nếu file còn được tham chiếu,
@@ -44,6 +46,7 @@ const auth = useAuthStore();
 const chat = useChatStore();
 const employerJobStore = useEmployerJobStore();
 const toast = useToastStore();
+const cvStore = useCvStore();
 const route = useRoute();
 const router = useRouter();
 
@@ -179,6 +182,30 @@ useSocket(
     }
   },
 );
+
+/**
+ * Modal UpgradePricing — mở CHỈ theo hành động user, KHÔNG theo banner
+ * passive (fetchList scan quotaWarning persist trong DB sẽ mở oan mỗi lần
+ * load trang):
+ *   1. HTTP 402 QUOTA_EXCEEDED khi bấm phân tích → cvStore.showUpgradeModal.
+ *   2. Socket `cv:quota-warning` context 'analyze' (PATCH-degraded emit từ
+ *      BE service) → cvStore.showUpgradeModal. Đăng ký tại App.vue để
+ *      survive navigation.
+ */
+useSocket(
+  'cv:quota-warning',
+  (payload: {
+    cvId: string;
+    context?: 'parse' | 'analyze' | string;
+    reason?: string;
+    message?: string;
+  }): void => {
+    if (auth.user?.role !== 'candidate') return;
+    if (payload?.context === 'analyze') {
+      cvStore.showUpgradeModal = true;
+    }
+  },
+);
 </script>
 
 <template>
@@ -192,4 +219,16 @@ useSocket(
    *  emit duplicate không push 2 lần. -->
   <ToastContainer v-if="route.name !== 'chat' && route.name !== 'e-chat'"/>
   <ToastHost v-if="route.name !== 'chat' && route.name !== 'e-chat'" />
+
+  <!-- Modal nâng cấp gói — mở khi bấm phân tích mà BE trả 402 (hết lượt).
+       Teleport to body + z cao nhất để LUÔN đè lên mọi modal z-50 khác
+       (CvDetailView / builder overlay — user có thể bấm phân tích từ trong
+       modal chi tiết CV). -->
+  <Teleport to="body">
+    <UpgradePricing
+      :open="cvStore.showUpgradeModal"
+      @update:open="cvStore.showUpgradeModal = $event"
+      @close="cvStore.showUpgradeModal = false"
+    />
+  </Teleport>
 </template>

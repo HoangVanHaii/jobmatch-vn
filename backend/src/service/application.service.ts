@@ -27,6 +27,7 @@ import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
 import { notificationService } from './notification.service';
 import { notificationGateway } from '../socket/notificationGateway';
+import { usageLogService } from './usageLog.service';
 import type {
   ApplicationCvSnapshot,
   ApplicationDetail,
@@ -157,6 +158,125 @@ const assertJobIsApplyable = async (
  *   - KHÔNG chờ worker (sync) — response time ổn định, FE poll hoặc nhận socket
  *     event 'application:match-ready' để hiển thị điểm.
  */
+/**
+ * Best-effort: tạo notification `application_match_ready` cho candidate + emit socket.
+ * (Chuyển từ cvMatch.worker xuống service theo refactor reserve-tại-service —
+ * worker import lại hàm này cho catch path.)
+ *
+ * KHÔNG throw để tránh break caller. Lỗi notification KHÔNG rollback matching
+ * (điểm + reasoning đã update DB thành công).
+ *
+ * Payload gửi FE:
+ *   - applicationId: để navigate tới detail hoặc re-fetch
+ *   - jobId, jobTitle: hiển thị context ("Job Senior Frontend Developer")
+ *   - reason: 'success' | 'quota_exceeded' | 'failed' — để FE render UI phù hợp:
+ *       - success: show matchPercent + rationale (xanh)
+ *       - quota_exceeded: show "Đã apply thành công, không có AI match (hết quota)"
+ *       - failed: show "Matching thất bại, thử lại sau"
+ *   - matchPercent, rationale: null nếu không phải success
+ */
+export const notifyCandidateOfMatchResult = async (params: {
+  candidateId: string;
+  applicationId: string;
+  jobId: string;
+  jobTitle: string;
+  reason: 'success' | 'quota_exceeded' | 'failed';
+  matchPercent: number | null;
+  rationale: string | null;
+}): Promise<void> => {
+  const { candidateId, applicationId, jobId, jobTitle, reason, matchPercent, rationale } = params;
+
+  try {
+    const titleMap: Record<typeof reason, string> = {
+      success: `AI chấm ${matchPercent}% match cho ${jobTitle}`,
+      quota_exceeded: `Đã nộp hồ sơ cho ${jobTitle} — AI match tạm thời không khả dụng`,
+      failed: `AI match cho ${jobTitle} thất bại, thử lại sau`,
+    };
+
+    await notificationService.create({
+      userId: candidateId,
+      type: 'application_match_ready',
+      title: titleMap[reason],
+      payload: {
+        applicationId,
+        jobId,
+        jobTitle,
+        reason,
+        matchPercent,
+        rationale,
+      },
+    });
+  } catch (err) {
+    // Matching đã chạy xong — notification chỉ là UX. Log warn, không throw.
+    logger.warn(
+      { err, applicationId, candidateId, reason },
+      'notifyCandidateOfMatchResult: lỗi (best-effort, match data OK)',
+    );
+  }
+};
+
+/**
+ * Ghi nhận AI match KHÔNG chạy được cho 1 application (side-effect chuyển từ
+ * cvMatch.worker về service theo refactor reserve-tại-service):
+ *   1. UPDATE `aiMatchReasoning = { reason }` — persist để FE list không
+ *      spinner vô hạn (check `aiMatchScore IS NULL`).
+ *   2. Notify candidate (best-effort) + emit `application:match-ready` +
+ *      legacy `application:match-skipped` — giữ nguyên payload shape cũ.
+ *
+ * KHÔNG throw — đây là degraded path, lỗi chỉ log (application đã tạo OK).
+ */
+const markMatchDegraded = async (params: {
+  applicationId: string;
+  candidateId: string;
+  jobId: string;
+  reason: 'quota_exceeded' | 'failed';
+}): Promise<void> => {
+  const { applicationId, candidateId, jobId, reason } = params;
+
+  try {
+    const [job] = await db
+      .select({ title: jobs.title })
+      .from(jobs)
+      .where(eq(jobs.id, jobId))
+      .limit(1);
+    const jobTitle = job?.title ?? 'Job';
+
+    await db
+      .update(applications)
+      .set({ aiMatchReasoning: { reason }, updatedAt: new Date() })
+      .where(eq(applications.id, applicationId));
+
+    await notifyCandidateOfMatchResult({
+      candidateId,
+      applicationId,
+      jobId,
+      jobTitle,
+      reason,
+      matchPercent: null,
+      rationale: null,
+    });
+
+    notificationGateway.emitToUser(candidateId, 'application:match-ready', {
+      applicationId,
+      jobId,
+      reason,
+      matchPercent: null,
+      rationale: null,
+    });
+    // Legacy event — FE cũ còn nghe event này.
+    notificationGateway.emitToUser(candidateId, 'application:match-skipped', {
+      applicationId,
+      jobId,
+      reason,
+    });
+  } catch (err) {
+    logger.warn(
+      { err, applicationId, reason },
+      'markMatchDegraded: lỗi side-effect (best-effort)',
+    );
+  }
+};
+
 export const create = async (
   input: CreateApplicationInput,
   candidateId: string,
@@ -196,17 +316,46 @@ export const create = async (
       companyId,
     });
 
-    try {
-      const { cvMatchQueue } = await import('../config/queue');
-      await cvMatchQueue.add('cv-match', {
+    // Reserve quota AI match của CANDIDATE. Hết lượt KHÔNG chặn nộp hồ sơ
+    // (quyết định product): application vẫn tạo OK, service tự ghi reasoning
+    // 'quota_exceeded' + notify + socket (side-effect chuyển từ worker về
+    // service), không enqueue match job.
+    const matchReserved = await usageLogService.createOrIncrementUsage(
+      candidateId,
+      'ai_cv_match',
+    );
+
+    if (!matchReserved) {
+      // Hết lượt — degraded ngay tại service, job không vào queue.
+      await markMatchDegraded({
         applicationId: created.id,
+        candidateId,
         jobId: input.jobId,
+        reason: 'quota_exceeded',
       });
-    } catch (err) {
-      logger.warn(
-        { err, applicationId: created.id },
-        'create: enqueue cvMatchQueue thất bại, application OK nhưng sẽ không có AI match score',
-      );
+    } else {
+      try {
+        const { cvMatchQueue } = await import('../config/queue');
+        await cvMatchQueue.add('cv-match', {
+          applicationId: created.id,
+          jobId: input.jobId,
+          candidateId,
+        });
+      } catch (err) {
+        // Enqueue fail (queue down) → hoàn lượt + degraded 'failed'
+        // (fix bug cũ: warn-only làm FE spinner vô hạn vì reasoning NULL).
+        logger.warn(
+          { err, applicationId: created.id },
+          'create: enqueue cvMatchQueue thất bại — hoàn lượt + degraded failed',
+        );
+        await usageLogService.decrementCount(candidateId, 'ai_cv_match');
+        await markMatchDegraded({
+          applicationId: created.id,
+          candidateId,
+          jobId: input.jobId,
+          reason: 'failed',
+        });
+      }
     }
 
     return created;
@@ -731,6 +880,7 @@ export const recomputeMatch = async (
   const [app] = await db
     .select({
       id: applications.id,
+      candidateId: applications.candidateId,
       jobId: applications.jobId,
       cv: applications.cv,
     })
@@ -774,17 +924,25 @@ export const recomputeMatch = async (
   }
 
   // --------------------------------------------------------------------------
-  // 3. Enqueue TRƯỚC, chỉ reset DB nếu enqueue OK.
+  // 3. Reserve quota AI match của CANDIDATE (employer chỉ trigger) — hết lượt
+  //    → 402 QUOTA_EXCEEDED cho employer, score cũ của application nguyên vẹn.
+  // --------------------------------------------------------------------------
+  await usageLogService.reserveQuota(app.candidateId, 'ai_cv_match');
+
+  // --------------------------------------------------------------------------
+  // 4. Enqueue TRƯỚC, chỉ reset DB nếu enqueue OK.
   // --------------------------------------------------------------------------
   // Tại sao enqueue trước reset: nếu queue down → application giữ score cũ
   // (nếu có) thay vì bị NULL vĩnh viễn. Còn nếu enqueue OK → reset an toàn
   // vì worker sẽ fill lại score mới trong vài giây.
+  // Enqueue fail → HOÀN lượt đã reserve (queue down không được tiêu lượt).
   let enqueued = false;
   try {
     const { cvMatchQueue } = await import('../config/queue');
     await cvMatchQueue.add('cv-match', {
       applicationId: app.id,
       jobId: app.jobId,
+      candidateId: app.candidateId,
     });
     enqueued = true;
   } catch (err) {
@@ -792,6 +950,7 @@ export const recomputeMatch = async (
       { err, applicationId, employerId },
       'recomputeMatch: enqueue cvMatchQueue thất bại (queue down?)',
     );
+    await usageLogService.decrementCount(app.candidateId, 'ai_cv_match');
     throw new AppError(
       503,
       'QUEUE_UNAVAILABLE',

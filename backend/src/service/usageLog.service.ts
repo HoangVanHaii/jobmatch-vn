@@ -3,6 +3,22 @@ import { db } from "../config/database";
 import { usageLogs } from "../db/schema/usageLogs";
 import { logger } from "../config/logger";
 import { planService } from "./plan.service";
+import { AppError } from "../middleware/errorHandler";
+
+/**
+ * Message 402 theo feature — dùng bởi `reserveQuota`. Key thiếu trong map →
+ * message chung. Đổi text cần đồng bộ FE mapping (cvStore ERROR_MESSAGES).
+ */
+const QUOTA_ERROR_MESSAGES: Record<string, string> = {
+    ai_cv_parsed:
+        "Bạn đã hết lượt upload CV trong gói hiện tại. Vui lòng nâng cấp gói.",
+    ai_cv_analysis:
+        "Bạn đã hết lượt chấm điểm CV bằng AI trong gói hiện tại. Vui lòng nâng cấp gói.",
+    ai_cv_match:
+        "Bạn đã hết lượt so khớp CV bằng AI trong gói hiện tại.",
+    job_post:
+        "Bạn đã hết lượt đăng tin trong gói hiện tại. Vui lòng nâng cấp gói.",
+};
 
 /**
  * Parse limit value từ plan.features JSON.
@@ -293,5 +309,30 @@ export const usageLogService = {
         });
     },
 
-
+    /**
+     * Reserve quota Ở TẦNG SERVICE — gọi TRƯỚC khi `.add()` job vào queue.
+     *
+     * Wrap `createOrIncrementUsage` (atomic: advisory lock + check-and-increment
+     * trong 1 transaction — tránh TOCTOU của pattern check-rồi-enqueue). Hết
+     * quota → throw `AppError(402, "QUOTA_EXCEEDED", ...)` NGAY tại API —
+     * job không bao giờ vào queue, caller (FE) nhận lỗi tức thì.
+     *
+     * Được dùng bởi các enqueue site: cv.service (upload/triggerAnalysis),
+     * job.service (submit), application.service (recomputeMatch). Riêng
+     * cv.service.update (PATCH) dùng `createOrIncrementUsage` trực tiếp lấy
+     * boolean — hết quota là "degraded success" chứ không phải lỗi.
+     *
+     * Pattern tham chiếu: job.service.ts generateDraft (sync API).
+     */
+    reserveQuota: async (userId: string, feature: string): Promise<void> => {
+        const reserved = await usageLogService.createOrIncrementUsage(userId, feature);
+        if (!reserved) {
+            throw new AppError(
+                402,
+                "QUOTA_EXCEEDED",
+                QUOTA_ERROR_MESSAGES[feature] ??
+                    "Đã hết lượt sử dụng trong gói hiện tại. Vui lòng nâng cấp gói.",
+            );
+        }
+    },
 };

@@ -18,12 +18,14 @@ const COUNTABLE_KEYS: CountableQuotaKey[] = [
     'job_post',
     'ai_cv_parsed',
     'ai_cv_analysis',
+    'ai_cv_match',
     'job_generation',
 ];
 
 const AI_KEYS: ReadonlySet<CountableQuotaKey> = new Set([
     'ai_cv_parsed',
     'ai_cv_analysis',
+    'ai_cv_match',
     'job_generation',
 ]);
 

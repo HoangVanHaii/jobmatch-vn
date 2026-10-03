@@ -63,6 +63,8 @@ import CvThumbnailTemplate2 from './CvThumbnailTemplate2.vue';
 import CvThumbnailTemplate3 from './CvThumbnailTemplate3.vue';
 import CvThumbnailTemplate4 from './CvThumbnailTemplate4.vue';
 import CvThumbnailTemplate5 from './CvThumbnailTemplate5.vue';
+import CvThumbnailTemplate6 from './CvThumbnailTemplate6.vue';
+import CvThumbnailTemplate7 from './CvThumbnailTemplate7.vue';
 import { buildRenderData } from '@/composables/cvRenderData';
 import type { Cv } from '@/types/cv';
 
@@ -104,7 +106,7 @@ const isDirect = computed<boolean>(() => props.cv.source === 'direct');
 const directTemplateId = computed<number | null>(() => {
   if (!isDirect.value) return null;
   const id = props.cv.templateId;
-  return id !== null && id >= 1 && id <= 5 ? id : 1;
+  return id !== null && id >= 1 && id <= 7 ? id : 1;
 });
 
 /** Mime type lowercase, dùng cho branch upload. */
@@ -127,10 +129,12 @@ const templateMap = {
   3: CvThumbnailTemplate3,
   4: CvThumbnailTemplate4,
   5: CvThumbnailTemplate5,
+  6: CvThumbnailTemplate6,
+  7: CvThumbnailTemplate7,
 } as const;
 
 const ResolvedThumbnail = computed(() => {
-  const t = directTemplateId.value as 1 | 2 | 3 | 4 | 5 | null;
+  const t = directTemplateId.value as 1 | 2 | 3 | 4 | 5 | 6 | 7 | null;
   return t ? templateMap[t] ?? CvThumbnailTemplate1 : null;
 });
 

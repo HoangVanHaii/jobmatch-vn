@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * CVTemplateRenderer — switch template theo templateId.
- * 5 template hiện có: 1, 2, 3, 4, 5. Ngoài phạm vi → fallback về 1.
+ * 7 template hiện có: 1-7. Ngoài phạm vi → fallback về 1.
  *
  * Prop `disableLinks`:
  *   - true  → mỗi template render link dạng text thuần (<span>) thay vì <a>.
@@ -20,7 +20,10 @@ import CVTemplate2 from './CVTemplate2.vue';
 import CVTemplate3 from './CVTemplate3.vue';
 import CVTemplate4 from './CVTemplate4.vue';
 import CVTemplate5 from './CVTemplate5.vue';
+import CVTemplate6 from './CVTemplate6.vue';
+import CVTemplate7 from './CVTemplate7.vue';
 import type { CvRenderData } from '@/types/cv';
+import type { CvLanguage } from '@/utils/cvLabels';
 
 const props = withDefaults(
   defineProps<{
@@ -28,8 +31,10 @@ const props = withDefaults(
     data: CvRenderData;
     /** true = render text-only (no <a>). Default false để giữ behavior cũ. */
     disableLinks?: boolean;
+    /** Ngôn ngữ tiêu đề section ('vi' | 'en'). Default 'en'. */
+    language?: CvLanguage;
   }>(),
-  { disableLinks: false },
+  { disableLinks: false, language: 'en' },
 );
 
 /** Map templateId → component. */
@@ -39,10 +44,12 @@ const templateMap = {
   3: CVTemplate3,
   4: CVTemplate4,
   5: CVTemplate5,
+  6: CVTemplate6,
+  7: CVTemplate7,
 } as const;
 
 const ResolvedTemplate = computed(() => {
-  const tpl = templateMap[props.templateId as 1 | 2 | 3 | 4 | 5];
+  const tpl = templateMap[props.templateId as 1 | 2 | 3 | 4 | 5 | 6 | 7];
   return tpl ?? CVTemplate1;
 });
 </script>
@@ -52,5 +59,6 @@ const ResolvedTemplate = computed(() => {
     :is="ResolvedTemplate"
     :data="data"
     :disable-links="disableLinks"
+    :language="language"
   />
 </template>

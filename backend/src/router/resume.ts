@@ -15,7 +15,7 @@ resumeRouter.get('/', async (req, res, next) => {
     res.json({ success: true, data: rows });
   } catch (err) { next(err); }
 });
-
+ 
 resumeRouter.post('/upload', async (req, res, next) => {
   try {
     if (!req.file) throw new AppError(400, 'NO_FILE', 'No file uploaded');

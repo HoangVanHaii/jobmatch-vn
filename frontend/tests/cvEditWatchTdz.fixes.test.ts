@@ -194,18 +194,22 @@ describe('Bug #5 — CreateResumeView edit mode KHÔNG trắng trang', () => {
 });
 
 /* ============================================================================
- * Test 3 — Static check: file CreateResumeView.vue phải có refs declare
+ * Test 3 — Static check: file CvBuilderEditor.vue phải có refs declare
  * TRƯỚC watch trong setup. Nếu ai reorder về pattern bug → test fail.
  *
- * Dùng regex đơn giản tìm vị trí của `const personal = ref(` vs
- * `watch(` trong file. personal phải XUẤT HIỆN TRƯỚC watch đầu tiên có
- * immediate: true.
+ * Lưu ý: logic đã chuyển từ CreateResumeView.vue (view mỏng bọc editor) sang
+ * CvBuilderEditor.vue (component editor chứa form refs + watch). View giờ
+ * chỉ lo route + props, KHÔNG còn form state.
+ *
+ * Watch bây giờ theo dõi `() => props.cvId` (không còn `cvIdParam` từ route).
+ * Dùng regex đơn giản tìm vị trí của `const personal = ref(` vs `watch(`.
+ * personal phải XUẤT HIỆN TRƯỚC watch đầu tiên có immediate: true.
  * ==========================================================================*/
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-describe('Bug #5 — Static check thứ tự refs vs watch trong CreateResumeView.vue', () => {
-  const filePath = resolve(__dirname, '../src/views/candidate/CreateResumeView.vue');
+describe('Bug #5 — Static check thứ tự refs vs watch trong CvBuilderEditor.vue', () => {
+  const filePath = resolve(__dirname, '../src/components/cv/builder/CvBuilderEditor.vue');
   const src = readFileSync(filePath, 'utf-8');
 
   const findFirst = (re: RegExp): number => {
@@ -219,7 +223,10 @@ describe('Bug #5 — Static check thứ tự refs vs watch trong CreateResumeVie
     const skillsPos = findFirst(/^const skills = ref[<(]/m);
     const projectsPos = findFirst(/^const projects = ref[<(]/m);
     const certificatesPos = findFirst(/^const certificates = ref[<(]/m);
-    const watchImmediatePos = findFirst(/watch\(\s*cvIdParam[\s\S]*?immediate:\s*true/m);
+    // Watch track cvId qua prop (CvBuilderEditor nhận cvId qua prop, không qua
+    // route param như CreateResumeView cũ). Match watch thật (arrow function
+    // `() => props.cvId`) — KHÔNG match comment có chữ "watch(".
+    const watchImmediatePos = findFirst(/watch\(\s*\(\)\s*=>\s*props\.cvId[\s\S]*?immediate:\s*true/m);
 
     expect(personalPos).toBeGreaterThan(0);
     expect(skillsPos).toBeGreaterThan(0);

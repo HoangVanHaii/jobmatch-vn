@@ -24,6 +24,7 @@ import {
   Sparkles,
   Briefcase,
   Wand2,
+  Target,
 } from 'lucide-vue-next';
 import type { Plan } from '@/types/plan';
 import type { CreatePaymentResponse } from '@/types/payment';
@@ -107,6 +108,7 @@ const FEATURE_ICON_BASE: Record<CountableQuotaKey, typeof Briefcase> = {
   job_generation: Wand2,
   ai_cv_parsed: FileSearch,
   ai_cv_analysis: Sparkles,
+  ai_cv_match: Target,
 };
 
 const ROLE_CONFIG: Record<'candidate' | 'employer', RoleConfig> = {
@@ -118,6 +120,7 @@ const ROLE_CONFIG: Record<'candidate' | 'employer', RoleConfig> = {
       job_post: 'Lượt tạo việc làm',
       ai_cv_parsed: 'Phân tích CV',
       ai_cv_analysis: 'Chấm điểm CV bằng AI',
+      ai_cv_match: 'AI match hồ sơ',
       job_generation: 'Lượt tạo mô tả việc làm (AI)',
     },
     featureKeys: ['apply', 'ai_cv_parsed', 'ai_cv_analysis'],
@@ -134,6 +137,7 @@ const ROLE_CONFIG: Record<'candidate' | 'employer', RoleConfig> = {
       job_post: 'Lượt đăng việc làm',
       ai_cv_parsed: 'Phân tích CV',
       ai_cv_analysis: 'Chấm điểm CV bằng AI',
+      ai_cv_match: 'AI match hồ sơ',
       job_generation: 'Lượt tạo mô tả việc làm (AI)',
     },
     featureKeys: ['job_post', 'job_generation'],
