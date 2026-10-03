@@ -7,15 +7,23 @@
  *   - "Upload từ URL" — GET file từ URL công khai rồi upload lên BE như file
  *     thường. Fetch chạy từ browser nên URL phải cho phép CORS; server chặn
  *     CORS thì item rơi vào failed với lý do rõ ràng.
- *   - List file với progress bar THẬT (axios onUploadProgress) + trạng thái
- *     (uploading / success / failed) + retry cho failed + delete (abort request
- *     đang chạy).
- *   - Footer: Đóng / Đính kèm (disabled khi còn uploading).
+ *   - List file: progress bar 2 pha — kéo thả chỉ chạy progress GIẢ (staging
+ *     local, không call API); bấm "Đính kèm" mới upload thật (progress thật
+ *     từ axios onUploadProgress) rồi mới emit `attach`.
+ *   - Footer: Đóng / Đính kèm (disabled khi còn staged-uploading hoặc đang
+ *     attach-uploading).
+ *
+ * FLOW 2 PHA:
+ *   - Pha 1 (kéo thả / chọn / URL): KHÔNG call API upload — stage file vào
+ *     list, 'success' = staged local (chưa có result).
+ *   - Pha 2 (Đính kèm): upload thật lên MinIO TUẦN TỰ từng file (fake progress
+ *     chuyển thành thật qua onUploadProgress), xong mới emit `attach` để parent
+ *     tạo CV row (trigger parse AI). File fail giữ lại để retry; file thành
+ *     công được emit + gỡ; list trống thì tự đóng modal.
  *
  * Upload thật qua `uploadApi.uploadFile` (POST /uploads/file — single file,
- * 10MB, PDF/DOCX/XLSX/PPT/TXT/CSV/ZIP/image). Nhiều file chọn cùng lúc fire
- * song song, mỗi file 1 request độc lập; 1 file fail không ảnh hưởng file khác.
- * Emit `attach` trả các item success kèm `result` (url/key từ MinIO).
+ * 10MB). Giới hạn 3 file/lần khớp cvAiRateLimiter của BE (3 request tạo
+ * CV/phút/user).
  */
 import { computed, ref } from 'vue'
 import { X, UploadCloud, FileText, Trash2, RefreshCw } from 'lucide-vue-next'
@@ -90,6 +98,48 @@ const updateProgress = (item: UploadItem, percent: number, loaded: number, total
 const hasInProgress = computed<boolean>(() => items.value.some((i) => i.status === 'uploading' || i.status === 'queued'))
 
 /**
+ * Fake progress engine — kéo thả KHÔNG call API. Progress chỉ là animation
+ * đưa item tới trạng thái staged ('success' mà CHƯA có `result`). Upload
+ * thật (MinIO) chỉ diễn ra khi bấm "Đính kèm" — xem attach().
+ */
+const timers = new Map<string, ReturnType<typeof setInterval>>()
+
+/** Estimate timeLeft theo tốc độ giả lập 200 kb/s — chỉ để hiển thị. */
+const estimateTimeLeft = (item: UploadItem): number => {
+  const remaining = item.size * (1 - item.progress / 100)
+  const rate = 200 * 1024
+  return Math.max(1, Math.round(remaining / rate))
+}
+
+const simulateUpload = (id: string): void => {
+  const tick = (): void => {
+    const item = items.value.find((i) => i.id === id)
+    if (!item || (item.status !== 'queued' && item.status !== 'uploading')) {
+      const t = timers.get(id)
+      if (t) {
+        clearInterval(t)
+        timers.delete(id)
+      }
+      return
+    }
+    if (item.status === 'queued') item.status = 'uploading'
+    item.progress = Math.min(100, item.progress + 12)
+    if (item.progress >= 100) {
+      item.status = 'success' // staged — CHƯA upload thật
+      item.timeLeft = null
+      const t = timers.get(id)
+      if (t) {
+        clearInterval(t)
+        timers.delete(id)
+      }
+    } else {
+      item.timeLeft = estimateTimeLeft(item)
+    }
+  }
+  timers.set(id, setInterval(tick, 200))
+}
+
+/**
  * Giới hạn số file attach mỗi lần — BE `cvAiRateLimiter` chỉ cho 3 request
  * tạo CV/phút/user (mỗi CV tạo = 1 job parse AI tốn kém). Vượt quá sẽ 429.
  */
@@ -107,8 +157,12 @@ const canAttach = computed<boolean>(
 const controllers = new Map<string, AbortController>()
 const startTimes = new Map<string, number>()
 
-const startUpload = (item: UploadItem): void => {
-  if (!(item.source instanceof File)) return
+/**
+ * Upload THẬT 1 item đã staged lên MinIO — CHỈ chạy trong attach().
+ * Resolve true nếu thành công; abort (do removeItem giữa chừng) resolve false.
+ */
+const startUpload = (item: UploadItem): Promise<boolean> => {
+  if (!(item.source instanceof File)) return Promise.resolve(false)
   const controller = new AbortController()
   controllers.set(item.id, controller)
   startTimes.set(item.id, Date.now())
@@ -116,7 +170,7 @@ const startUpload = (item: UploadItem): void => {
   item.progress = 0
   item.error = undefined
 
-  uploadApi.uploadFile(
+  return uploadApi.uploadFile(
     item.source,
     props.folder,
     (percent, loaded, total) => updateProgress(item, percent, loaded, total),
@@ -127,13 +181,15 @@ const startUpload = (item: UploadItem): void => {
       item.progress = 100
       item.timeLeft = null
       item.result = data.data
+      return true
     })
     .catch((err: unknown) => {
-      // Abort do removeItem — item đã bị gỡ, không cần mark failed.
-      if (controller.signal.aborted) return
+      // Abort do removeItem — item đã bị gỡ, không mark failed.
+      if (controller.signal.aborted) return false
       item.status = 'failed'
       item.timeLeft = null
       item.error = err instanceof Error ? err.message : 'Upload failed'
+      return false
     })
     .finally(() => {
       controllers.delete(item.id)
@@ -202,8 +258,8 @@ const addFile = (file: File): void => {
     source: file,
     timeLeft: null,
   })
-  const item = items.value[items.value.length - 1]
-  startUpload(item)
+  // Không call API — chỉ chạy progress giả đến 'success' (staged).
+  simulateUpload(id)
 }
 
 const onFileInput = (e: Event): void => {
@@ -326,7 +382,12 @@ const handleUploadUrl = async (): Promise<void> => {
  * Item actions
  * ==========================================================================*/
 const removeItem = (id: string): void => {
-  // Abort request đang chạy (nếu có) rồi gỡ item.
+  // Dọn fake timer (giai đoạn staging) + abort request thật (giai đoạn attach).
+  const t = timers.get(id)
+  if (t) {
+    clearInterval(t)
+    timers.delete(id)
+  }
   controllers.get(id)?.abort()
   controllers.delete(id)
   startTimes.delete(id)
@@ -336,15 +397,14 @@ const removeItem = (id: string): void => {
 const retryItem = (id: string): void => {
   const item = items.value.find((i) => i.id === id)
   if (!item) return
-  // Chỉ retry được khi đã có File (upload fail). Item fail do fetch URL thì
-  // source vẫn là string → user xoá và dán lại URL.
+  // Retry = re-stage locally (progress giả) — upload thật chỉ chạy ở attach.
+  // Item fail do fetch URL (source là string) → không retry được, user xoá
+  // và dán lại URL.
   if (!(item.source instanceof File)) return
-  // Vẫn còn trong hạn ngạch mới cho retry (tránh vượt 3 attachable).
-  if (attachableCount.value >= MAX_ATTACH) {
-    item.error = `Tối đa ${MAX_ATTACH} file mỗi lần — giới hạn phân tích AI 3 CV/phút.`
-    return
-  }
-  startUpload(item)
+  item.status = 'queued'
+  item.progress = 0
+  item.error = undefined
+  simulateUpload(id)
 }
 
 /* ============================================================================
@@ -356,11 +416,35 @@ const close = (): void => {
   emit('update:modelValue', false)
 }
 
-const attach = (): void => {
-  // Chỉ gửi item success (đã có result: url/key/mime/size từ MinIO).
-  emit('attach', successItems.value)
-  items.value = [] // đã bàn giao cho caller — mở lại modal trắng tinh
-  emit('update:modelValue', false)
+/**
+ * Đính kèm — CHỈ lúc này mới upload thật lên MinIO, tuần tự từng file
+ * (progress bar từng item chuyển từ giả sang thật). Xong hết mới emit
+ * `attach` cho parent tạo CV row (trigger parse). Fail cục bộ: các file
+ * thành công vẫn được emit + gỡ khỏi list; file fail giữ lại để retry.
+ */
+const isAttaching = ref<boolean>(false)
+
+const attach = async (): Promise<void> => {
+  if (isAttaching.value || !canAttach.value) return
+  isAttaching.value = true
+  try {
+    for (const item of [...successItems.value]) {
+      await startUpload(item)
+    }
+    // Emit các file đã có result từ MinIO; file fail giữ lại để retry.
+    const done = items.value.filter((i) => i.status === 'success' && i.result)
+    if (done.length) {
+      emit('attach', done)
+      const doneIds = new Set(done.map((d) => d.id))
+      items.value = items.value.filter((i) => !doneIds.has(i.id))
+    }
+    // Không còn item nào → đóng modal; còn fail → mở cho user retry.
+    if (!items.value.length) {
+      emit('update:modelValue', false)
+    }
+  } finally {
+    isAttaching.value = false
+  }
 }
 </script>
 
@@ -520,7 +604,7 @@ const attach = (): void => {
                           {{ item.progress }}% | {{ item.timeLeft ?? 0 }} sec left
                         </template>
                         <template v-else-if="item.status === 'success'">
-                          Tải lên thành công | 100%
+                          {{ item.result ? 'Tải lên thành công | 100%' : 'Sẵn sàng đính kèm | 100%' }}
                         </template>
                         <template v-else-if="item.status === 'failed'">
                           {{ item.error ?? 'Tải lên thất bại' }}
@@ -546,7 +630,8 @@ const attach = (): void => {
             </p>
             <button
               type="button"
-              class="h-8 rounded-md border border-slate-200 bg-white px-3 text-[12px] font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              class="h-8 rounded-md border border-slate-200 bg-white px-3 text-[12px] font-medium text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="isAttaching"
               @click="close"
             >
               Đóng
@@ -554,10 +639,10 @@ const attach = (): void => {
             <button
               type="button"
               class="h-8 rounded-md bg-[#5b4eea] px-3 text-[12px] font-medium text-white hover:bg-[#4a3ed1] disabled:opacity-50 transition-colors"
-              :disabled="!canAttach"
+              :disabled="!canAttach || isAttaching"
               @click="attach"
             >
-              Đính kèm
+              {{ isAttaching ? 'Đang tải lên…' : 'Đính kèm' }}
             </button>
           </div>
         </div>

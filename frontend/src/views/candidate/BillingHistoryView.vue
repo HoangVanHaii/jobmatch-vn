@@ -36,6 +36,7 @@ import {
     Package,
     Send,
     FileText,
+    Target,
     ArrowRight,
     Filter,
 } from 'lucide-vue-next';
@@ -107,6 +108,7 @@ const quotaLabel: Record<CountableQuotaKey, string> = {
     job_post: 'Lượt tạo việc làm',
     ai_cv_parsed: 'Phân tích CV',
     ai_cv_analysis: 'Chấm điểm CV bằng AI',
+    ai_cv_match: 'AI match hồ sơ',
     job_generation: 'Lượt tạo mô tả việc làm (AI)',
 };
 
@@ -115,6 +117,7 @@ const quotaIcon: Record<CountableQuotaKey, typeof Send> = {
     apply: Send,
     ai_cv_parsed: FileText,
     ai_cv_analysis: Sparkles,
+    ai_cv_match: Target,
     job_post: Package,
     job_generation: Sparkles,
 };

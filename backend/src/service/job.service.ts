@@ -455,8 +455,32 @@ export const jobService = {
     // if (!['draft', 'ai_flagged', ''].includes(job.status)) {
     //   throw new AppError(400, 'INVALID_STATUS', `Không thể submit từ trạng thái ${job.status}`);
     // }
+
+    // Reserve quota TRƯỚC khi đổi status/enqueue — hết lượt → 402 QUOTA_EXCEEDED
+    // ngay, job không vào queue. (Trước đây reserve trong worker.)
+    await usageLogService.reserveQuota(userId, 'job_post');
+
     await db.update(jobs).set({ status: 'ai_scanning' }).where(eq(jobs.id, jobId));
-    await jobModerationQueue.add('job-scan', { jobId });
+
+    // Enqueue fail (Redis down) → revert status + hoàn lượt + 503.
+    try {
+      await jobModerationQueue.add('job-scan', {
+        jobId,
+        postedBy: userId,
+        chargeQuota: true,
+      });
+    } catch (e) {
+      await db
+        .update(jobs)
+        .set({ status: job.status })
+        .where(eq(jobs.id, jobId));
+      await usageLogService.decrementCount(userId, 'job_post');
+      throw new AppError(
+        503,
+        'QUEUE_UNAVAILABLE',
+        'Hệ thống bận, vui lòng thử lại.',
+      );
+    }
     // Embed song song với moderation — khi status='live' đã có embedding sẵn
   },
 
@@ -497,12 +521,20 @@ export const jobService = {
   /**
    * Admin force re-scan (không cần check status hiện tại).
    * Set status='ai_scanning' trước khi enqueue.
+   *
+   * BYPASS quota — thao tác vận hành admin, KHÔNG reserve `job_post` của chủ
+   * job (tránh 402 thay người khác / hoàn oan lượt chưa tiêu). Worker nhận
+   * `chargeQuota: false` để biết không được decrement khi fail.
    */
   forceScan: async (jobId: string): Promise<void> => {
     const job = await db.query.jobs.findFirst({ where: eq(jobs.id, jobId) });
     if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
     await db.update(jobs).set({ status: 'ai_scanning' }).where(eq(jobs.id, jobId));
-    await jobModerationQueue.add('job-scan', { jobId });
+    await jobModerationQueue.add('job-scan', {
+      jobId,
+      postedBy: job.postedBy,
+      chargeQuota: false,
+    });
   },
 
     /**

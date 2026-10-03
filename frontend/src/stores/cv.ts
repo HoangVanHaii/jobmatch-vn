@@ -13,6 +13,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { cvApi } from '@services/cv.api';
+import { extractErrorCode, extractErrorMessage } from '@services/http';
 import type {
   CreateDirectCvInput,
   CreateUploadCvInput,
@@ -75,6 +76,9 @@ export const useCvStore = defineStore('cv', () => {
     ALREADY_PROCESSING: 'CV đang được phân tích. Vui lòng đợi.',
     CV_NOT_PARSED: 'CV chưa parse xong. Vui lòng đợi hoặc upload lại.',
     CV_NOT_FOUND: 'CV không tồn tại hoặc đã bị xoá.',
+    // BE reserve quota ở tầng service (usageLogService.reserveQuota) — hết lượt
+    // trả 402 QUOTA_EXCEEDED ngay (không còn qua worker như trước).
+    QUOTA_EXCEEDED: 'Bạn đã hết lượt AI trong gói hiện tại. Vui lòng nâng cấp gói để tiếp tục.',
   };
   const setError = (e: unknown): void => {
     const res = (e as { response?: { data?: { error?: { code?: string; message?: string } } } })?.response;
@@ -329,6 +333,14 @@ export const useCvStore = defineStore('cv', () => {
    *
    * @returns cvId nếu success, null nếu fail.
    */
+  /**
+   * Cờ mở modal UpgradePricing — CHỈ set theo hành động user bấm phân tích
+   * mà BE trả 402 (hoặc socket PATCH-degraded), KHÔNG theo banner passive
+   * (fetchList scan quotaWarning persist trong DB — nếu theo banner thì modal
+   * mở oan mỗi lần load trang).
+   */
+  const showUpgradeModal = ref(false);
+
   const triggerAnalysis = async (cvId: string): Promise<string | null> => {
     error.value = null;
     try {
@@ -339,6 +351,24 @@ export const useCvStore = defineStore('cv', () => {
       if (quotaWarning.value?.cvId === cvId) quotaWarning.value = null;
       return cvId;
     } catch (e) {
+      // BE reserve quota ở service — hết lượt trả 402 QUOTA_EXCEEDED ngay khi
+      // user bấm → nhánh quota set error.value = message cụ thể (view toast
+      // đúng lỗi) + showUpgradeModal (modal UpgradePricing) + quotaWarning
+      // (banner persist qua reload).
+      //
+      // ⚠️ PHẢI dùng extractErrorCode: interceptor http.ts unwrap mọi lỗi BE
+      // thành HttpError (KHÔNG có .response) — đọc `e.response.data.error.code`
+      // kiểu axios cũ sẽ luôn undefined (bug "modal không mở" đã từng gặp).
+      const code = extractErrorCode(e);
+      if (code === 'QUOTA_EXCEEDED') {
+        error.value = extractErrorMessage(
+          e,
+          'Bạn đã hết lượt chấm điểm CV bằng AI trong gói hiện tại. Vui lòng nâng cấp gói.',
+        );
+        setQuotaWarning(cvId, error.value, 'analyze');
+        showUpgradeModal.value = true;
+        return null;
+      }
       setError(e);
       return null;
     }
@@ -398,6 +428,18 @@ export const useCvStore = defineStore('cv', () => {
       const { data } = await cvApi.upload(input);
       return data.data;
     } catch (e) {
+      // Hết lượt parse (402 QUOTA_EXCEEDED — BE reserveQuota 'ai_cv_parsed')
+      // → mở modal UpgradePricing + message gọi đúng tên "upload CV" (fallback
+      // chỉ dùng khi BE không trả message — thường extractErrorMessage lấy
+      // message BE 'Bạn đã hết lượt upload CV...').
+      if (extractErrorCode(e) === 'QUOTA_EXCEEDED') {
+        error.value = extractErrorMessage(
+          e,
+          'Bạn đã hết lượt upload CV trong gói hiện tại. Vui lòng nâng cấp gói.',
+        );
+        showUpgradeModal.value = true;
+        return null;
+      }
       setError(e);
       return null;
     }
@@ -430,7 +472,7 @@ export const useCvStore = defineStore('cv', () => {
 
   return {
     // state
-    items, total, page, pageSize, loading, error, query, quotaWarning,
+    items, total, page, pageSize, loading, error, query, quotaWarning, showUpgradeModal,
     // computed
     primary, totalPages,
     // actions

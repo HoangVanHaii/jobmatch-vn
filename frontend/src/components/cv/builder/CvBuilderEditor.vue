@@ -26,7 +26,6 @@ import {
   Check,
   Upload,
   X,
-  ChevronDown,
 } from 'lucide-vue-next';
 import { useSkillsStore } from '@stores/skills';
 import { useCvStore } from '@stores/cv';
@@ -912,20 +911,27 @@ const handleSave = async () => {
 };
 
 /* ============================================================================
- * Preview modal — overlay full màn hình (full-size 794px, không scale).
- * Pane bên trái bị scale nên nút Eye trên pane mở modal này để xem 1:1.
+ * Preview lightbox — overlay full màn hình, CÙNG pattern CvDetailView (xem
+ * CV từ list): overlay slate-900/60 + blur, toolbar nổi chữ trắng, sheet
+ * trắng A4 794px render trực tiếp (không scale). Mở từ 2 nguồn: nút Eye
+ * trên preview pane (desktop, pane bị scale nên cần chỗ xem 1:1) và nút
+ * "Xem trước CV" (mobile — <lg không còn pane inline).
+ * Switch mẫu / ngôn ngữ trong lightbox bind TRỰC TIẾP state chung
+ * (`templateId` / `previewLanguage`) — chọn xong thoát là pane + payload
+ * đã theo mẫu mới.
  * ==========================================================================*/
 
 const previewOpen = ref(false);
-const previewTemplateId = ref<number>(1);
 
 const openPreview = () => {
-  previewTemplateId.value = templateId.value;
   previewOpen.value = true;
 };
 const closePreview = () => {
   previewOpen.value = false;
 };
+
+/** Ngôn ngữ tiêu đề section — toggle trong lightbox (giữ pattern EN/VI). */
+const PREVIEW_LANGS = ['en', 'vi'] as const;
 
 /* ============================================================================
  * Avatar-required set + focus refs cho validation.
@@ -1016,9 +1022,6 @@ const focusSection = async (
     (el as HTMLInputElement).select?.();
   }
 };
-
-/** Mobile <lg: preview stack trên form — toggle đóng/mở (default mở). */
-const mobilePreviewOpen = ref(true);
 </script>
 
 <template>
@@ -1058,19 +1061,19 @@ const mobilePreviewOpen = ref(true);
       <div v-else class="grid items-start gap-5 lg:grid-cols-[minmax(480px,65fr)_minmax(0,35fr)]">
         <!-- C1 — PREVIEW: DOM trước để mobile stack lên trên form -->
         <aside class="min-w-0">
-          <!-- Mobile: nút toggle preview (chỉ <lg) -->
+          <!-- Mobile: nút mở lightbox xem CV (chỉ <lg — pane inline không còn
+               trên mobile, bấm nút là mở lightbox full-size). -->
           <button
             type="button"
             class="btn-secondary mb-3 inline-flex w-full items-center justify-center gap-1.5 text-sm font-medium lg:hidden"
-            :aria-expanded="mobilePreviewOpen"
-            @click="mobilePreviewOpen = !mobilePreviewOpen"
+            @click="openPreview"
           >
             <Eye class="h-4 w-4" />
-            {{ mobilePreviewOpen ? 'Ẩn xem trước' : 'Xem trước CV' }}
-            <ChevronDown class="h-4 w-4 transition-transform" :class="mobilePreviewOpen ? 'rotate-180' : ''" />
+            Xem trước CV
           </button>
 
-          <div :class="mobilePreviewOpen ? 'block' : 'hidden'" class="lg:block">
+          <!-- Desktop: pane inline sticky; mobile ẩn hẳn (preview qua lightbox). -->
+          <div class="hidden lg:block">
             <div class="lg:sticky lg:top-6">
               <div class="max-h-[60vh] overflow-y-auto lg:max-h-none">
                 <CvPreviewPane
@@ -1658,47 +1661,104 @@ const mobilePreviewOpen = ref(true);
   </Transition>
 
   <!-- ============================================================
-       PREVIEW MODAL — overlay full màn hình (full-size, 7 mẫu + language)
+       PREVIEW LIGHTBOX — CÙNG pattern CvDetailView (xem CV từ danh sách):
+       overlay slate-900/60 + blur, toolbar nổi chữ trắng phía trên, sheet
+       trắng A4 794px render TRỰC TIẾP (không scale, nội dung dài cuộn trên
+       overlay). Switch mẫu + EN/VI bind TRỰC TIẾP state chung
+       (templateId / previewLanguage) — chọn ở đây đổi luôn mẫu của CV đang
+       build. Mở từ nút "Xem trước CV" (mobile <lg) và nút Eye trên pane.
        ============================================================ -->
   <Teleport to="body">
-    <div
-      v-if="previewOpen"
-      class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4"
-      @click.self="closePreview"
+    <Transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition duration-100 ease-in"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
     >
-      <div class="bg-white rounded-2xl shadow-2xl shadow-slate-900/20 w-full max-w-5xl max-h-[95vh] sm:max-h-[92vh] flex flex-col ring-1 ring-slate-900/5">
-        <header class="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-200 flex items-center justify-between gap-2 sm:gap-4 flex-wrap">
-          <h2 class="font-semibold text-slate-900 text-sm sm:text-base shrink-0">Xem trước CV</h2>
-          <!-- Switch template trong modal preview — đủ 7 mẫu (CV_TEMPLATE_META). -->
-          <div class="scrollbar-hide inline-flex rounded-lg border border-slate-200 p-0.5 sm:p-1 overflow-x-auto">
-            <button
-              v-for="tpl in CV_TEMPLATE_META"
-              :key="tpl.id"
-              type="button"
-              :title="tpl.desc"
-              @click="previewTemplateId = tpl.id"
-              class="px-2.5 sm:px-3 py-1 text-xs rounded-md transition shrink-0"
-              :class="previewTemplateId === tpl.id ? 'bg-[#5b4eea] text-white' : 'text-slate-600 hover:bg-slate-100'"
-            >
-              <span class="sm:hidden">{{ tpl.id }}</span>
-              <span class="hidden sm:inline">{{ tpl.name }}</span>
-            </button>
+      <div
+        v-if="previewOpen"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 p-4 backdrop-blur-[2px] sm:p-8"
+        @click.self="closePreview"
+      >
+        <!-- Container cùng khung lightbox xem CV: max-w-[794px] (A4).
+             Toolbar + switcher NỔI trên overlay (chữ trắng), sheet trắng bên dưới. -->
+        <div class="font-poppins mx-auto flex w-full max-w-[794px] flex-col">
+          <!-- ==================== Toolbar nổi ==================== -->
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <div class="min-w-0 text-white">
+              <div class="truncate text-[15px] font-semibold drop-shadow-sm">
+                {{ cvData.personalInfo.fullName || 'Xem trước CV' }}
+              </div>
+              <div class="truncate text-[11px] text-white/70">
+                Bản xem trước khổ A4 — nội dung cập nhật trực tiếp từ form
+              </div>
+            </div>
+
+            <div class="flex shrink-0 flex-wrap items-center gap-2">
+              <!-- Switch 7 mẫu — pill nổi (active = pill trắng, đồng bộ
+                   dải tab của CvDetailView). -->
+              <div class="scrollbar-hide flex max-w-full items-center gap-1 overflow-x-auto">
+                <button
+                  v-for="tpl in CV_TEMPLATE_META"
+                  :key="tpl.id"
+                  type="button"
+                  :title="tpl.desc"
+                  class="inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-[11px] font-medium transition-colors"
+                  :class="templateId === tpl.id
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-white/70 hover:bg-white/10 hover:text-white'"
+                  :aria-pressed="templateId === tpl.id"
+                  @click="templateId = tpl.id"
+                >
+                  Mẫu {{ tpl.id }}
+                </button>
+              </div>
+
+              <!-- EN/VI — segmented nổi (active = pill trắng). -->
+              <div class="flex shrink-0 items-center rounded-md bg-white/10 p-0.5">
+                <button
+                  v-for="l in PREVIEW_LANGS"
+                  :key="l"
+                  type="button"
+                  class="h-6 rounded px-2 text-[11px] font-semibold uppercase transition-colors"
+                  :class="previewLanguage === l
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-white/70 hover:text-white'"
+                  :aria-pressed="previewLanguage === l"
+                  @click="previewLanguage = l"
+                >
+                  {{ l }}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                class="grid h-8 w-8 place-items-center rounded-md bg-white/10 text-white transition-colors hover:bg-white/20"
+                aria-label="Đóng"
+                @click="closePreview"
+              >
+                <X :size="16" />
+              </button>
+            </div>
           </div>
-          <button class="text-slate-400 hover:text-slate-600 p-1 shrink-0" @click="closePreview" aria-label="Đóng">
-            <X class="w-5 h-5" />
-          </button>
-        </header>
-        <div class="flex-1 overflow-y-auto bg-slate-50/60 p-3 sm:p-6">
-          <div class="bg-white max-w-[820px] mx-auto shadow-lg rounded-lg ring-1 ring-slate-900/5">
+
+          <!-- ==================== Sheet trắng A4 ==================== -->
+          <!-- Render trực tiếp trong sheet không padding — full 794px giống
+               hệt tab "Chi tiết" của CvDetailView. disable-links để click
+               link trong CV không điều hướng đi mất form đang soạn. -->
+          <div class="overflow-hidden rounded-lg bg-white shadow-xl ring-1 ring-slate-900/5">
             <CVTemplateRenderer
-              :template-id="previewTemplateId"
+              :template-id="templateId"
               :data="cvData"
               :language="previewLanguage"
+              :disable-links="true"
             />
           </div>
         </div>
       </div>
-    </div>
+    </Transition>
   </Teleport>
 </template>
 

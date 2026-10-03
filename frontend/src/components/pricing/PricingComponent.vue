@@ -107,6 +107,7 @@ const QUOTA_LABEL: Record<CountableQuotaKey, string> = {
   job_generation: "Lượt tạo mô tả việc làm (AI)",
   ai_cv_parsed: "Phân tích CV",
   ai_cv_analysis: "Chấm điểm CV bằng AI",
+  ai_cv_match: "AI match hồ sơ",
 };
 
 const FEATURE_KEYS: CountableQuotaKey[] = [

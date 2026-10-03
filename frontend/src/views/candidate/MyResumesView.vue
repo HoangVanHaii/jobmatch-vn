@@ -128,7 +128,8 @@ const isProcessing = (cv: Cv): boolean =>
 /* ===== Re-analyze — nút brain hiện khi hover card CV đã parse =====
  * POST /cvs/:cvId/analyze qua cvStore.triggerAnalysis — store applyRow patch
  * row local (status='analyzing') nên overlay spinner hiện ngay, không đợi
- * socket. Fail (kể cả 429 quota) → toast lỗi từ cvStore.error. */
+ * socket. Fail (kể cả hết lượt 402 — modal UpgradePricing cũng mở kèm) →
+ * toast lỗi từ cvStore.error. */
 const analyzingId = ref<string | null>(null)
 const handleAnalyze = async (cv: Cv): Promise<void> => {
   if (analyzingId.value) return

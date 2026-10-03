@@ -18,6 +18,7 @@ import type { Plan } from './plan';
  *  - `job_post`        ← jobs.posted_by (đã đăng bao nhiêu job)
  *  - `ai_cv_parsed`    ← usage_logs (cvParse worker)
  *  - `ai_cv_analysis`  ← usage_logs (cvAnalysis worker)
+ *  - `ai_cv_match`     ← usage_logs (cvMatch worker — reserve tại service khi apply)
  *  - `job_generation`  ← usage_logs (generateDraft)
  */
 export type CountableQuotaKey =
@@ -25,6 +26,7 @@ export type CountableQuotaKey =
     | 'job_post'
     | 'ai_cv_parsed'
     | 'ai_cv_analysis'
+    | 'ai_cv_match'
     | 'job_generation';
 
 export interface QuotaUsageItem {

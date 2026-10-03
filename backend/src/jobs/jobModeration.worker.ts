@@ -12,46 +12,61 @@ import { usageLogService } from '../service/usageLog.service';
 
 const JOB_POST_FEATURE = 'job_post';
 
+/**
+ * Hoàn 1 lượt `job_post` khi job early-exit TRƯỚC khi LLM chạy.
+ *
+ * CHỈ hoàn khi `chargeQuota !== false` — forceScan admin bypass quota
+ * (không reserve) nên không được hoàn oan lượt chưa tiêu. Default `!== false`
+ * để job cũ pre-deploy (payload không có flag) giữ behavior cũ.
+ *
+ * `postedBy` lấy từ job payload — job cũ pre-deploy (payload thiếu field)
+ * sẽ warn + skip refund.
+ */
+const refundModerationQuota = async (
+    postedBy: string | undefined,
+    chargeQuota: boolean,
+    why: string,
+): Promise<void> => {
+    if (!chargeQuota) return;
+    if (!postedBy) {
+        logger.warn(
+            { why },
+            'Worker: refund skipped — payload thiếu postedBy (job cũ pre-deploy)',
+        );
+        return;
+    }
+    await usageLogService.decrementCount(postedBy, JOB_POST_FEATURE);
+};
+
 export const jobModerationWorker = new Worker('jobModeration', async (job) => {
     if (job.name !== 'job-scan') return;
-    const { jobId } = job.data as { jobId: string };
+    // `postedBy` + `chargeQuota` từ payload (enqueue site thêm từ refactor
+    // reserve-tại-service). Job cũ pre-deploy thiếu field → refund tự skip;
+    // chargeQuota undefined coi như `true` (giữ behavior cũ).
+    const { jobId, postedBy, chargeQuota: chargeQuotaRaw } = job.data as {
+        jobId: string;
+        postedBy?: string;
+        chargeQuota?: boolean;
+    };
+    const chargeQuota = chargeQuotaRaw !== false;
 
     const dbJob = await db.query.jobs.findFirst({ where: eq(jobs.id, jobId) });
     if (!dbJob) {
       logger.warn({ jobId, bullJobId: job.id }, 'Worker: job không tồn tại, skip');
+      await refundModerationQuota(postedBy, chargeQuota, 'job deleted after enqueue');
       return;
     }
     if (dbJob.status !== 'ai_scanning') {
       logger.warn({ jobId, status: dbJob.status }, 'Worker: jobstatus khác ai_scanning, skip');
+      await refundModerationQuota(dbJob.postedBy, chargeQuota, 'status guard skip (duplicate/processed job)');
       return;
     }
 
     logger.info({ jobId, bullJobId: job.id }, 'Worker: bắt đầu scan job');
 
-    // Quota: chỉ reserve ở attempt đầu — retry không double-count.
-    const reservedThisAttempt = job.attemptsMade === 0;
-    if (reservedThisAttempt) {
-      const reserved = await usageLogService.createOrIncrementUsage(
-        dbJob.postedBy,
-        JOB_POST_FEATURE,
-      );
-      if (!reserved) {
-        logger.warn(
-          { jobId, userId: dbJob.postedBy },
-          'Worker: hết quota job_post, skip scan — job vẫn được live',
-        );
-        await db.update(jobs).set({ status: 'live' }).where(eq(jobs.id, jobId));
-        await jobEmbeddingQueue.add('embed-job', { jobId });
-        notificationGateway.emitToUser(dbJob.postedBy, 'job_scan_complete', {
-          jobId,
-          verdict: 'skipped',
-          score: 0,
-          flaggedCount: 0,
-          reason: 'quota_exceeded',
-        });
-        return;
-      }
-    }
+    // QUOTA: đã được service reserve (reserveQuota) TRƯỚC khi enqueue với
+    // luồng submit thường; forceScan admin bypass (chargeQuota=false). Worker
+    // KHÔNG reserve/check nữa. Lỗi LLM → catch cuối vẫn decrement (nếu charge).
 
     try {
       // Gọi Gemini qua LangChain (auto-trace sang LangSmith)
@@ -125,7 +140,7 @@ export const jobModerationWorker = new Worker('jobModeration', async (job) => {
       );
 
       if (isLastAttempt) {
-        await usageLogService.decrementCount(dbJob.postedBy, JOB_POST_FEATURE);
+        await refundModerationQuota(dbJob.postedBy, chargeQuota, 'LLM failed, last attempt');
       }
       throw err;
     }

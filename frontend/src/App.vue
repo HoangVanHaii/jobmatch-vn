@@ -25,11 +25,11 @@
  *   - `notification:new` ← NotificationBell tự lo.
  */
 import { RouterView, useRoute, useRouter } from 'vue-router';
-import { ref } from 'vue';
 import { useAuthStore } from '@stores/auth';
 import { useChatStore } from '@stores/chat';
 import { useEmployerJobStore } from '@stores/employerJob';
 import { useToastStore } from '@stores/toast';
+import { useCvStore } from '@stores/cv';
 import { useSocket } from '@composables/useSocket';
 import NotificationBell from '@components/notify/NotificationBell.vue';
 import ToastContainer from '@components/notify/ToastContainer.vue';
@@ -46,6 +46,7 @@ const auth = useAuthStore();
 const chat = useChatStore();
 const employerJobStore = useEmployerJobStore();
 const toast = useToastStore();
+const cvStore = useCvStore();
 const route = useRoute();
 const router = useRouter();
 
@@ -183,18 +184,14 @@ useSocket(
 );
 
 /**
- * `cv:quota-warning` — worker hết lượt AI emit event này (xem
- * cvAnalysis.worker.ts / cvParse.worker.ts). POST /cvs/:cvId/analyze chỉ
- * enqueue nên KHÔNG bao giờ trả lỗi quota ngay — tín hiệu duy nhất là event
- * socket này (hoặc failureReason persist trong DB khi fetchList).
- *
- * context='analyze' (hết lượt PHÂN TÍCH AI) → mở modal UpgradePricing để
- * user mua thêm lượt ngay tại chỗ, bất kể đang ở trang nào (đăng ký global
- * tại App.vue để survive navigation — user có thể bấm phân tích từ list,
- * modal chi tiết, ...). context='parse' (hết lượt parse CV upload) không
- * mở modal — behavior cũ giữ nguyên.
+ * Modal UpgradePricing — mở CHỈ theo hành động user, KHÔNG theo banner
+ * passive (fetchList scan quotaWarning persist trong DB sẽ mở oan mỗi lần
+ * load trang):
+ *   1. HTTP 402 QUOTA_EXCEEDED khi bấm phân tích → cvStore.showUpgradeModal.
+ *   2. Socket `cv:quota-warning` context 'analyze' (PATCH-degraded emit từ
+ *      BE service) → cvStore.showUpgradeModal. Đăng ký tại App.vue để
+ *      survive navigation.
  */
-const showUpgradePricing = ref(false);
 useSocket(
   'cv:quota-warning',
   (payload: {
@@ -205,7 +202,7 @@ useSocket(
   }): void => {
     if (auth.user?.role !== 'candidate') return;
     if (payload?.context === 'analyze') {
-      showUpgradePricing.value = true;
+      cvStore.showUpgradeModal = true;
     }
   },
 );
@@ -223,6 +220,15 @@ useSocket(
   <ToastContainer v-if="route.name !== 'chat' && route.name !== 'e-chat'"/>
   <ToastHost v-if="route.name !== 'chat' && route.name !== 'e-chat'" />
 
-  <!-- Modal nâng cấp gói — mở khi worker báo hết lượt phân tích AI -->
-  <UpgradePricing v-model:open="showUpgradePricing" />
+  <!-- Modal nâng cấp gói — mở khi bấm phân tích mà BE trả 402 (hết lượt).
+       Teleport to body + z cao nhất để LUÔN đè lên mọi modal z-50 khác
+       (CvDetailView / builder overlay — user có thể bấm phân tích từ trong
+       modal chi tiết CV). -->
+  <Teleport to="body">
+    <UpgradePricing
+      :open="cvStore.showUpgradeModal"
+      @update:open="cvStore.showUpgradeModal = $event"
+      @close="cvStore.showUpgradeModal = false"
+    />
+  </Teleport>
 </template>
