@@ -1,6 +1,6 @@
 
 import { db } from '../config/database';
-import { plans, subscriptions, applications, jobs, usageLogs } from '../db/schema';
+import { plans, subscriptions, jobs, usageLogs } from '../db/schema';
 import { eq, sql, desc, asc, and, gte, lte } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { subscriptionService } from './subscription.service';
@@ -14,7 +14,6 @@ import type { PlanCreateBody, PlanUpdateBody, PlanListQuery } from '../middlewar
  * qua các key trong whitelist này, mỗi key đã biết nguồn count.
  */
 const COUNTABLE_KEYS: CountableQuotaKey[] = [
-    'apply',
     'job_post',
     'ai_cv_parsed',
     'ai_cv_analysis',
@@ -384,10 +383,10 @@ export const planService = {
      * Lấy plan hiện tại + quota usage + remainingDays cho BillingHistoryView.
      *
      * Quota count từ nhiều nguồn (key → source):
-     *  - `apply`           ← COUNT(*) FROM applications WHERE candidate_id = ?
      *  - `job_post`        ← COUNT(*) FROM jobs WHERE posted_by = ?
      *  - `ai_cv_parsed`    ← usage_logs GROUP BY feature (sum count + sum token) trong sub period
      *  - `ai_cv_analysis`  ← usage_logs (như trên)
+     *  - `ai_cv_match`     ← usage_logs (như trên)
      *  - `job_generation`  ← usage_logs (như trên)
      *
      * Sub period: từ `sub.startedAt` đến `sub.expiresAt`. Chỉ count rows của
@@ -395,7 +394,7 @@ export const planService = {
      *
      * Behavior:
      *  - Không có sub active → trả plan=null, usage=[] (user đang ở free tier).
-     *  - Có sub active → đếm song song 3 nguồn (Promise.all), với mỗi key trong
+     *  - Có sub active → đếm song song 2 nguồn (Promise.all), với mỗi key trong
      *    COUNTABLE_KEYS có trong `plan.features` → tạo QuotaUsageItem.
      *  - AI feature có usage_logs nhưng plan không define limit → vẫn push
      *    (limit=0, unlimited=false) để user thấy được đã dùng bao nhiêu token.
@@ -425,12 +424,9 @@ export const planService = {
         })();
         const subEnd = new Date(current.expiresAt);
 
-        // Parallel: app count + job count + usage_logs aggregate
-        const [appRows, jobRows, aiRows] = await Promise.all([
-            db
-                .select({ appCount: sql<number>`count(*)::int` })
-                .from(applications)
-                .where(eq(applications.candidateId, userId)),
+        // Parallel: job count + usage_logs aggregate (apply quota đã bỏ — chỉ
+        // còn job_post từ bảng jobs + AI_* từ usage_logs).
+        const [jobRows, aiRows] = await Promise.all([
             db
                 .select({ jobCount: sql<number>`count(*)::int` })
                 .from(jobs)
@@ -454,7 +450,6 @@ export const planService = {
                 .groupBy(usageLogs.feature),
         ]);
 
-        const appCount = Number(appRows[0]?.appCount ?? 0);
         const jobCount = Number(jobRows[0]?.jobCount ?? 0);
 
         const features = current.plan.features as Record<string, unknown>;
@@ -467,12 +462,10 @@ export const planService = {
 
             let used = 0;
             let tokens = 0;
-            if (quotaKey === 'apply') {
-                used = appCount;
-            } else if (quotaKey === 'job_post') {
+            if (quotaKey === 'job_post') {
                 used = jobCount;
             } else {
-                // ai_cv_parsed / ai_cv_analysis / job_generation
+                // ai_cv_parsed / ai_cv_analysis / ai_cv_match / job_generation
                 const aiMatch = aiRows.find((r) => r.feature === quotaKey);
                 used = Number(aiMatch?.totalCount ?? 0);
                 tokens = Number(aiMatch?.totalTokens ?? 0);

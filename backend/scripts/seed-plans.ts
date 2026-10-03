@@ -46,7 +46,7 @@ import { logger } from '../src/config/logger';
 
 /**
  * Features JSON theo convention backend — `usageLogService.createOrIncrementUsage`
- * resolve quota qua các key: apply, job_post, ai_cv_parsed, ai_cv_analysis,
+ * resolve quota qua các key: job_post, ai_cv_parsed, ai_cv_analysis,
  * ai_cv_match, job_generation. Đổi key ở đây cần đổi cả ở service.
  *
  * ⚠️ `ai_cv_match` là quota cho AI matching khi candidate nộp hồ sơ — TRƯỚC
@@ -103,7 +103,6 @@ const planSeeds: PlanSeed[] = [
     priceVnd: '0',
     durationDays: 30,
     features: {
-      apply: 20,
       job_post: 5,
       ai_cv_parsed: 5,
       ai_cv_analysis: 10,
@@ -121,7 +120,6 @@ const planSeeds: PlanSeed[] = [
     priceVnd: '2000',
     durationDays: 30,
     features: {
-      apply: 50,
       job_post: 10,
       ai_cv_parsed: 15,
       ai_cv_analysis: 30,
@@ -138,7 +136,6 @@ const planSeeds: PlanSeed[] = [
     priceVnd: '3000',
     durationDays: 30,
     features: {
-      apply: 100,
       job_post: 30,
       ai_cv_parsed: 30,
       ai_cv_analysis: 60,
@@ -156,7 +153,6 @@ const planSeeds: PlanSeed[] = [
     priceVnd: '4000',
     durationDays: 365,
     features: {
-      apply: 60,
       job_post: 12,
       ai_cv_parsed: 18,
       ai_cv_analysis: 36,
@@ -173,7 +169,6 @@ const planSeeds: PlanSeed[] = [
     priceVnd: '5000',
     durationDays: 365,
     features: {
-      apply: 120,
       job_post: 36,
       ai_cv_parsed: 36,
       ai_cv_analysis: 72,
