@@ -2,7 +2,7 @@ import { Worker } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { db } from '../config/database';
-import { applications, jobs } from '../db/schema';
+import { applications, jobs, users as usersSchema, userProfiles } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import {
   CV_MATCH_SYSTEM_PROMPT,
@@ -11,11 +11,20 @@ import {
 import { invokeCvMatch } from '../lib/llm/cvMatch';
 import { isRateLimited, waitForRateLimit } from '../lib/llm/errors';
 import { usageLogService } from '../service/usageLog.service';
+import { n8nService } from '../service/n8n.service';
 import { notificationGateway } from '../socket/notificationGateway';
 import { notifyCandidateOfMatchResult } from '../service/application.service';
 
 const QUEUE_NAME = 'cvMatch';
 const AI_CV_MATCH_FEATURE = 'ai_cv_match';
+
+/**
+ * Ngưỡng điểm tối đa để auto-reject application (CV scan < threshold →
+ * backend set status='rejected' + trigger n8n `auto_reject` để gửi email).
+ *
+ * Match với docs/n8nAndAI.md §4.2: "< 50 → đánh dấu rejected, n8n gửi email".
+ */
+const AUTO_REJECT_THRESHOLD = 50;
 
 /**
  * Hoàn 1 lượt `ai_cv_match` khi job early-exit TRƯỚC khi LLM chạy (lượt đã
@@ -58,8 +67,14 @@ export const cvMatchWorker = new Worker(
         id: applications.id,
         candidateId: applications.candidateId,
         cv: applications.cv,
+        // JOIN sang users/userProfiles để lấy email + name dùng cho n8n auto_reject
+        // webhook payload (applications không có candidateEmail/name trực tiếp).
+        candidateEmail: usersSchema.email,
+        candidateName: userProfiles.fullName,
       })
       .from(applications)
+      .leftJoin(usersSchema, eq(usersSchema.id, applications.candidateId))
+      .leftJoin(userProfiles, eq(userProfiles.userId, applications.candidateId))
       .where(eq(applications.id, applicationId))
       .limit(1);
 
@@ -176,6 +191,46 @@ export const cvMatchWorker = new Worker(
         },
         'cvMatch worker: chấm điểm xong',
       );
+
+      // ---------------------------------------------------------------------
+      // 4b. Auto-reject: score < threshold → set status + trigger n8n email
+      //
+      // Backend là source of truth: update DB trước, n8n fail thì HR vẫn biết
+      // status=rejected (không rollback). n8n trigger fire-and-forget để
+      // không block BullMQ job; n8n down/retry không làm fail CV scan.
+      //
+      // Payload tối thiểu cho n8n render email (xem docs §7.1).
+      // ---------------------------------------------------------------------
+      if (result.data.matchPercent < AUTO_REJECT_THRESHOLD) {
+        await db
+          .update(applications)
+          .set({
+            status: 'rejected',
+            stage: 'rejected',
+            updatedAt: new Date(),
+          })
+          .where(eq(applications.id, applicationId));
+
+        logger.info(
+          { applicationId, matchPercent: result.data.matchPercent },
+          'cvMatch worker: auto-reject — trigger n8n',
+        );
+
+        n8nService
+          .trigger('auto_reject', {
+            applicationId,
+            candidateEmail: app.candidateEmail,
+            candidateName: app.candidateName,
+            reason: result.data.rationale,
+            score: result.data.matchPercent,
+          })
+          .catch((err) =>
+            logger.error(
+              { err, applicationId },
+              'cvMatch worker: n8n auto_reject trigger failed (status đã là rejected, HR có thể resend tay)',
+            ),
+          );
+      }
 
       // ---------------------------------------------------------------------
       // 5. Realtime push tới candidate — notification (DB + bell) + socket

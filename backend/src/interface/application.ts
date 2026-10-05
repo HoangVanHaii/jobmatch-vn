@@ -23,6 +23,15 @@ export interface ApplicationMatchReasoning {
    *   - Terminal states (quota_exceeded / failed) không có scoring output.
    */
   experienceScore?: number;
+  /**
+   * Timestamp n8n `auto_reject` workflow callback xác nhận đã gửi email
+   * từ chối tới candidate thành công. Null nếu n8n fail/timeout/chưa gọi
+   * — HR dashboard dùng để hiển thị badge "email sent" / "email failed".
+   *
+   * Set bởi `applicationService.markRejectEmailSent()` từ callback
+   * `POST /api/v1/applications/:id/reject-email-sent` (no-auth, n8n gọi).
+   */
+  emailSentAt?: string;
   industryScore?: number;
   skillsScore?: number;
   /**

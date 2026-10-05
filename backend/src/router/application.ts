@@ -35,7 +35,29 @@ import { applicationController } from '../controller/application.controller';
 
 export const applicationRouter = Router();
 
-// Toàn bộ router cần auth — candidate lẫn employer đều phải đăng nhập.
+// ----------------------------------------------------------------------------
+// n8n callback (server-to-server, KHÔNG yêu cầu auth)
+// ----------------------------------------------------------------------------
+// Khai báo TRƯỚC `applicationRouter.use(auth)` phía dưới để middleware
+// `auth` không apply cho route này. n8n chạy trong cùng network nên không
+// có JWT — chấp nhận trust theo Docker network trong dev. Production nên
+// thêm shared-secret header check trước controller.
+//
+// Workflow `auto_reject` gọi POST /api/v1/applications/:id/reject-email-sent
+// SAU khi gửi email xong để backend ghi `aiMatchReasoning.emailSentAt`.
+// Docs: n8nAndAI.md §5.2.
+
+/**
+ * POST /:id/reject-email-sent — n8n `auto_reject` callback.
+ * Body: rỗng.
+ */
+applicationRouter.post(
+  '/:id/reject-email-sent',
+  validate(applicationIdParamSchema, 'params'),
+  applicationController.markRejectEmailSent,
+);
+
+// Toàn bộ router còn lại cần auth — candidate lẫn employer đều phải đăng nhập.
 applicationRouter.use(auth);
 
 // ----------------------------------------------------------------------------
