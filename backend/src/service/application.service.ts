@@ -1170,6 +1170,55 @@ const notifyEmployerOfWithdrawal = async (params: {
   }
 };
 
+/**
+ * Callback từ n8n `auto_reject` workflow — đánh dấu email đã gửi thành công.
+ *
+ * Set `aiMatchReasoning.emailSentAt = now` để HR dashboard hiển thị badge.
+ * Idempotent: gọi nhiều lần OK, chỉ overwrite timestamp.
+ *
+ * NO ownership check (server-to-server từ n8n Docker network, không có req.user).
+ * Nếu application không tồn tại → trả 404 để n8n debug được.
+ */
+export const markRejectEmailSent = async (
+  applicationId: string,
+): Promise<{ id: string; emailSentAt: string }> => {
+  const now = new Date().toISOString();
+
+  // Đọc reasoning hiện tại để merge (jsonb column không atomic update 1 field dễ).
+  const [app] = await db
+    .select({
+      id: applications.id,
+      aiMatchReasoning: applications.aiMatchReasoning,
+    })
+    .from(applications)
+    .where(eq(applications.id, applicationId))
+    .limit(1);
+
+  if (!app) {
+    throw new AppError(404, 'APPLICATION_NOT_FOUND', 'Application không tồn tại');
+  }
+
+  const mergedReasoning = {
+    ...(app.aiMatchReasoning ?? {}),
+    emailSentAt: now,
+  };
+
+  await db
+    .update(applications)
+    .set({
+      aiMatchReasoning: mergedReasoning,
+      updatedAt: new Date(),
+    })
+    .where(eq(applications.id, applicationId));
+
+  logger.info(
+    { applicationId, emailSentAt: now },
+    'markRejectEmailSent: n8n xác nhận đã gửi email auto_reject',
+  );
+
+  return { id: applicationId, emailSentAt: now };
+};
+
 // ============================================================================
 // Chatbot helpers — move từ jobApplication.service.ts (cũ).
 //
@@ -1318,6 +1367,7 @@ export const applicationService = {
   updateStatus,
   recomputeMatch,
   withdraw,
+  markRejectEmailSent,
   getStatusForCandidate,
   // Chatbot helpers
   listByCandidateForChatbot,

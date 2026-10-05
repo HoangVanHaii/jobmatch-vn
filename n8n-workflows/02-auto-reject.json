@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "functionCode": "// Build email content\nconst applicationId = $input.item.json.applicationId;\nconst reason = $input.item.json.reason || 'Hồ sơ chưa phù hợp với yêu cầu công việc';\n\nreturn {\n  json: {\n    subject: 'Thông báo kết quả ứng tuyển - JobMatch VN',\n    body: `Xin chào,\n\nCảm ơn bạn đã quan tâm và ứng tuyển vào vị trí tại công ty chúng tôi.\n\nSau khi xem xét kỹ lưỡng hồ sơ của bạn qua hệ thống ATS, chúng tôi nhận thấy rằng:\n${reason}\n\nRất tiếc hồ sơ của bạn chưa phù hợp với yêu cầu của vị trí này. Tuy nhiên, chúng tôi sẽ lưu hồ sơ của bạn vào talent pool và có thể liên hệ khi có cơ hội phù hợp hơn.\n\nChúc bạn sớm tìm được công việc ưng ý!\n\nTrân trọng,\nĐội ngũ JobMatch VN`,\n    applicationId,\n  }\n};"
+        "functionCode": "// Build email content\nconst applicationId = $input.item.json.applicationId;\nconst reason = $input.item.json.reason || 'Hồ sơ chưa phù hợp với yêu cầu công việc';\nconst candidateEmail = $input.item.json.candidateEmail || $input.item.json.body?.candidateEmail || '';\n\nreturn {\n  json: {\n    subject: 'Thông báo kết quả ứng tuyển - JobMatch VN',\n    body: `Xin chào,\n\nCảm ơn bạn đã quan tâm và ứng tuyển vào vị trí tại công ty chúng tôi.\n\nSau khi xem xét kỹ lưỡng hồ sơ của bạn qua hệ thống ATS, chúng tôi nhận thấy rằng:\n${reason}\n\nRất tiếc hồ sơ của bạn chưa phù hợp với yêu cầu của vị trí này. Tuy nhiên, chúng tôi sẽ lưu hồ sơ của bạn vào talent pool và có thể liên hệ khi có cơ hội phù hợp hơn.\n\nChúc bạn sớm tìm được công việc ưng ý!\n\nTrân trọng,\nĐội ngũ JobMatch VN`,\n    applicationId,\n    candidateEmail,\n  }\n};"
       },
       "id": "build-email",
       "name": "Build Email",
@@ -28,7 +28,7 @@
     {
       "parameters": {
         "fromEmail": "no-reply@jobmatch.vn",
-        "toEmail": "={{$node[\"Webhook\"].json[\"body\"][\"candidateEmail\"]}}",
+        "toEmail": "={{$json.candidateEmail}}",
         "subject": "={{$json.subject}}",
         "text": "={{$json.body}}",
         "options": {

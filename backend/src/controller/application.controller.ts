@@ -119,4 +119,19 @@ export const applicationController = {
       res.json({ success: true, data: result });
     } catch (err) { next(err); }
   },
+
+  /**
+   * Callback từ n8n `auto_reject` workflow — gọi SAU khi gửi email thành công.
+   * Đánh dấu `aiMatchReasoning.emailSentAt` để HR dashboard biết email đã đi.
+   *
+   * KHÔNG yêu cầu auth (server-to-server từ n8n trong Docker network).
+   * Idempotent: gọi nhiều lần vẫn an toàn — chỉ ghi đè timestamp mới nhất.
+   */
+  markRejectEmailSent: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { id } = req.params as { id: string };
+      const result = await applicationService.markRejectEmailSent(id);
+      res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  },
 };
