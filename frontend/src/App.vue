@@ -223,9 +223,15 @@ useSocket(
   <!-- Modal nâng cấp gói — mở khi bấm phân tích mà BE trả 402 (hết lượt).
        Teleport to body + z cao nhất để LUÔN đè lên mọi modal z-50 khác
        (CvDetailView / builder overlay — user có thể bấm phân tích từ trong
-       modal chi tiết CV). -->
+       modal chi tiết CV).
+       v-if auth: component fetch plans + my-plan trong onMounted — mount vô
+       điều kiện khiến khách chưa login ăn 401 ở /plans → refresh flow →
+       reload loop ở /login (bug F5). isAuthenticated chỉ true sau khi
+       fetchMe thành công (có user + token) → stale token không qua được gate.
+       Login thành công → v-if flip true → mount → fetch đúng 1 lần. -->
   <Teleport to="body">
     <UpgradePricing
+      v-if="auth.isAuthenticated"
       :open="cvStore.showUpgradeModal"
       @update:open="cvStore.showUpgradeModal = $event"
       @close="cvStore.showUpgradeModal = false"

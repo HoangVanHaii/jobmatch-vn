@@ -242,6 +242,11 @@ http.interceptors.response.use(
     if (error.response?.status !== 401 || original._retry || original.url?.includes('/auth/')) {
       // Không refresh: nhảy xuống dưới để unwrap BE error.
     } else if (isRefreshing) {
+      // Set _retry TRƯỚC khi xếp hàng: sau khi dequeue + retry, nếu request vẫn
+      // 401 (token mới không được endpoint này chấp nhận) nó phải rơi xuống
+      // nhánh unwrap + reject thay vì tự trở thành refresher mới → tránh vòng
+      // lặp refresh trong session. (Refresher chính set _retry ở nhánh dưới.)
+      original._retry = true;
       try {
         const token = await withQueueTimeout(
           new Promise<string>((resolve, reject) => {
@@ -257,10 +262,23 @@ http.interceptors.response.use(
       original._retry = true;
       isRefreshing = true;
       try {
+        // Không có refresh token → session không thể phục hồi. Clear + reject
+        // ngay, KHÔNG gọi /auth/refresh (body null chỉ nhận 400 từ
+        // refreshSchema) và KHÔNG redirect — đang ở trang auth mà redirect về
+        // chính nó sẽ full-reload → mount lại → 401 → lặp vô hạn (bug F5 /login).
+        const storedRefresh = localStorage.getItem('refresh_token');
+        if (!storedRefresh) {
+          localStorage.removeItem('access_token');
+          const noSession = new HttpError(
+            401, 'NO_REFRESH_TOKEN', 'Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.',
+          );
+          processQueue(noSession);
+          return Promise.reject(noSession);
+        }
         // Dùng instance `http` (đã có timeout 30s) thay vì raw axios.
         const { data } = await http.post<{ success: true; data: { accessToken: string; refreshToken: string } }>(
           '/auth/refresh',
-          { refreshToken: localStorage.getItem('refresh_token') },
+          { refreshToken: storedRefresh },
         );
         localStorage.setItem('access_token', data.data.accessToken);
         localStorage.setItem('refresh_token', data.data.refreshToken);
@@ -272,7 +290,11 @@ http.interceptors.response.use(
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
         const onCallback = window.location.pathname.startsWith('/auth/callback/');
-        if (!onCallback) {
+        // Đang ở trang auth (kể cả /login) thì KHÔNG redirect — assign
+        // location.href trùng URL hiện tại vẫn trigger full reload → app mount
+        // lại → 401 → refresh → redirect... thành reload loop (bug F5 /login).
+        const onAuthPage = /^\/(login|register|verify-otp|forgot-password)/.test(window.location.pathname);
+        if (!onCallback && !onAuthPage) {
           window.location.href = '/login';
         }
         return Promise.reject(refreshErr);
