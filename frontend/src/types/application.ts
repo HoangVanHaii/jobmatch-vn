@@ -162,6 +162,8 @@ export interface ApplicationDetail {
   coverLetter: string | null;
   /** CV snapshot đầy đủ — null nếu apply không kèm CV. */
   cv: ApplicationCvSnapshot | null;
+  /** CV id gốc — employer dùng cho download PDF CV direct. */
+  cvId: string;
   appliedAt: string;
   viewedAt: string | null;
   updatedAt: string;

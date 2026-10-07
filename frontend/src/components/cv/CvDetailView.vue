@@ -58,9 +58,14 @@ const props = withDefaults(
     deleting?: boolean
     /** Loading state cho nút "Phân tích ngay" (tab AI Summary empty state). */
     analyzing?: boolean
-    /** Chế độ xem mẫu demo (template hệ thống): chỉ tab Chi tiết + CTA
-     *  "Dùng mẫu này" — ẩn action set-primary/delete/edit/analyze. */
     demo?: boolean
+    /** Chế độ READ-ONLY (employer xem CV ứng viên): giữ tab Chi tiết/AI/File
+     *  nhưng ẨN mọi action (xoá/set-primary/edit/analyze) — employer không
+     *  được thao tác trên CV của candidate. Ai tab vẫn xem nếu có analysis.
+     *  File tab với CV direct hiện nút "Tải PDF" → emit('download-pdf'). */
+    readonly?: boolean
+    /** Loading cho nút "Tải PDF" (CV direct) — BE Playwright render vài giây. */
+    downloadingPdf?: boolean
     /** Ngôn ngữ tiêu đề section khi render template ('vi' | 'en'). Default 'en'. */
     language?: CvLanguage
   }>(),
@@ -69,6 +74,8 @@ const props = withDefaults(
     deleting: false,
     analyzing: false,
     demo: false,
+    readonly: false,
+    downloadingPdf: false,
     language: 'en',
   },
 )
@@ -82,6 +89,8 @@ const emit = defineEmits<{
   analyze: [cvId: string]
   /** Chế độ demo — user muốn dùng mẫu này để tạo CV. */
   'use-template': [cv: Cv]
+  /** File tab (CV direct, readonly) — bấm "Tải PDF", parent tự gọi API. */
+  'download-pdf': []
 }>()
 
 /* ============================================================================
@@ -103,9 +112,14 @@ const tabs: Array<{ value: DetailTab; label: string }> = [
   { value: 'file', label: 'File' },
 ]
 // Demo template: chỉ còn tab Chi tiết (AI/File không có ý nghĩa với mẫu).
-const visibleTabs = computed<Array<{ value: DetailTab; label: string }>>(() =>
-  props.demo ? tabs.filter((t) => t.value === 'detail') : tabs,
-)
+// Readonly (employer xem CV ứng viên): ẩn cả tab AI Summary — analysis là
+// dữ liệu của candidate (snapshot không mang ai_analysis) + nút phân tích
+// đã ẩn sẵn theo readonly.
+const visibleTabs = computed<Array<{ value: DetailTab; label: string }>>(() => {
+  if (props.demo) return tabs.filter((t) => t.value === 'detail')
+  if (props.readonly) return tabs.filter((t) => t.value !== 'ai')
+  return tabs
+})
 
 /* ============================================================================
  * Derived từ cv
@@ -244,7 +258,8 @@ watch(
               </template>
 
               <!-- ===== Thường: Xóa + Đặt làm CV chính + Chỉnh sửa ===== -->
-              <template v-else>
+              <!-- readonly (employer view) → ẩn cả nhóm action này -->
+              <template v-else-if="!readonly">
                 <!-- Xóa — 2 bước confirm inline -->
                 <button
                   type="button"
@@ -416,7 +431,7 @@ watch(
                      (ready chưa analyzed, hoặc failed để thử lại). Đang
                      processing thì ẩn — worker đã chạy rồi. -->
                 <button
-                  v-if="cv && !isProcessing"
+                  v-if="!readonly && cv && !isProcessing"
                   type="button"
                   class="mt-1 inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5b4eea] px-3 text-[11px] font-medium text-white transition-colors hover:bg-[#4a3ed1] disabled:opacity-50"
                   :disabled="analyzing"
@@ -573,7 +588,10 @@ watch(
                   </a>
                 </template>
 
-                <!-- Direct CV — không có file upload -->
+                <!-- Direct CV — không có file upload. Nút "Tải PDF" hiện cho
+                     CẢ candidate (owner) lẫn employer (readonly): BE Playwright
+                     render qua print page → emit('download-pdf'), parent tự
+                     gọi API + xử lý blob download. -->
                 <template v-else>
                   <div class="flex flex-col items-center gap-2 py-6 text-center">
                     <Info :size="20" class="text-slate-300" />
@@ -581,8 +599,18 @@ watch(
                       CV tạo thủ công — không có file đính kèm.
                     </p>
                     <span class="text-[11px] text-slate-400">
-                      Nội dung nằm ở tab "Chi tiết"; tải PDF từ bản xem trước khi cần.
+                      Nội dung nằm ở tab "Chi tiết".
                     </span>
+                    <button
+                      type="button"
+                      class="mt-1 inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5b4eea] px-3 text-[11px] font-medium text-white transition-colors hover:bg-[#4a3ed1] disabled:opacity-50"
+                      :disabled="downloadingPdf"
+                      @click="emit('download-pdf')"
+                    >
+                      <Loader2 v-if="downloadingPdf" :size="12" class="animate-spin" />
+                      <Download v-else :size="12" />
+                      {{ downloadingPdf ? 'Đang render PDF…' : 'Tải file PDF' }}
+                    </button>
                   </div>
                 </template>
               </div>

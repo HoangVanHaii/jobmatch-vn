@@ -31,6 +31,8 @@ import {
 import { useCvStore } from '@stores/cv'
 import { useToastStore } from '@stores/toast'
 import { uploadApi } from '@services/upload.api'
+import { cvApi } from '@services/cv.api'
+import { extractErrorMessage } from '@services/http'
 import { useSocket } from '@composables/useSocket'
 import type { Cv, CvSource, CvStatus, CvFailureReason } from '@/types/cv'
 import { getAiScore } from '@/types/cv'
@@ -182,6 +184,35 @@ const openDetail = (cv: Cv): void => {
 }
 const closeDetail = (): void => {
   detailId.value = null
+}
+
+/* ===== Tải PDF cho CV direct — tab File của CvDetailView =====
+ * BE Playwright render print page → PDF blob → objectURL download.
+ * Candidate là owner nên BE authorize self; mất vài giây (launch Chromium). */
+const downloadingPdf = ref(false)
+const onDownloadPdf = async (): Promise<void> => {
+  const cv = detailCv.value
+  if (!cv || downloadingPdf.value) return
+  downloadingPdf.value = true
+  try {
+    const res = await cvApi.downloadPdf(cv.id)
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${(cv.title?.trim() || 'cv').replace(/\s+/g, '-')}.pdf`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    toast.push({
+      variant: 'error',
+      title: 'Tải PDF thất bại',
+      body: extractErrorMessage(e, 'Vui lòng thử lại sau.'),
+    })
+  } finally {
+    downloadingPdf.value = false
+  }
 }
 const settingPrimaryId = ref<string | null>(null)
 const onSetPrimary = async (cvId: string): Promise<void> => {
@@ -736,12 +767,14 @@ const aiTemplateCvs = aiTemplateMeta.map((meta, i) => ({
       :setting-primary="settingPrimaryId !== null"
       :deleting="deletingId !== null"
       :analyzing="detailCv !== null && analyzingId === detailCv.id"
+      :downloading-pdf="downloadingPdf"
       :language="templateLanguage"
       @close="closeDetail"
       @set-primary="onSetPrimary"
       @edit="onEditCv"
       @delete="onDeleteCv"
       @analyze="onAnalyzeFromDetail"
+      @download-pdf="onDownloadPdf"
     />
 
     <!-- Template demo lightbox — click card "Mẫu CV từ hệ thống" mở khung

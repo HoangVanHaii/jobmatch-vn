@@ -28,6 +28,7 @@ import { candidateSkillRouter } from './candidateSkill';
 import { uploadRouter } from './upload';
 import { chatbotRouter } from './chatbot';
 import { interviewRouter } from './interview';
+import { referenceVerifyRouter } from './referenceVerify';
 
 export const apiRouter = Router();
 
@@ -58,3 +59,5 @@ apiRouter.use("/skills", candidateSkillRouter);
 apiRouter.use('/chatbot', chatbotRouter);
 // Interview management (HR/Employer)
 apiRouter.use('/interviews', interviewRouter);
+// Reference verification (employer + public referee endpoints)
+apiRouter.use('/references', referenceVerifyRouter);

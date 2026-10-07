@@ -15,7 +15,7 @@
  *    modal (mua mới sẽ kết thúc gói cũ, không cộng dồn) → PayOS QR modal →
  *    redirect billing-success
  */
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import {
@@ -293,17 +293,27 @@ const onPaymentClose = (): void => {
   qrPaymentData.value = null;
   qrPlan.value = null;
 };
-
-onMounted(async () => {
+const loadPlans = async (): Promise<void> => {
   loading.value = true;
   try {
     await Promise.all([planStore.fetchPublicPlans(), planStore.fetchMyPlan()]);
+    hasFetchedPlans = true;
   } catch {
     // plans rỗng → hiển thị trạng thái trống, không crash UI
   } finally {
     loading.value = false;
   }
-});
+};
+
+let hasFetchedPlans = false;
+watch(
+  () => props.open,
+  (o) => {
+    if (!o || hasFetchedPlans) return;
+    void loadPlans();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
-  Search,
   Filter,
   MoreHorizontal,
+  Briefcase,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -12,12 +12,32 @@ import {
   User,
   Sparkles,
   Calendar,
-  CalendarPlus,
   ArrowRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  RefreshCw,
+  Loader2,
+  Eye,
+  FileText,
+  ExternalLink,
+  Download,
+  ShieldCheck,
   X as CloseIcon,
   Box as BoxIcon,
 } from 'lucide-vue-next';
 import { applicationApi } from '@services/application.api';
+import { jobApi, type JobNameItem } from '@services/job.api';
+import { cvApi } from '@services/cv.api';
+import { getSocket } from '@services/socket';
+import { extractErrorMessage } from '@services/http';
+import { useToastStore } from '@stores/toast';
+import ReferencesModal from '@components/employer/ReferencesModal.vue';
+import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue';
+import CvDetailView from '@components/cv/CvDetailView.vue';
+import { buildRenderData } from '@/composables/cvRenderData';
+import { clampTemplateId } from '@/utils/cvTemplates';
+import type { Cv } from '@/types/cv';
 import type {
   ApplicationDetail,
   ApplicationStatus,
@@ -38,8 +58,12 @@ interface Application {
   /** Stage tiếng Việt — hiển thị thẳng trong list + detail panel. Key nội
    *  bộ vẫn là tiếng Anh (`'Interview' | 'Screening' | 'Assessment' | 'New'`)
    *  để tra `STAGE_STYLE`; tiếng Việt lấy qua `STAGE_LABEL`. */
-  stage: 'Interview' | 'Screening' | 'Assessment' | 'New';
-  match: number;
+  /** Status GỐC từ BE (applicationStatusEnum) — nguồn cho hiển thị chip
+   *  (STATUS_LABEL/STATUS_CHIP) + action buttons quyết định transition. */
+  status: ApplicationStatus;
+  /** AI match % — `null` = chưa chấm xong (queue đang chạy/quota hết/lỗi).
+   *  FE phân biệt rõ null ("Chưa có điểm") với 0 (điểm thật = 0). */
+  match: number | null;
   date: string;
   /** Application id để debug / future detail fetch. */
   applicationId?: string;
@@ -49,8 +73,8 @@ const EMPTY_APPLICATION: Application = {
   avatarUrl: null,
   email: '',
   position: '',
-  stage: 'New',
-  match: 0,
+  status: 'pending',
+  match: null,
   date: '',
   applicationId: '',
 };
@@ -79,6 +103,176 @@ const formatTime = (iso: string): string => {
 };
 
 const applications = ref<Application[]>([]);
+const toast = useToastStore();
+
+// ---------------------------------------------------------------------------
+// Job filter dropdown — list job (id + title) từ GET /jobs/names, mặc định
+// "Tất cả" (value ''). Chọn job → fetchPage(1) truyền ?jobId= cho BE filter.
+// ---------------------------------------------------------------------------
+const jobOptions = ref<JobNameItem[]>([]);
+const selectedJobId = ref('');
+// Combobox: 1 input duy nhất vừa hiển thị lựa chọn vừa gõ để filter.
+// jobKeyword = text trong input; khi chọn job → set = title (input "hiện"
+// lựa chọn), chọn "Tất cả" → reset ''. Filter options làm CLIENT-SIDE
+// (list job 1 company nhỏ, load 1 lần — không gọi API mỗi keystroke).
+const jobKeyword = ref('');
+const jobSelectOpen = ref(false);
+const jobSelectRoot = ref<HTMLElement | null>(null);
+
+const loadJobNames = async (): Promise<void> => {
+  try {
+    const { data } = await jobApi.listNames();
+    jobOptions.value = data.data;
+  } catch {
+    // Dropdown trống — không chặn trang; "Tất cả" vẫn hoạt động.
+  }
+};
+
+const filteredJobOptions = computed(() => {
+  const kw = jobKeyword.value.trim().toLowerCase();
+  if (!kw) return jobOptions.value;
+  return jobOptions.value.filter((j) => j.title.toLowerCase().includes(kw));
+});
+
+// ---------------------------------------------------------------------------
+// Sort cột "Phù hợp" — click header cycle: none → desc (cao→thấp) → asc →
+// none. Rows match=null (chưa chấm) LUÔN nằm cuối bất kể chiều sort.
+// Client-side sort trên page hiện tại (BE listByCompany sort appliedAt DESC
+// mặc định — 'none' trả về thứ tự gốc).
+// ---------------------------------------------------------------------------
+type MatchSort = 'none' | 'desc' | 'asc';
+const matchSort = ref<MatchSort>('none');
+
+const toggleMatchSort = (): void => {
+  matchSort.value = matchSort.value === 'none' ? 'desc' : matchSort.value === 'desc' ? 'asc' : 'none';
+};
+
+const displayedApplications = computed(() => {
+  if (matchSort.value === 'none') return applications.value;
+  const dir = matchSort.value === 'desc' ? -1 : 1;
+  return [...applications.value].sort((a, b) => {
+    if (a.match === null && b.match === null) return 0;
+    if (a.match === null) return 1;  // null luôn cuối
+    if (b.match === null) return -1;
+    return (a.match - b.match) * dir;
+  });
+});
+
+const pickJob = (id: string): void => {
+  selectedJobId.value = id;
+  const job = jobOptions.value.find((j) => j.id === id);
+  jobKeyword.value = job?.title ?? '';
+  jobSelectOpen.value = false;
+  void fetchPage(1);
+};
+
+// ---------------------------------------------------------------------------
+// Status filter — dropdown lọc đơn theo trạng thái gốc (8 enum values +
+// "Tất cả"). BE listByCompany hỗ trợ sẵn ?status= (zod enum), FE chỉ truyền.
+// ---------------------------------------------------------------------------
+const STATUS_FILTER_OPTIONS: Array<{ value: ApplicationStatus | ''; label: string }> = [
+  { value: '', label: 'Tất cả trạng thái' },
+  { value: 'pending', label: 'Chờ xử lý' },
+  { value: 'viewed', label: 'Đã xem' },
+  { value: 'screening', label: 'Sàng lọc' },
+  { value: 'interview', label: 'Phỏng vấn' },
+  { value: 'offered', label: 'Đã offer' },
+  { value: 'hired', label: 'Đã tuyển' },
+  { value: 'rejected', label: 'Đã từ chối' },
+  { value: 'withdrawn', label: 'Đã rút đơn' },
+];
+const selectedStatus = ref<ApplicationStatus | ''>('');
+const statusSelectOpen = ref(false);
+const statusSelectRoot = ref<HTMLElement | null>(null);
+
+/** Label hiển thị trên trigger — theo option đang chọn. */
+const statusFilterLabel = computed(
+  () => STATUS_FILTER_OPTIONS.find((o) => o.value === selectedStatus.value)?.label ?? 'Tất cả trạng thái',
+);
+
+const pickStatus = (value: ApplicationStatus | ''): void => {
+  selectedStatus.value = value;
+  statusSelectOpen.value = false;
+  void fetchPage(1);
+};
+
+/**
+ * Bấm icon chevron → đóng/mở dropdown. SVG không focus được như input
+ * nên phải tự quản lý: mở thì focus input luôn (để gõ được tiếp),
+ * đang mở thì thu lại.
+ */
+const jobSelectInput = ref<HTMLInputElement | null>(null);
+const toggleJobSelect = (): void => {
+  if (jobSelectOpen.value) {
+    jobSelectOpen.value = false;
+  } else {
+    jobSelectOpen.value = true;
+    jobSelectInput.value?.focus();
+  }
+};
+
+/** Click ngoài combobox → đóng cả 2 dropdown (job + status). */
+const onDocClick = (e: MouseEvent): void => {
+  const target = e.target as Node;
+  if (jobSelectRoot.value && !jobSelectRoot.value.contains(target)) {
+    jobSelectOpen.value = false;
+  }
+  if (statusSelectRoot.value && !statusSelectRoot.value.contains(target)) {
+    statusSelectOpen.value = false;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Retry AI match — icon bên phải khối Match Score. Gọi POST /:id/recompute-match
+// (BE reset score + enqueue lại cv-match, TRỪ quota candidate). Điểm hiển thị
+// reset về null ("Chưa có điểm") ngay; kết quả mới về qua socket
+// 'application:scored' → onApplicationScored tự cập nhật ring + list + detail.
+// ---------------------------------------------------------------------------
+const recomputing = ref(false);
+
+/**
+ * App đang được chấm LẠI — state riêng, KHÔNG trùng "Chưa có điểm":
+ *   - null          → không ai đang chấm
+ *   - applicationId → row + ring hiển thị spinner "Đang chấm…" thay vì
+ *                     "Chưa có điểm". Tự clear khi socket
+ *                     'application:scored' mang điểm mới về.
+ */
+const scoringApplicationId = ref<string | null>(null);
+const isScoringSelected = computed(
+  () => !!scoringApplicationId.value && selectedApplication.value.applicationId === scoringApplicationId.value,
+);
+
+const recomputeMatch = async (): Promise<void> => {
+  const appId = selectedApplication.value.applicationId;
+  if (!appId || appId.startsWith('mock-app-')) return;
+  recomputing.value = true;
+  try {
+    await applicationApi.recomputeMatch(appId);
+    const row = applications.value.find((a) => a.applicationId === appId);
+    if (row) row.match = null;
+    selectedApplication.value.match = null;
+    if (detailData.value?.id === appId) {
+      detailData.value.aiMatchScore = null;
+      detailData.value.aiMatchReasoning = null;
+    }
+    // Spinner state giữ cho tới khi socket 'application:scored' về —
+    // KHÔNG clear trong finally (queue chấm mất vài giây, lâu hơn API call).
+    scoringApplicationId.value = appId;
+    toast.push({
+      variant: 'info',
+      title: 'Đang chấm lại AI match',
+      body: 'Điểm sẽ tự cập nhật khi xong (trừ quota ai_cv_match của candidate).',
+    });
+  } catch (e) {
+    toast.push({
+      variant: 'error',
+      title: 'Chấm lại thất bại',
+      body: extractErrorMessage(e, 'Vui lòng thử lại.'),
+    });
+  } finally {
+    recomputing.value = false;
+  }
+};
 /** True nếu dữ liệu hiện tại đến từ API (không phải mock fallback). */
 const fromApi = ref(false);
 
@@ -97,6 +291,71 @@ const loading = ref(false);
  *  Mỗi ứng viên có thể apply nhiều job → mỗi row là 1 application distinct.
  *  Selection key dùng `applicationId` (unique) thay vì email/name/position. */
 const selectedApplication = ref<Application>(EMPTY_APPLICATION);
+
+// References modal — xác minh người tham chiếu của application đang select.
+// Chỉ mở khi applicationId thật (row từ API); row mock (mock-app-*/rỗng) →
+// nút disable vì backend không có application tương ứng.
+const referencesOpen = ref(false);
+const canOpenReferences = computed(() => {
+  const id = selectedApplication.value.applicationId;
+  return !!id && !id.startsWith('mock-app-');
+});
+
+// ---------------------------------------------------------------------------
+// Status actions — 2 nút action bar phản ánh đúng transition tiếp theo theo
+// status GỐC của đơn (backend hiện chưa chặn transition matrix, FE tự dẫn
+// luồng chuẩn): pending/viewed → screening; screening → interview;
+// interview → offered; offered → hired. Nút phụ "Từ chối" (→ rejected) ở
+// mọi trạng thái non-terminal. Terminal (hired/rejected/withdrawn) → ẩn
+// nút, hiện note.
+// ---------------------------------------------------------------------------
+const nextAction = computed<{ label: string; next: ApplicationStatus } | null>(() => {
+  switch (selectedApplication.value.status) {
+    case 'pending':
+    case 'viewed':
+      return { label: 'Đưa vào sàng lọc', next: 'screening' };
+    case 'screening':
+      return { label: 'Mời Phỏng vấn', next: 'interview' };
+    case 'interview':
+      return { label: 'Gửi Offer', next: 'offered' };
+    case 'offered':
+      return { label: 'Hire', next: 'hired' };
+    default:
+      return null; // hired / rejected / withdrawn — terminal
+  }
+});
+
+const updatingStatus = ref(false);
+
+const changeStatus = async (next: ApplicationStatus): Promise<void> => {
+  const appId = selectedApplication.value.applicationId;
+  if (!appId || appId.startsWith('mock-app-')) return;
+  updatingStatus.value = true;
+  try {
+    await applicationApi.updateStatus(appId, { status: next });
+    // Update tại chỗ — selectApplication giữ REF của row nên mutate row
+    // cũng cập nhật luôn panel; vẫn set lại tường minh cho rõ.
+    const row = applications.value.find((a) => a.applicationId === appId);
+    if (row) {
+      row.status = next;
+    }
+    selectedApplication.value.status = next;
+    if (detailData.value?.id === appId) detailData.value.status = next;
+    toast.push({
+      variant: 'success',
+      title: 'Đã cập nhật trạng thái',
+      body: `Đơn chuyển sang "${next}". Candidate nhận socket 'status-changed'.`,
+    });
+  } catch (e) {
+    toast.push({
+      variant: 'error',
+      title: 'Cập nhật trạng thái thất bại',
+      body: extractErrorMessage(e, 'Vui lòng thử lại.'),
+    });
+  } finally {
+    updatingStatus.value = false;
+  }
+};
 
 /** True nếu row `a` đang được select — so sánh bằng `applicationId`. */
 const isSelected = (a: Application): boolean =>
@@ -148,7 +407,11 @@ interface CvParsedShape {
   email?: string;
   phone?: string;
   github?: string;
-  skills?: string[];
+  /** Skills theo 2 shape (schema cvs.ts dùng union, tương thích ngược):
+   *  - upload CV (LLM parse) → string[]
+   *  - CV tạo tay (direct)   → { name, level 1-5 }[]
+   *  FE normalize về tên string khi hiển thị chip. */
+  skills?: Array<string | { name?: string; level?: number }>;
 }
 
 /** ParsedData của CV hiện tại — null nếu chưa fetch / CV null. Dùng để
@@ -177,7 +440,14 @@ const selectApplication = async (a: Application): Promise<void> => {
     // Fallback null nếu CV null → giữ nguyên giá trị cũ (mock).
     const parsed = (detail.cv?.parsedData ?? null) as CvParsedShape | null;
     if (parsed) parsedData.value = parsed;
-    const cvSkills = Array.isArray(parsed?.skills) ? parsed!.skills! : [];
+    // Normalize skills về string[] — CV direct lưu {name, level} object,
+    // render thẳng `{{ s }}` sẽ ra "[object Object]". Lấy name, bỏ level
+    // (chip ở panel này không hiển thị progress bar level như candidate).
+    const cvSkills = Array.isArray(parsed?.skills)
+      ? parsed!.skills!
+          .map((s) => (typeof s === 'string' ? s : (s?.name ?? '').trim()))
+          .filter((s) => s.length > 0)
+      : [];
     if (cvSkills.length > 0) skills.value = cvSkills;
   } catch {
     // Network / 401 / 404 → giữ mock skills hiện tại.
@@ -187,44 +457,13 @@ const selectApplication = async (a: Application): Promise<void> => {
   }
 };
 
-/** Styling cho stage chip — match với mockup. */
-const STAGE_STYLE: Record<Application['stage'], { bg: string; text: string }> = {
-  Interview: { bg: 'bg-[#eaf2ff]', text: 'text-[#1769e8]' },
-  Screening: { bg: 'bg-[#fff1e7]', text: 'text-[#f97316]' },
-  Assessment: { bg: 'bg-[#f7e9ff]', text: 'text-[#b24be7]' },
-  New: { bg: 'bg-[#eef0f2]', text: 'text-[#64748b]' },
-};
+/** Styling chip theo status gốc — STATUS_CHIP (xem block status display). */
 
 /**
- * Stage tiếng Việt — đồng bộ với `AppliedJobsView` (candidate-side) để
- * cùng 1 ứng viên nhìn status ở 2 trang là 1 chuỗi. Tra trực tiếp qua
- * `STAGE_LABEL[stage]` khi render.
+ * Stage tiếng Việt — ĐÃ BỎ (trước đây map 8 status về 4 stage mockup làm
+ * offered/hired hiện "Phỏng vấn" sai). Giờ hiển thị thẳng theo status gốc
+ * qua STATUS_LABEL / STATUS_CHIP (xem block status filter + display).
  */
-const STAGE_LABEL: Record<Application['stage'], string> = {
-  Interview: 'Phỏng vấn',
-  Screening: 'Sàng lọc',
-  Assessment: 'Đánh giá',
-  New: 'Mới',
-};
-
-/**
- * Map status → stage mockup. Backend enum `ApplicationStatus` (pending/viewed/
- * screening/interview/offered/hired/rejected/withdrawn) gom về 4 stage hiển thị.
- *   - pending / viewed → "New"
- *   - screening → "Screening"
- *   - interview / offered / hired → "Interview"
- *   - rejected / withdrawn → "Assessment" (đánh dấu terminal)
- */
-const STATUS_TO_STAGE: Record<ApplicationStatus, Application['stage']> = {
-  pending: 'New',
-  viewed: 'New',
-  screening: 'Screening',
-  interview: 'Interview',
-  offered: 'Interview',
-  hired: 'Interview',
-  rejected: 'Assessment',
-  withdrawn: 'Assessment',
-};
 
 /**
  * Cắt chuỗi dài về `max` ký tự + thêm "..." — dùng cho Application row name và
@@ -238,14 +477,14 @@ const truncate = (s: string | null | undefined, max = 20): string => {
 /** Map 1 row `EmployerApplicationRow` → `Application` UI shape. Field nào
  *  null → dùng giá trị mặc định hợp lý (placeholder string / 0 / rỗng). */
 const mapRow = (row: EmployerApplicationRow, fallbackIdx: number): Application => {
-  const matchNum = row.aiMatchScore != null ? Math.round(Number(row.aiMatchScore)) : 0;
+  const matchNum = row.aiMatchScore != null ? Math.round(Number(row.aiMatchScore)) : null;
   return {
     name: row.candidateName ?? `Ứng viên #${fallbackIdx + 1}`,
     avatarUrl: row.candidateAvatarUrl ?? null,
     email: row.candidateEmail ?? (row.isAnonymous ? '(ẩn danh)' : ''),
     position: row.jobTitle ?? '',
-    stage: STATUS_TO_STAGE[row.status],
-    match: Number.isFinite(matchNum) ? matchNum : 0,
+    status: row.status,
+    match: matchNum !== null && Number.isFinite(matchNum) ? matchNum : null,
     // Giữ ISO gốc để `formatTime` (HH:mm trong list) + `formatDate`
     // (D Thg M tooltip) đều parse được dayjs. Format trước đây 'MMM D, YYYY'
     // không có giờ → HH:mm trả rỗng.
@@ -263,7 +502,14 @@ const fetchPage = async (pageNum?: number): Promise<void> => {
   if (typeof pageNum === 'number') page.value = pageNum;
   loading.value = true;
   try {
-    const { data } = await applicationApi.listByCompany({ page: page.value, limit: limit.value });
+    const { data } = await applicationApi.listByCompany({
+      page: page.value,
+      limit: limit.value,
+      // Filter theo job đang chọn trong dropdown ('' = tất cả → undefined).
+      jobId: selectedJobId.value || undefined,
+      // Filter theo trạng thái đơn ('' = tất cả → undefined).
+      status: selectedStatus.value || undefined,
+    });
     const rows = data.data?.rows ?? [];
     applications.value = rows.map((r, i) => mapRow(r, i));
     total.value = data.data?.total ?? rows.length;
@@ -289,8 +535,152 @@ const fetchPage = async (pageNum?: number): Promise<void> => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Realtime: candidate apply mới → backend emit 'application:new' cho employer.
+// Đang ở page 1 → refetch ngay để row mới xuất hiện tức thời. Đang ở page
+// khác → chỉ toast (không giật user về page 1 vô điều kiện).
+// ---------------------------------------------------------------------------
+const onApplicationNew = (): void => {
+  if (page.value === 1) {
+    void fetchPage(1);
+    toast.push({
+      variant: 'info',
+      title: 'Có đơn ứng tuyển mới',
+      body: 'Danh sách đã được cập nhật.',
+    });
+  } else {
+    toast.push({
+      variant: 'info',
+      title: 'Có đơn ứng tuyển mới',
+      body: 'Quay về trang 1 để xem.',
+    });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Realtime: cvMatch worker chấm xong → backend emit 'application:scored' cho
+// employer. Cập nhật điểm TẠI CHỖ (không refetch): row trong list + ring
+// detail nếu đúng application đang select. Refetch detail để tab "So khớp"
+// cũng lấy reasoning mới.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Tab CV — render CV snapshot của application GIỐNG candidate view:
+//   - CV template (source direct): CVTemplateRenderer với parsedData snapshot,
+//     scale-to-fit panel (A4 794px → chiều rộng panel) qua transform + RO.
+//   - CV upload PDF: iframe native viewer ẩn toolbar, đúng tỷ lệ A4.
+//   - File khác (docx...): fallback nút mở/tải (không preview được).
+// Nguồn dữ liệu: detailData.cv = ApplicationCvSnapshot (title/url/template/
+// parsedData) — KHÔNG có fileType nên PDF detect bằng extension URL.
+// ---------------------------------------------------------------------------
+const cvSnapshot = computed(() => detailData.value?.cv ?? null);
+const cvFileUrl = computed(() => cvSnapshot.value?.url ?? null);
+const cvTemplateId = computed(() => clampTemplateId(cvSnapshot.value?.template));
+const cvRenderData = computed(() => {
+  const snap = cvSnapshot.value;
+  if (!snap || cvFileUrl.value) return null; // có file → ưu tiên preview file
+  return buildRenderData({
+    parsedData: (snap.parsedData ?? null) as Record<string, unknown> | null,
+    title: snap.title,
+  });
+});
+const cvIsPdf = computed(() => !!cvFileUrl.value && /\.pdf(\?|#|$)/i.test(cvFileUrl.value));
+
+// ---------------------------------------------------------------------------
+// Lightbox CvDetailView (readonly) — icon eye trong toolbar CV mở full-screen
+// lightbox giống candidate. Snapshot thiếu nhiều field của `Cv` → build stub:
+//   - fileType: detect từ extension URL (snapshot không lưu fileType)
+//   - source: có url → 'upload', không → 'direct' (template)
+//   - status: 'ready' (snapshot tồn tại trong application nghĩa là CV đã sẵn)
+//   - id: applicationId — chỉ làm key, employer không thao tác được (readonly)
+// ---------------------------------------------------------------------------
+const cvLightboxOpen = ref(false);
+
+// ---------------------------------------------------------------------------
+// Tải PDF cho CV direct (tạo template) — BE Playwright render qua print page.
+// CV upload thì file đã có sẵn url → nút Download thường, không qua đây.
+// ---------------------------------------------------------------------------
+const downloadingPdf = ref(false);
+
+const downloadCvPdf = async (): Promise<void> => {
+  const cvId = detailData.value?.cvId;
+  if (!cvId || downloadingPdf.value) return;
+  downloadingPdf.value = true;
+  try {
+    const res = await cvApi.downloadPdf(cvId);
+    const url = URL.createObjectURL(res.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(cvSnapshot.value?.title?.trim() || 'cv').replace(/\s+/g, '-')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    toast.push({
+      variant: 'error',
+      title: 'Tải PDF thất bại',
+      body: extractErrorMessage(e, 'Vui lòng thử lại sau.'),
+    });
+  } finally {
+    downloadingPdf.value = false;
+  }
+};
+
+const cvForLightbox = computed<Cv | null>(() => {
+  const snap = cvSnapshot.value;
+  if (!snap) return null;
+  const url = snap.url ?? '';
+  const appliedAt = detailData.value?.appliedAt ?? new Date().toISOString();
+  return {
+    id: detailData.value?.id ?? 'cv-snapshot',
+    candidateId: snap.candidateId,
+    title: snap.title,
+    fileUrl: snap.url,
+    fileType: url ? (/\.pdf(\?|#|$)/i.test(url) ? 'application/pdf' : null) : null,
+    isPrimary: false,
+    status: 'ready',
+    source: url ? 'upload' : 'direct',
+    templateId: snap.template,
+    parsedData: (snap.parsedData ?? null) as Record<string, unknown> | null,
+    ai_analysis: null,
+    failureReason: null,
+    scoreUpdatedAt: null,
+    createdAt: appliedAt,
+    updatedAt: appliedAt,
+  };
+});
+
+const onApplicationScored = (payload: {
+  applicationId?: string;
+  matchPercent?: number;
+}): void => {
+  if (!payload?.applicationId || typeof payload.matchPercent !== 'number') return;
+  // Điểm mới đã về → thoát state "Đang chấm…" nếu đúng app đó.
+  if (scoringApplicationId.value === payload.applicationId) {
+    scoringApplicationId.value = null;
+  }
+  const row = applications.value.find((a) => a.applicationId === payload.applicationId);
+  if (!row) return;
+  row.match = Math.round(payload.matchPercent);
+  const appId = row.applicationId;
+  if (appId) {
+    animatedMatches.value = { ...animatedMatches.value, [appId]: row.match };
+  }
+  if (appId && selectedApplication.value.applicationId === appId) {
+    animateCount(row.match);
+    void applicationApi
+      .getById(appId)
+      .then(({ data }) => { detailData.value = data.data; })
+      .catch(() => {/* best-effort */});
+  }
+};
+
 onMounted(() => {
   void fetchPage(1);
+  void loadJobNames();
+  document.addEventListener('mousedown', onDocClick, true);
+  getSocket().on('application:new', onApplicationNew);
+  getSocket().on('application:scored', onApplicationScored);
 });
 
 /**
@@ -337,7 +727,28 @@ const coverLetter = computed(() => detailData.value?.coverLetter ?? null);
 /** Ngày tạo job relative — không có sẵn trong mock, dùng trực tiếp date. */
 const selectedMatchText = computed(() => `${selectedApplication.value.match}%`);
 
-const selectedStageStyle = computed(() => STAGE_STYLE[selectedApplication.value.stage]);
+// ---------------------------------------------------------------------------
+// Label + màu chip theo STATUS GỐC (8 giá trị enum) — thay cho hiển thị qua
+// stage map 4 mức cũ (offered/hired bị gộp thành "Phỏng vấn" là sai).
+// Label tái dùng STATUS_FILTER_OPTIONS để 1 nguồn duy nhất.
+// ---------------------------------------------------------------------------
+const STATUS_LABEL: Record<ApplicationStatus, string> = Object.fromEntries(
+  STATUS_FILTER_OPTIONS.filter((o) => o.value).map((o) => [o.value as ApplicationStatus, o.label]),
+) as Record<ApplicationStatus, string>;
+
+const STATUS_CHIP: Record<ApplicationStatus, { bg: string; text: string }> = {
+  pending: { bg: 'bg-[#eef0f2]', text: 'text-[#64748b]' },
+  viewed: { bg: 'bg-[#eaf2ff]', text: 'text-[#1769e8]' },
+  screening: { bg: 'bg-[#fff1e7]', text: 'text-[#f97316]' },
+  interview: { bg: 'bg-[#eaf2ff]', text: 'text-[#1769e8]' },
+  offered: { bg: 'bg-[#f7e9ff]', text: 'text-[#b24be7]' },
+  hired: { bg: 'bg-[#e7f8f0]', text: 'text-[#0d9463]' },
+  rejected: { bg: 'bg-[#fdecec]', text: 'text-[#e11d48]' },
+  withdrawn: { bg: 'bg-[#f1f5f9]', text: 'text-[#64748b]' },
+};
+
+const selectedStatusLabel = computed(() => STATUS_LABEL[selectedApplication.value.status]);
+const selectedStatusChip = computed(() => STATUS_CHIP[selectedApplication.value.status]);
 
 /* ============================================================================
  * Match level — phân cấp mức độ phù hợp để đổi màu progress bar (list) +
@@ -369,7 +780,7 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 /** Target offset = circumference * (1 - match/100). Truyền qua CSS var để
  *  keyframes `draw-ring` animate từ full → target. */
 const ringOffset = computed(
-  () => RING_CIRCUMFERENCE * (1 - Math.max(0, Math.min(100, selectedApplication.value.match)) / 100),
+  () => RING_CIRCUMFERENCE * (1 - Math.max(0, Math.min(100, selectedApplication.value.match ?? 0)) / 100),
 );
 
 /** Number counter hiển thị trong ring — animate từ 0 → match% khi selected
@@ -397,7 +808,7 @@ const animateCount = (target: number): void => {
 
 watch(
   () => selectedApplication.value.match,
-  (m) => animateCount(m),
+  (m) => animateCount(m ?? 0),
   { immediate: true },
 );
 
@@ -413,7 +824,7 @@ let rowRaf: number | null = null;
 const animateRows = (list: Application[]): void => {
   if (rowRaf !== null) cancelAnimationFrame(rowRaf);
   const ids = list.map((a) => a.applicationId ?? a.email);
-  const targets = new Map(ids.map((id, i) => [id, list[i]!.match]));
+  const targets = new Map(ids.map((id, i) => [id, list[i]!.match ?? 0]));
   const reset: Record<string, number> = {};
   ids.forEach((id) => (reset[id] = 0));
   animatedMatches.value = reset;
@@ -437,6 +848,43 @@ const animateRows = (list: Application[]): void => {
 const gotoActiveTab = (tab: TabKey): void => {
   activeTab.value = tab;
 };
+
+// ---------------------------------------------------------------------------
+// Scale-to-fit cho tab CV (đặt SAU khai báo activeTab — watch cần nó):
+// renderer render ở 794px (A4) — scale xuống bằng đúng chiều rộng wrapper,
+// chiều cao wrapper = innerHeight * scale. ResizeObserver đo cả 2 (panel
+// resize khi đổi breakpoint, nội dung đổi khi switch application).
+// ---------------------------------------------------------------------------
+const cvWrapEl = ref<HTMLElement | null>(null);
+const cvInnerEl = ref<HTMLElement | null>(null);
+const cvScale = ref(1);
+const cvInnerH = ref(0);
+let cvRO: ResizeObserver | null = null;
+
+const measureCv = (): void => {
+  if (cvWrapEl.value) {
+    const w = cvWrapEl.value.clientWidth;
+    if (w > 0) cvScale.value = w / 794;
+  }
+  if (cvInnerEl.value) cvInnerH.value = cvInnerEl.value.offsetHeight;
+};
+
+watch([activeTab, cvSnapshot], () => {
+  // v-show tab ẩn → width = 0; đợi tab hiển thị + DOM cập nhật rồi đo.
+  if (activeTab.value !== 'CV') return;
+  void nextTick(() => {
+    measureCv();
+    cvRO?.disconnect();
+    cvRO = new ResizeObserver(measureCv);
+    if (cvWrapEl.value) cvRO.observe(cvWrapEl.value);
+    if (cvInnerEl.value) cvRO.observe(cvInnerEl.value);
+  });
+});
+
+onUnmounted(() => {
+  cvRO?.disconnect();
+  cvRO = null;
+});
 watch(
   () => applications.value,
   (list) => animateRows(list),
@@ -446,6 +894,9 @@ watch(
 onUnmounted(() => {
   if (countRaf !== null) cancelAnimationFrame(countRaf);
   if (rowRaf !== null) cancelAnimationFrame(rowRaf);
+  document.removeEventListener('mousedown', onDocClick, true);
+  getSocket().off('application:new', onApplicationNew);
+  getSocket().off('application:scored', onApplicationScored);
 });
 </script>
 
@@ -462,18 +913,91 @@ onUnmounted(() => {
             <p class="text-[12px] text-[#8190a5]">Quản lý các đơn ứng tuyển và duy trì quy trình tuyển dụng của bạn.</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
-            <div
-              class="flex h-10 w-full sm:w-[215px] items-center gap-2 rounded-lg border border-[#e3e8ef] bg-white px-3 text-[12px] text-[#a0acbc]"
-            >
-              <Search class="h-4 w-4" />
-              <span>Search...</span>
+            <!-- Combobox chọn job — gõ thẳng trong ô để filter options
+                 (client-side), click option → filter list ứng tuyển. -->
+            <div ref="jobSelectRoot" class="relative w-full sm:w-[260px]">
+              <div
+                class="flex h-10 items-center gap-2 rounded-lg border border-[#e3e8ef] bg-white px-3 text-[12px]"
+              >
+                <input
+                  ref="jobSelectInput"
+                  v-model="jobKeyword"
+                  type="text"
+                  placeholder="Tất cả — gõ để tìm job"
+                  maxlength="100"
+                  class="w-full cursor-pointer bg-transparent text-[#334155] placeholder-[#a0acbc] outline-none border-none outline-0 text-[12px] focus:ring-0"
+                  aria-label="Lọc theo công việc"
+                  @focus="jobSelectOpen = true"
+                  @input="jobSelectOpen = true"
+                  @keydown.esc="jobSelectOpen = false"
+                />
+                <ChevronDown
+                  class="h-4 w-4 shrink-0 cursor-pointer text-[#a0acbc] transition hover:text-[#334155]"
+                  :class="jobSelectOpen ? 'rotate-180' : ''"
+                  @click="toggleJobSelect"
+                />
+              </div>
+              <div
+                v-if="jobSelectOpen"
+                class="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto scrollbar-thin rounded-lg border border-[#e3e8ef] bg-white py-1 shadow-lg"
+              >
+                <button
+                  type="button"
+                  class="block w-full px-3 py-2 text-left text-[12px] transition hover:bg-[#eef5ff]"
+                  :class="selectedJobId === '' ? 'font-semibold text-[#1769e8]' : 'text-[#334155]'"
+                  @click="pickJob('')"
+                >
+                  Tất cả
+                </button>
+                <button
+                  v-for="j in filteredJobOptions"
+                  :key="j.id"
+                  type="button"
+                  class="block w-full truncate px-3 py-2 text-left text-[12px] transition hover:bg-[#eef5ff]"
+                  :class="selectedJobId === j.id ? 'font-semibold text-[#1769e8]' : 'text-[#334155]'"
+                  :title="j.title"
+                  @click="pickJob(j.id)"
+                >
+                  {{ j.title }}
+                </button>
+                <div v-if="filteredJobOptions.length === 0" class="px-3 py-2 text-[12px] italic text-[#94a3b8]">
+                  Không có job nào khớp
+                </div>
+              </div>
             </div>
-            <button
-              type="button"
-              class="flex h-10 items-center gap-2 rounded-lg border border-[#e3e8ef] px-3 text-[12px] font-medium"
-            >
-              <Filter class="h-4 w-4" /> <span class="hidden sm:inline">Filter</span>
-            </button>
+
+            <!-- Dropdown lọc theo trạng thái đơn — div custom (không dùng
+                 <select>) để style đồng bộ với combobox job. Chọn → refetch
+                 với ?status=. -->
+            <div ref="statusSelectRoot" class="relative w-full sm:w-[175px]">
+              <button
+                type="button"
+                class="flex h-10 w-full items-center gap-2 rounded-lg border border-[#e3e8ef] bg-white px-3 text-[12px] transition hover:border-[#c7d2e0]"
+                aria-label="Lọc theo trạng thái"
+                @click="statusSelectOpen = !statusSelectOpen"
+              >
+                <span class="w-full truncate text-left text-[#334155]">{{ statusFilterLabel }}</span>
+                <ChevronDown
+                  class="h-4 w-4 shrink-0 text-[#a0acbc] transition"
+                  :class="statusSelectOpen ? 'rotate-180' : ''"
+                />
+              </button>
+              <div
+                v-if="statusSelectOpen"
+                class="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto scrollbar-thin rounded-lg border border-[#e3e8ef] bg-white py-1 shadow-lg"
+              >
+                <button
+                  v-for="opt in STATUS_FILTER_OPTIONS"
+                  :key="opt.label"
+                  type="button"
+                  class="block w-full px-3 py-2 text-left text-[12px] transition hover:bg-[#eef5ff]"
+                  :class="selectedStatus === opt.value ? 'font-semibold text-[#1769e8]' : 'text-[#334155]'"
+                  @click="pickStatus(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
             <button type="button" class="grid h-10 w-10 place-items-center rounded-lg border border-[#e3e8ef]">
               <MoreHorizontal class="h-4 w-4" />
             </button>
@@ -492,13 +1016,25 @@ onUnmounted(() => {
             <div>Ứng viên</div>
             <div>Việc làm</div>
             <div>Giai đoạn</div>
-            <div>Phù hợp</div>
+            <div>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 transition hover:text-[#334155]"
+                title="Sắp xếp theo điểm phù hợp"
+                @click="toggleMatchSort"
+              >
+                Phù hợp
+                <ArrowUpDown v-if="matchSort === 'none'" class="h-3 w-3" />
+                <ArrowDown v-else-if="matchSort === 'desc'" class="h-3 w-3 text-[#1769e8]" />
+                <ArrowUp v-else class="h-3 w-3 text-[#1769e8]" />
+              </button>
+            </div>
             <div class="hidden sm:block">Thời gian</div>
           </div>
 
           <!-- Rows -->
           <div
-            v-for="(a, i) in applications"
+            v-for="(a, i) in displayedApplications"
             :key="`${a.email}-${i}`"
             class="grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.7fr_1.7fr_1fr_1fr_0.7fr] items-center px-4 py-2.5 text-[13px] border-b border-[#eef1f5] cursor-pointer transition"
             :class="isSelected(a) ? 'bg-[#edf4ff]' : 'bg-white hover:bg-gray-50'"
@@ -542,17 +1078,25 @@ onUnmounted(() => {
             <div>
               <span
                 class="inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium"
-                :class="[STAGE_STYLE[a.stage].bg, STAGE_STYLE[a.stage].text]"
-              >{{ STAGE_LABEL[a.stage] }}</span>
+                :class="[STATUS_CHIP[a.status].bg, STATUS_CHIP[a.status].text]"
+              >{{ STATUS_LABEL[a.status] }}</span>
             </div>
 
-            <!-- Match -->
-            <div>
+            <!-- Match — 3 state: scoring (spinner "Đang chấm…"), null
+                 ("Chưa có điểm"), có điểm (% + bar). 0 điểm thật vẫn hiện 0%. -->
+            <div v-if="a.applicationId === scoringApplicationId" class="flex items-center gap-1">
+              <Loader2 class="h-3 w-3 animate-spin text-[#1769e8]" />
+              <span class="text-[11px] text-[#64748b]">Đang chấm…</span>
+            </div>
+            <div v-else-if="a.match === null">
+              <div class="text-[11px] text-[#94a3b8] italic">Chưa có điểm</div>
+            </div>
+            <div v-else>
               <div
                 class="font-semibold tabular-nums"
-                :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatches[a.applicationId ?? a.email] ?? a.match)].text"
+                :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatches[a.applicationId ?? a.email] ?? a.match ?? 0)].text"
               >
-                {{ animatedMatches[a.applicationId ?? a.email] ?? 0 }}%
+                {{ animatedMatches[a.applicationId ?? a.email] ?? a.match ?? 0 }}%
               </div>
               <div class="mt-1 h-1.5 w-[60px] sm:w-[85px] rounded-full bg-[#e8eef8]">
                 <!--
@@ -563,8 +1107,8 @@ onUnmounted(() => {
                 -->
                 <div
                   class="h-full rounded-full transition-all duration-[1100ms] ease-out"
-                  :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatches[a.applicationId ?? a.email] ?? a.match)].bar"
-                  :style="{ width: `${animatedMatches[a.applicationId ?? a.email] ?? 0}%` }"
+                  :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatches[a.applicationId ?? a.email] ?? a.match ?? 0)].bar"
+                  :style="{ width: `${animatedMatches[a.applicationId ?? a.email] ?? a.match ?? 0}%` }"
                 ></div>
               </div>
             </div>
@@ -629,8 +1173,10 @@ onUnmounted(() => {
       </main>
 
       <!-- ============ Detail panel ============ -->
-      <aside class="w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] lg:shrink-0 border-t lg:border-t-0 lg:border-l border-[#e9edf3] bg-white p-0 overflow-y-auto scrollbar-thin">
-        <div class="rounded-xl border border-[#e7ebf1] bg-white">
+      <!-- overflow-x-hidden: tắt thanh cuộn ngang — sticky action bar dùng -mx-5
+           tràn ra 20px mỗi bên là nguồn tràn ngang phổ biến nhất. -->
+      <aside class="w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] lg:shrink-0 border-t lg:border-t-0 lg:border-l border-[#e9edf3] bg-white p-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
+        <div class="border-none bg-white">
           <!--
             Header block — chia 2 phần tách biệt để tránh bị rối khi panel
             hẹp:
@@ -639,14 +1185,7 @@ onUnmounted(() => {
                  tách khỏi identity để dễ scan.
           -->
           <div class="relative border-b border-[#edf0f4] px-5 pt-5 pb-5">
-            <button
-              type="button"
-              class="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg border border-[#e1e7ef] text-[#64748b] hover:bg-gray-50 transition"
-              aria-label="Đóng"
-            >
-              <CloseIcon class="h-4 w-4" />
-            </button>
-
+          
             <!-- Row 1: Avatar + identity -->
             <div class="flex items-center gap-4 pr-12">
               <div
@@ -721,29 +1260,45 @@ onUnmounted(() => {
                 </svg>
                 <div
                   class="absolute inset-0 grid place-items-center text-[12px] font-bold tabular-nums"
-                  :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].text"
+                  :class="isScoringSelected || selectedApplication.match === null ? 'text-[#94a3b8]' : MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].text"
                 >
-                  {{ animatedMatch }}%
+                  <Loader2 v-if="isScoringSelected" class="h-4 w-4 animate-spin" />
+                  <span v-else-if="selectedApplication.match === null">—</span>
+                  <span v-else>{{ animatedMatch }}%</span>
                 </div>
               </div>
               <div class="min-w-0">
                 <div class="text-[10px] text-[#94a3b8]">Match Score</div>
                 <div
                   class="text-[12px] font-semibold"
-                  :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].text"
+                  :class="isScoringSelected || selectedApplication.match === null ? 'text-[#94a3b8]' : MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].text"
                 >
-                  {{ MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].label }}
+                  <span v-if="isScoringSelected">Đang chấm…</span>
+                  <span v-else-if="selectedApplication.match === null">Chưa có điểm</span>
+                  <span v-else>{{ MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].label }}</span>
                 </div>
               </div>
+              <!-- Retry — chấm lại điểm AI (POST /:id/recompute-match). Điểm
+                   reset về "Chưa có điểm" ngay; kết quả mới đến qua socket
+                   'application:scored' → tự update ring + list. -->
+              <button
+                type="button"
+                class="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[#e3e8ef] bg-white text-[#64748b] transition hover:border-[#cfe0ff] hover:text-[#1769e8] disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Chấm lại điểm AI match"
+                :disabled="recomputing || !canOpenReferences"
+                @click="recomputeMatch"
+              >
+                <RefreshCw class="h-3.5 w-3.5" :class="recomputing ? 'animate-spin' : ''" />
+              </button>
             </div>
 
             <!-- Tabs -->
-            <div class="mt-5 flex gap-7 text-[12px] font-medium text-[#64748b]">
+            <div class="mt-3 flex gap-6 text-[12px] font-medium text-[#64748b]">
               <button
                 v-for="t in tabs"
                 :key="t"
                 type="button"
-                class="pb-3 border-b-2 transition"
+                class="border-b-2 transition"
                 :class="activeTab === t ? 'border-[#1769e8] text-[#1769e8]' : 'border-transparent'"
                 @click="gotoActiveTab(t)"
               >{{ t }}</button>
@@ -759,7 +1314,7 @@ onUnmounted(() => {
           -->
           <div class="p-5">
             <div v-show="activeTab === 'Tổng quan'" class="space-y-4">
-              <h3 class="text-[13px] font-semibold">Application Overview</h3>
+              <h3 class="text-[13px] font-semibold">Tổng quan</h3>
             <div class="rounded-xl border border-[#e8edf3] p-4">
               <div class="grid grid-cols-2 gap-y-4 text-[11px] text-[#64748b]">
                 <div class="space-y-3">
@@ -805,7 +1360,7 @@ onUnmounted(() => {
             </div>
 
             <div>
-              <h3 class="mb-2 text-[13px] font-semibold">Skills</h3>
+              <h3 class="mb-2 text-[13px] font-semibold">Kỹ năng</h3>
               <div class="flex flex-wrap gap-2">
                 <!--
                   Skills render từ `skills` ref — mặc định slice 6 đầu, các
@@ -837,7 +1392,7 @@ onUnmounted(() => {
 
             <div class="rounded-xl border border-[#cfe0ff] bg-[#eef5ff] p-4">
               <div class="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[#1769e8]">
-                <Sparkles class="h-4 w-4" /> AI Summary
+                <Sparkles class="h-4 w-4" /> Nhận xét từ AI
               </div>
               <p class="text-[11px] leading-5 text-[#53657d]">
                 {{ aiReasoning?.rationale ?? 'AI chưa chấm điểm ứng viên này, vui lòng quay lại sau.' }}
@@ -846,11 +1401,11 @@ onUnmounted(() => {
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div class="rounded-xl border border-[#e6ebf1] p-4">
-                <div class="text-[12px] font-semibold">Current Stage</div>
+                <div class="text-[12px] font-semibold">Trạng thái</div>
                 <span
                   class="mt-3 inline-flex rounded-full px-3 py-2 text-[11px] font-medium"
-                  :class="[selectedStageStyle.bg, selectedStageStyle.text]"
-                >{{ STAGE_LABEL[selectedApplication.stage] }}</span>
+                  :class="[selectedStatusChip.bg, selectedStatusChip.text]"
+                >{{ selectedStatusLabel }}</span>
               </div>
               <div class="rounded-xl border border-[#e6ebf1] p-4">
                 <div class="text-[12px] font-semibold">Next Interview</div>
@@ -887,14 +1442,109 @@ onUnmounted(() => {
                 </p>
               </div>
             </div>
-            <div v-show="activeTab === 'CV'" class="space-y-3">
-              <h3 class="text-[13px] font-semibold">CV</h3>
-              <div class="rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-6 flex flex-col items-center justify-center text-center">
-                <Inbox class="w-8 h-8 text-[#94a3b8] mb-2" />
-                <p class="text-[12.5px] text-[#64748b]">
-                  Tính năng ghi chú đang phát triển — sẽ sớm có mặt.
-                </p>
+            <div v-show="activeTab === 'CV'">
+              <!-- Tab CV — render CV snapshot giống candidate view: template
+                   render scale-to-fit, PDF iframe A4, fallback tải file. -->
+              <div v-if="!cvSnapshot" class="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-6 text-center">
+                <FileText class="mb-2 h-8 w-8 text-[#94a3b8]" />
+                <p class="text-[12.5px] text-[#64748b]">Ứng viên apply không kèm CV.</p>
               </div>
+              <template v-else>
+                <!-- Toolbar: tên CV + actions (chỉ khi có file) -->
+                <div class="mb-3 flex items-center justify-between gap-2 rounded-xl border border-[#e7ebf1] bg-white px-3 py-2">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <FileText class="h-4 w-4 shrink-0 text-[#94a3b8]" />
+                    <p class="truncate text-[12px] font-semibold text-[#334155]">
+                      {{ cvSnapshot.title || 'CV ứng viên' }}
+                    </p>
+                  </div>
+                  <div class="flex shrink-0 items-center gap-1">
+                    <!-- Eye — mở lightbox CvDetailView full-screen (readonly) -->
+                    <button
+                      type="button"
+                      class="grid h-7 w-7 place-items-center rounded-md border border-[#e3e8ef] text-[#64748b] transition hover:border-[#cfe0ff] hover:text-[#1769e8]"
+                      title="Xem CV đầy đủ"
+                      @click="cvLightboxOpen = true"
+                    >
+                      <Eye class="h-3 w-3" />
+                    </button>
+                    <a
+                      v-if="cvFileUrl"
+                      :href="cvFileUrl"
+                      target="_blank"
+                      rel="noopener"
+                      class="grid h-7 w-7 place-items-center rounded-md border border-[#e3e8ef] text-[#64748b] transition hover:border-[#cfe0ff] hover:text-[#1769e8]"
+                      title="Mở tab mới"
+                    >
+                      <ExternalLink class="h-3 w-3" />
+                    </a>
+                    <a
+                      v-if="cvFileUrl"
+                      :href="cvFileUrl"
+                      download
+                      class="grid h-7 w-7 place-items-center rounded-md border border-[#e3e8ef] text-[#64748b] transition hover:border-[#cfe0ff] hover:text-[#1769e8]"
+                      title="Tải về"
+                    >
+                      <Download class="h-3 w-3" />
+                    </a>
+                    <!-- CV direct (template) — tải PDF qua Playwright render.
+                         Không có file url nên cần endpoint render. -->
+                    <button
+                      v-if="cvRenderData"
+                      type="button"
+                      class="grid h-7 w-7 place-items-center rounded-md border border-[#e3e8ef] text-[#64748b] transition hover:border-[#cfe0ff] hover:text-[#1769e8] disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Tải PDF"
+                      :disabled="downloadingPdf"
+                      @click="downloadCvPdf"
+                    >
+                      <Loader2 v-if="downloadingPdf" class="h-3 w-3 animate-spin" />
+                      <Download v-else class="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Template CV — scale-to-fit panel (A4 794px → panel width) -->
+                <div
+                  v-if="cvRenderData"
+                  ref="cvWrapEl"
+                  class="relative w-full overflow-hidden rounded-lg border border-[#e7ebf1] bg-white"
+                  :style="{ height: cvInnerH ? `${Math.round(cvInnerH * cvScale)}px` : '640px' }"
+                >
+                  <div
+                    ref="cvInnerEl"
+                    class="absolute left-0 top-0 origin-top-left bg-white"
+                    :style="{ width: '794px', transform: `scale(${cvScale})` }"
+                  >
+                    <CVTemplateRenderer :template-id="cvTemplateId" :data="cvRenderData" language="vi" />
+                  </div>
+                  <!-- Tab vừa mở width=0 → scale=1 → nội dung tràn; ẩn tới khi
+                       đo xong (sau nextTick + RO fire) để tránh flash. -->
+                  <div v-if="cvScale === 1" class="absolute inset-0 bg-white" />
+                </div>
+
+                <!-- Upload PDF — iframe native viewer, đúng tỷ lệ A4 -->
+                <iframe
+                  v-else-if="cvIsPdf"
+                  :src="cvFileUrl + '#toolbar=0&navpanes=0&scrollbar=0&view=FitH'"
+                  class="block aspect-[210/298] w-full rounded-lg border border-[#e7ebf1] bg-white"
+                  title="CV preview"
+                />
+
+                <!-- File khác (docx...) — không preview được → mở/tải -->
+                <div v-else class="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-6 text-center">
+                  <FileText class="mb-2 h-6 w-6 text-[#94a3b8]" />
+                  <p class="text-[12.5px] text-[#64748b]">Không xem trước được định dạng này.</p>
+                  <a
+                    v-if="cvFileUrl"
+                    :href="cvFileUrl"
+                    target="_blank"
+                    rel="noopener"
+                    class="mt-2 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#e3e8ef] bg-white px-3 text-[11px] font-medium text-[#334155] transition hover:bg-[#f8fafc]"
+                  >
+                    <Download class="h-3 w-3" /> Mở / tải file
+                  </a>
+                </div>
+              </template>
             </div>
             <div v-show="activeTab === 'So khớp'" class="space-y-4">
               <h3 class="text-[13px] font-semibold">AI Matching</h3>
@@ -1038,26 +1688,80 @@ onUnmounted(() => {
             `bg-white` + top border + padding-top để tách khỏi content phía
             trên khi user scroll.
           -->
-            <div class="sticky bottom-0 z-10 -mx-5 mt-4 bg-white border-t border-[#edf0f4] px-5 py-4">
+            <div class="sticky bottom-0 z-10 -mx-5 bg-white border-t border-[#edf0f4] px-6 py-1">
+              <!-- Xác minh người tham chiếu — mở ReferencesModal. Disable cho
+                   row mock (chưa có applicationId thật từ API). -->
+              <button
+                type="button"
+                :disabled="!canOpenReferences"
+                class="mb-3 flex h-11 w-full items-center justify-center gap-2 border border-[#cfe0ff] border-l-0 bg-[#eef5ff] text-[11px] font-semibold text-[#1769e8] transition hover:bg-[#e0edff] disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Gửi email xác minh người tham chiếu qua n8n"
+                @click="referencesOpen = true"
+              >
+                <ShieldCheck class="h-4 w-4" /> Xác minh người tham chiếu
+              </button>
               <div class="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  class="flex h-11 items-center justify-center gap-2 rounded-lg border border-[#dce4ef] bg-white text-[11px] font-semibold text-[#1769e8]"
+                <template v-if="nextAction">
+                  <!-- Từ chối — text-link gạch chân (không phải button) giống
+                       style "Tôi không biết người này" ở trang referee. -->
+                  <div class="flex items-center justify-center">
+                    <span
+                      role="button"
+                      tabindex="0"
+                      class="cursor-pointer select-none text-[12px] font-medium text-rose-500 underline underline-offset-2 transition hover:text-rose-600"
+                      :class="updatingStatus || !canOpenReferences ? 'pointer-events-none opacity-40' : ''"
+                      title="Từ chối đơn ứng tuyển này"
+                      @click="changeStatus('rejected')"
+                      @keydown.enter="changeStatus('rejected')"
+                    >
+                      Chưa phù hợp
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    :disabled="updatingStatus || !canOpenReferences"
+                    class="flex h-11 items-center justify-center gap-2 rounded-lg bg-[#5b4eea] text-[11px] font-semibold text-white shadow-sm transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed"
+                    :title="`Chuyển đơn sang ${nextAction.next}`"
+                    @click="changeStatus(nextAction.next)"
+                  >
+                    <Loader2 v-if="updatingStatus" class="h-4 w-4 animate-spin" />
+                    <ArrowRight v-else class="h-4 w-4" />
+                    {{ nextAction.label }}
+                  </button>
+                </template>
+                <div
+                  v-else
+                  class="col-span-2 rounded-lg border border-[#eef1f5] bg-[#f8fafc] px-3 py-2.5 text-center text-[11px] text-[#94a3b8]"
                 >
-                  <CalendarPlus class="h-4 w-4" /> Schedule Interview
-                </button>
-                <button
-                  type="button"
-                  class="flex h-11 items-center justify-center gap-2 rounded-lg bg-[#1769e8] text-[11px] font-semibold text-white shadow-sm"
-                >
-                  View Full Profile <ArrowRight class="h-4 w-4" />
-                </button>
+                  Đơn đã ở trạng thái cuối ({{ selectedStatusLabel }}) — không còn hành động.
+                </div>
               </div>
             </div>
         </div>
       </aside>
-    </div>
+
+    <!-- References modal — Teleport to body, độc lập với panel layout.
+         applicationId rỗng (mock/empty) → modal tự guard, không fetch. -->
+    <ReferencesModal
+      :application-id="selectedApplication.applicationId ?? ''"
+      :open="referencesOpen"
+      @close="referencesOpen = false"
+    />
+
+    <!-- CV lightbox — component candidate dùng, chế độ readonly (employer
+         chỉ xem, không set-primary/xoá/edit/analyze CV của candidate). -->
+    <CvDetailView
+      :open="cvLightboxOpen"
+      :cv="cvForLightbox"
+      readonly
+      language="vi"
+      :downloading-pdf="downloadingPdf"
+      @close="cvLightboxOpen = false"
+      @download-pdf="downloadCvPdf"
+    />
   </div>
+  </div>
+
 </template>
 
 <style scoped>

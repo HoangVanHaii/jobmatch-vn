@@ -27,6 +27,7 @@ import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
 import { notificationService } from './notification.service';
 import { notificationGateway } from '../socket/notificationGateway';
+import { n8nService } from './n8n.service';
 import { usageLogService } from './usageLog.service';
 import type {
   ApplicationCvSnapshot,
@@ -432,6 +433,18 @@ const notifyEmployerOfNewApplication = async (params: {
         appliedAt: new Date().toISOString(),
       },
     });
+
+    // Event domain riêng cho trang list ứng tuyển của employer —
+    // 'notification:new' chỉ tăng badge bell, không đủ để FE biết phải
+    // reload list. Pattern giống 'reference:verified' / 'application:match-ready'.
+    notificationGateway.emitToUser(employerId, 'application:new', {
+      applicationId,
+      jobId,
+      jobTitle: row.jobTitle,
+      candidateId,
+      candidateName: row.candidateName,
+      appliedAt: new Date().toISOString(),
+    });
   } catch (err) {
     // KHÔNG throw — application vẫn valid. Chỉ log để debug.
     logger.warn(
@@ -533,6 +546,8 @@ export const getById = async (
       id: applications.id,
       candidateId: applications.candidateId,
       jobId: applications.jobId,
+      // CV id gốc — FE dùng cho download PDF CV direct (GET /cvs/:cvId/download-pdf).
+      cvId: applications.cvId,
       jobTitle: jobs.title,
       jobSlug: jobs.slug,
       jobLocation: jobs.location,
@@ -566,6 +581,23 @@ export const getById = async (
   }
   if (userRole === 'employer' && row.jobPostedBy !== userId) {
     throw new AppError(404, 'APPLICATION_NOT_FOUND', 'Application không tồn tại');
+  }
+ if (userRole !== 'candidate' && row.status === 'pending') {
+    const now = new Date();
+    try {
+      await db
+        .update(applications)
+        .set({ status: 'viewed', viewedAt: now, updatedAt: now })
+        .where(and(eq(applications.id, applicationId), eq(applications.status, 'pending')));
+      // Reflect ngay vào response — FE thấy status='viewed' không phải đợi reload.
+      row.status = 'viewed';
+      row.viewedAt = now;
+    } catch (err) {
+      logger.warn(
+        { err, applicationId },
+        'getById: mark-as-viewed thất bại (best-effort, vẫn trả detail)',
+      );
+    }
   }
 
   // Strip helper field `candidateId` (chỉ dùng cho auth scoping, không
@@ -767,14 +799,20 @@ export const updateStatus = async (
   status: ApplicationStatusValue,
   stage?: string,
 ): Promise<{ id: string; status: ApplicationStatusValue; stage: string | null }> => {
-  // Load application + job để check ownership.
+  // Load application + job để check ownership. JOIN thêm users/userProfiles
+  // lấy email + name cho n8n reject email (trigger khi status → 'rejected').
   const [app] = await db
     .select({
       id: applications.id,
       jobId: applications.jobId,
       candidateId: applications.candidateId,
+      currentStatus: applications.status,
+      candidateEmail: users.email,
+      candidateName: userProfiles.fullName,
     })
     .from(applications)
+    .innerJoin(users, eq(users.id, applications.candidateId))
+    .leftJoin(userProfiles, eq(userProfiles.userId, applications.candidateId))
     .where(eq(applications.id, applicationId))
     .limit(1);
 
@@ -821,10 +859,39 @@ export const updateStatus = async (
       updatedAt: new Date(updated.updatedAt).toISOString(),
     });
   } catch (err) {
-    logger.warn(
-      { applicationId: updated.id, err },
-      '[application] emit status-changed failed (non-fatal)',
-    );
+    logger.warn({ err, applicationId }, 'updateStatus: emit status-changed thất bại (best-effort)');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reject email: employer từ chối THỦ CÔNG → n8n gửi mail lịch sự cho
+  // candidate. Bất nhất với auto-reject (score < 50) — mọi rejected đều
+  // nhận được mail, dù do AI hay do HR quyết định.
+  //
+  // Guards:
+  //   - Chỉ khi status MỚI = 'rejected' VÀ status CŨ ≠ 'rejected' — chặn
+  //     gửi trùng khi employer bấm reject trên đơn đã rejected từ trước
+  //     (AI auto-reject đã gửi mail 1 lần rồi).
+  //   - Fire-and-forget: HR quyết định đã commit trong DB; n8n fail không
+  //     rollback status (HR có thể retry bằng cách đổi status qua lại —
+  //     rejected → screening → rejected sẽ trigger lại, chấp nhận được).
+  // ---------------------------------------------------------------------------
+  if (status === 'rejected' && app.currentStatus !== 'rejected') {
+    n8nService
+      .trigger('auto_reject', {
+        applicationId,
+        candidateEmail: app.candidateEmail,
+        candidateName: app.candidateName,
+        // Manual reject không có rationale từ LLM — dùng thông điệp chung,
+        // workflow template có fallback riêng nếu trống.
+        reason: 'Nhà tuyển dụng đã xem xét và quyết định không tiếp tục với hồ sơ này.',
+        score: null,
+      })
+      .catch((err) =>
+        logger.error(
+          { err, applicationId },
+          'updateStatus: n8n auto_reject trigger thất bại (status đã commit)',
+        ),
+      );
   }
 
   return {
@@ -834,35 +901,6 @@ export const updateStatus = async (
   };
 };
 
-/**
- * Employer yêu cầu chấm lại AI match — dùng cho `POST /applications/:id/recompute-match`.
- *
- * Use case:
- *   - Candidate apply khi candidate hết quota `ai_cv_match` → application được tạo
- *     nhưng `aiMatchScore` = NULL (worker skip).
- *   - Sau đó candidate mua thêm quota, hoặc employer muốn xem điểm match để
- *     quyết định screening → bấm nút "So khớp AI" → gọi endpoint này.
- *
- * Flow:
- *   1. Verify application tồn tại + employer owns job (postedBy hoặc admin).
- *   2. Verify application có CV snapshot (nếu không → 400, không match được).
- *   3. Reset `aiMatchScore = NULL` + clear `aiMatchReasoning` để FE hiển thị
- *      "đang chấm lại..." (loading state).
- *   4. Enqueue `cv-match` job — worker sẽ charge quota `ai_cv_match` của
- *      candidate (chủ sở hữu CV) cho lần gọi LLM này.
- *      Nếu candidate vẫn hết quota → worker skip + notify candidate với
- *      reason quota_exceeded (giống flow ban đầu).
- *   5. Trả `{ id, aiMatchScore: null, aiMatchReasoning: null, recomputeEnqueued: true }`
- *      để FE update UI ngay.
- *
- * Lưu ý:
- *   - Endpoint này do EMPLOYER trigger, nhưng quota bị charge cho CANDIDATE.
- *     Hợp lý vì quota `ai_cv_match` đo "số lần AI đánh giá CV của candidate này".
- *   - Endpoint KHÔNG giới hạn cooldown — FE muốn chặn spam thì debounce ở client.
- *   - Khi queue down: application giữ nguyên score cũ (KHÔNG reset), trả 503
- *     để FE biết phải retry. Nếu đã reset thì data sẽ "trống" vĩnh viễn nếu
- *     queue down → bad UX.
- */
 export const recomputeMatch = async (
   applicationId: string,
   employerId: string,

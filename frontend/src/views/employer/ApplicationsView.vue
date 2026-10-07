@@ -1,1336 +1,1090 @@
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  onUnmounted,
-  ref,
-  watch,
-} from 'vue';
-import {
-  Loader2,
-  AlertCircle,
-  Sparkles,
-  Mail,
-  Calendar,
   Search,
-  X,
+  Filter,
+  MoreHorizontal,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
-  Check,
-  RefreshCw,
-  Eye,
-  CheckCircle2,
-  XCircle,
-  Briefcase,
-  FileText,
-  Download,
-  ExternalLink,
-  Circle,
-  Clock,
-  BarChart3,
-  ArrowUpDown,
+  Mail,
+  Phone,
+  User,
+  Sparkles,
+  Calendar,
+  CalendarPlus,
+  ArrowRight,
+  ShieldCheck,
+  X as CloseIcon,
+  Box as BoxIcon,
 } from 'lucide-vue-next';
-import dayjs from 'dayjs';
 import { applicationApi } from '@services/application.api';
-import { useToastStore } from '@stores/toast';
-import { getSocket } from '@services/socket';
-import { useAuthStore } from '@stores/auth';
+import ReferencesModal from '@components/employer/ReferencesModal.vue';
 import type {
-  ApplicationStatus,
   ApplicationDetail,
+  ApplicationStatus,
   EmployerApplicationRow,
-  ApplicationMatchReadyPayload,
 } from '@/types/application';
+import dayjs from 'dayjs';
+import 'dayjs/locale/vi';
 
-const toast = useToastStore();
-const auth = useAuthStore();
+dayjs.locale('vi');
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-const rows = ref<EmployerApplicationRow[]>([]);
-const total = ref(0);
-const page = ref(1);
-const limit = ref(20);
-const loading = ref(false);
-const error = ref<string | null>(null);
-const statusFilter = ref<ApplicationStatus | ''>('');
-
-// Custom dropdown
-const statusDropdownOpen = ref(false);
-const statusDropdownRef = ref<HTMLElement | null>(null);
-
-// Detail modal
-const detailOpen = ref(false);
-const detailLoading = ref(false);
-const detail = ref<ApplicationDetail | null>(null);
-const detailRow = ref<EmployerApplicationRow | null>(null);
-const recomputing = ref<string | null>(null);
-const statusUpdating = ref<string | null>(null);
-
-// AI match ring animation
-const matchPercentNumber = ref(0);
-let matchPercentRaf: number | null = null;
-
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / limit.value)));
-
-/**
- * Sort direction cho 2 cột (Chưa chấm / Đã chấm) — toggle qua nút bên phải
- * header. `desc` = mới nhất trên cùng, `asc` = cũ nhất trên cùng.
- */
-const sortDir = ref<'desc' | 'asc'>('desc');
-
-/**
- * Chia list thành 2 nhóm theo trạng thái AI match:
- *   - `pendingRows`: chưa chấm (aiMatchScore = null) — card cột phải
- *   - `scoredRows`: đã chấm (aiMatchScore != null) — card cột trái
- *
- * Sort theo appliedAt theo `sortDir`. `slice()` trước sort vì `filter` trả
- * reference mới nhưng vẫn an toàn sort không mutate rows.value.
- *
- * Khi nhận `application:match-ready` qua socket → row chuyển từ pending
- * sang scored tự động (reactive).
- */
-const pendingRows = computed(() => {
-  const dir = sortDir.value === 'desc' ? 1 : -1;
-  return rows.value
-    .filter((r) => r.aiMatchScore == null)
-    .slice()
-    .sort((a, b) =>
-      a.appliedAt < b.appliedAt ? dir : a.appliedAt > b.appliedAt ? -dir : 0,
-    );
-});
-const scoredRows = computed(() => {
-  const dir = sortDir.value === 'desc' ? 1 : -1;
-  return rows.value
-    .filter((r) => r.aiMatchScore != null)
-    .slice()
-    .sort((a, b) =>
-      a.appliedAt < b.appliedAt ? dir : a.appliedAt > b.appliedAt ? -dir : 0,
-    );
-});
-
-/** Toggle sort direction khi user bấm nút "Mới nhất" / "Cũ nhất". */
-const toggleSort = (): void => {
-  sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc';
+interface Application {
+  name: string;
+  avatarUrl?: string | null;
+  email: string;
+  position: string;
+  stage: 'Interview' | 'Screening' | 'Assessment' | 'New';
+  match: number;
+  date: string;
+  applicationId?: string;
+}
+const EMPTY_APPLICATION: Application = {
+  name: '',
+  avatarUrl: null,
+  email: '',
+  position: '',
+  stage: 'New',
+  match: 0,
+  date: '',
+  applicationId: '',
 };
 
-// ---------------------------------------------------------------------------
-// Status helpers
-// ---------------------------------------------------------------------------
-const STATUS_OPTIONS: { value: ApplicationStatus | ''; label: string }[] = [
-  { value: '', label: 'Tất cả trạng thái' },
-  { value: 'pending', label: 'Chờ duyệt' },
-  { value: 'viewed', label: 'Đã xem' },
-  { value: 'screening', label: 'Sàng lọc' },
-  { value: 'interview', label: 'Phỏng vấn' },
-  { value: 'offered', label: 'Đề nghị' },
-  { value: 'hired', label: 'Đã tuyển' },
-  { value: 'rejected', label: 'Từ chối' },
-  { value: 'withdrawn', label: 'Đã rút' },
-];
-
-const STATUS_COLOR: Record<ApplicationStatus, string> = {
-  pending: 'bg-amber-100 text-amber-800',
-  viewed: 'bg-violet-100 text-violet-800',
-  screening: 'bg-violet-100 text-violet-800',
-  interview: 'bg-violet-100 text-violet-800',
-  offered: 'bg-violet-100 text-violet-800',
-  hired: 'bg-emerald-100 text-emerald-800',
-  rejected: 'bg-red-100 text-red-800',
-  withdrawn: 'bg-gray-100 text-gray-500',
-};
-
-const STATUS_LABEL: Record<ApplicationStatus, string> = {
-  pending: 'Chờ duyệt',
-  viewed: 'Đã xem',
-  screening: 'Đang sàng lọc',
-  interview: 'Phỏng vấn',
-  offered: 'Đề nghị',
-  hired: 'Đã tuyển',
-  rejected: 'Bị từ chối',
-  withdrawn: 'Đã rút',
-};
-
-const STATUS_FLOW: ApplicationStatus[] = [
-  'pending',
-  'viewed',
-  'screening',
-  'interview',
-  'offered',
-  'hired',
-];
-
-// ---------------------------------------------------------------------------
-// Match level helpers
-// ---------------------------------------------------------------------------
-type MatchLevel = 'high' | 'mid' | 'low';
-
-const MATCH_LEVEL: Record<
-  MatchLevel,
-  { ring: string; label: string; text: string; bg: string }
-> = {
-  high: { ring: '#10b981', label: 'Cao', text: 'text-emerald-700', bg: 'bg-emerald-50' },
-  mid: { ring: '#f59e0b', label: 'Trung bình', text: 'text-amber-700', bg: 'bg-amber-50' },
-  low: { ring: '#f43f5e', label: 'Thấp', text: 'text-rose-700', bg: 'bg-rose-50' },
-};
-
-const matchLevelFromPercent = (n: number): MatchLevel =>
-  n >= 80 ? 'high' : n >= 50 ? 'mid' : 'low';
-
-/**
- * Badge cho card "Chưa chấm AI" — phân biệt 3 trạng thái:
- *   - undefined: worker đang chạy hoặc retry → spinner "Đang so khớp"
- *   - 'quota_exceeded': candidate hết quota → amber "Hết quota"
- *   - 'failed': LLM lỗi sau hết retry → rose "AI lỗi" (employer có thể bấm
- *     "Chấm lại" trong popup để enqueue lại job)
- */
-type MatchFailBadge = { class: string; label: string; dotClass: string };
-const MATCH_FAIL_BADGE: Record<'quota_exceeded' | 'failed', MatchFailBadge> = {
-  quota_exceeded: {
-    class: 'bg-amber-100 text-amber-800',
-    label: 'Hết quota',
-    dotClass: 'bg-amber-600',
-  },
-  failed: {
-    class: 'bg-rose-100 text-rose-800',
-    label: 'AI lỗi — chấm lại',
-    dotClass: 'bg-rose-600',
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Avatar — chữ cái đầu candidateName trên gradient primary (match JobCard).
-// ---------------------------------------------------------------------------
-const candidateInitial = (name: string | null): string => {
-  const t = (name ?? '').trim();
+const avatarInitial = (name: string): string => {
+  const t = name.trim();
   return t ? t.charAt(0).toLocaleUpperCase('vi-VN') : '?';
 };
 
-// ---------------------------------------------------------------------------
-// Fetch list
-// ---------------------------------------------------------------------------
-const fetchList = async (): Promise<void> => {
-  loading.value = true;
-  error.value = null;
+const formatDate = (iso: string): string => {
+  const d = dayjs(iso);
+  return d.isValid() ? d.format('D [Thg] M, YYYY') : iso;
+};
+
+const formatTime = (iso: string): string => {
+  const d = dayjs(iso);
+  return d.isValid() ? d.format('HH:mm') : iso;
+};
+
+const applications = ref<Application[]>([]);
+const fromApi = ref(false);
+
+const page = ref(1);
+const limit = ref(7);
+const total = ref(0);
+const loading = ref(false);
+const selectedApplication = ref<Application>(EMPTY_APPLICATION);
+
+const referencesOpen = ref(false);
+const canOpenReferences = computed(() => {
+  const id = selectedApplication.value.applicationId;
+  return !!id && !id.startsWith('mock-app-');
+});
+
+const isSelected = (a: Application): boolean =>
+  selectedApplication.value.applicationId === a.applicationId;
+
+
+const MOCK_SKILLS = ['Figma', 'Design Systems', 'UX Research', 'Prototyping', 'User Flow', 'Wireframing'];
+const skills = ref<string[]>(MOCK_SKILLS);
+const detailLoading = ref(false);
+let detailReqSeq = 0;
+
+const SKILL_VISIBLE_MAX = 6;
+const skillsExpanded = ref(false);
+const visibleSkills = computed(() =>
+  skillsExpanded.value ? skills.value : skills.value.slice(0, SKILL_VISIBLE_MAX),
+);
+const hiddenSkillsCount = computed(() => Math.max(0, skills.value.length - SKILL_VISIBLE_MAX));
+
+watch(skills, () => {
+  skillsExpanded.value = false;
+});
+
+interface CvParsedShape {
+  name?: string;
+  email?: string;
+  phone?: string;
+  github?: string;
+  skills?: string[];
+}
+const parsedData = ref<CvParsedShape | null>(null);
+
+const detailData = ref<ApplicationDetail | null>(null);
+
+const selectApplication = async (a: Application): Promise<void> => {
+  selectedApplication.value = a;
+  if (!a.applicationId || a.applicationId.startsWith('mock-app-')) return;
+  const seq = ++detailReqSeq;
+  detailLoading.value = true;
   try {
-    const { data } = await applicationApi.listByCompany({
-      status: statusFilter.value || undefined,
-      page: page.value,
-      limit: limit.value,
-    });
-    rows.value = data.data.rows;
-    total.value = data.data.total;
+    const { data } = await applicationApi.getById(a.applicationId);
+    if (seq !== detailReqSeq) return;
+    const detail: ApplicationDetail = data.data;
+    detailData.value = detail;
+    // coverLetter.value = detail.coverLetter ?? null;
+    // Lấy `cv.parsedData` jsonb — chứa name/email/phone/github/skills.
+    // Fallback null nếu CV null → giữ nguyên giá trị cũ (mock).
+    const parsed = (detail.cv?.parsedData ?? null) as CvParsedShape | null;
+    if (parsed) parsedData.value = parsed;
+    const cvSkills = Array.isArray(parsed?.skills) ? parsed!.skills! : [];
+    if (cvSkills.length > 0) skills.value = cvSkills;
   } catch {
-    error.value = 'Không tải được danh sách. Vui lòng thử lại.';
+    // Network / 401 / 404 → giữ mock skills hiện tại.
+    if (seq === detailReqSeq) detailLoading.value = false;
+  } finally {
+    if (seq === detailReqSeq) detailLoading.value = false;
+  }
+};
+
+/** Styling cho stage chip — match với mockup. */
+const STAGE_STYLE: Record<Application['stage'], { bg: string; text: string }> = {
+  Interview: { bg: 'bg-[#eaf2ff]', text: 'text-[#1769e8]' },
+  Screening: { bg: 'bg-[#fff1e7]', text: 'text-[#f97316]' },
+  Assessment: { bg: 'bg-[#f7e9ff]', text: 'text-[#b24be7]' },
+  New: { bg: 'bg-[#eef0f2]', text: 'text-[#64748b]' },
+};
+
+/**
+ * Stage tiếng Việt — đồng bộ với `AppliedJobsView` (candidate-side) để
+ * cùng 1 ứng viên nhìn status ở 2 trang là 1 chuỗi. Tra trực tiếp qua
+ * `STAGE_LABEL[stage]` khi render.
+ */
+const STAGE_LABEL: Record<Application['stage'], string> = {
+  Interview: 'Phỏng vấn',
+  Screening: 'Sàng lọc',
+  Assessment: 'Đánh giá',
+  New: 'Mới',
+};
+
+/**
+ * Map status → stage mockup. Backend enum `ApplicationStatus` (pending/viewed/
+ * screening/interview/offered/hired/rejected/withdrawn) gom về 4 stage hiển thị.
+ *   - pending / viewed → "New"
+ *   - screening → "Screening"
+ *   - interview / offered / hired → "Interview"
+ *   - rejected / withdrawn → "Assessment" (đánh dấu terminal)
+ */
+const STATUS_TO_STAGE: Record<ApplicationStatus, Application['stage']> = {
+  pending: 'New',
+  viewed: 'New',
+  screening: 'Screening',
+  interview: 'Interview',
+  offered: 'Interview',
+  hired: 'Interview',
+  rejected: 'Assessment',
+  withdrawn: 'Assessment',
+};
+
+/**
+ * Cắt chuỗi dài về `max` ký tự + thêm "..." — dùng cho Application row name và
+ * Job title trong list (column hẹp, không đủ chỗ cho tên dài từ API).
+ */
+const truncate = (s: string | null | undefined, max = 20): string => {
+  const v = (s ?? '').trim();
+  return v.length > max ? `${v.slice(0, max)}…` : v;
+};
+
+/** Map 1 row `EmployerApplicationRow` → `Application` UI shape. Field nào
+ *  null → dùng giá trị mặc định hợp lý (placeholder string / 0 / rỗng). */
+const mapRow = (row: EmployerApplicationRow, fallbackIdx: number): Application => {
+  const matchNum = row.aiMatchScore != null ? Math.round(Number(row.aiMatchScore)) : 0;
+  return {
+    name: row.candidateName ?? `Ứng viên #${fallbackIdx + 1}`,
+    avatarUrl: row.candidateAvatarUrl ?? null,
+    email: row.candidateEmail ?? (row.isAnonymous ? '(ẩn danh)' : ''),
+    position: row.jobTitle ?? '',
+    stage: STATUS_TO_STAGE[row.status],
+    match: Number.isFinite(matchNum) ? matchNum : 0,
+    // Giữ ISO gốc để `formatTime` (HH:mm trong list) + `formatDate`
+    // (D Thg M tooltip) đều parse được dayjs. Format trước đây 'MMM D, YYYY'
+    // không có giờ → HH:mm trả rỗng.
+    date: dayjs(row.appliedAt).isValid() ? row.appliedAt : '',
+    applicationId: row.id,
+  };
+};
+
+/**
+ * Fetch 1 page từ API. `pageNum` optional — nếu không truyền thì giữ nguyên
+ * `page.value` hiện tại. Update cả `applications` + `total` từ response để
+ * pagination hiển thị đúng số.
+ */
+const fetchPage = async (pageNum?: number): Promise<void> => {
+  if (typeof pageNum === 'number') page.value = pageNum;
+  loading.value = true;
+  try {
+    const { data } = await applicationApi.listByCompany({ page: page.value, limit: limit.value });
+    const rows = data.data?.rows ?? [];
+    applications.value = rows.map((r, i) => mapRow(r, i));
+    total.value = data.data?.total ?? rows.length;
+    // Cập nhật page/limit echo từ response (BE có thể clamp nếu vượt max).
+    if (typeof data.data?.page === 'number') page.value = data.data.page;
+    if (typeof data.data?.limit === 'number') limit.value = data.data.limit;
+    if (applications.value.length > 0) {
+      // Auto-fetch detail của row đầu tiên để populate Skills array từ
+      // response `aiMatchReasoning.matchedSkills`. `selectApplication` set
+      // `selectedApplication` + gọi API; mock row sẽ skip API trong helper.
+      await selectApplication(applications.value[0]!);
+    }
+    fromApi.value = true;
+  } catch {
+    // Network / 401 / 500 → reset list rỗng + total = 0 để pagination
+    // collapse về 1 page thay vì "of 455". Panel detail hiển thị EMPTY.
+    applications.value = [];
+    total.value = 0;
+    fromApi.value = false;
+    selectedApplication.value = EMPTY_APPLICATION;
   } finally {
     loading.value = false;
   }
 };
 
-const onFilterChange = (): void => {
-  page.value = 1;
-  void fetchList();
-};
+onMounted(() => {
+  void fetchPage(1);
+});
 
-const goPrev = (): void => {
-  if (page.value > 1) {
-    page.value -= 1;
-    void fetchList();
-  }
-};
-
-const goNext = (): void => {
-  if (page.value < totalPages.value) {
-    page.value += 1;
-    void fetchList();
-  }
-};
-
-// ---------------------------------------------------------------------------
-// Custom dropdown handlers
-// ---------------------------------------------------------------------------
-const currentStatusLabel = computed<string>(
-  () =>
-    STATUS_OPTIONS.find((o) => o.value === statusFilter.value)?.label ??
-    'Tất cả trạng thái',
+/**
+ * Compute tổng số page + window page numbers để render pagination UI.
+ * - totalPages = ceil(total / limit); nếu total=0 → 1 (chỉ render 1 page trống).
+ * - paginationPages: nếu totalPages ≤ 7 → render [1..totalPages].
+ *   Ngược lại: luôn show 1 + last + window ±1 quanh current, dùng '…' che gap.
+ */
+const totalPages = computed(() =>
+  total.value === 0 ? 1 : Math.max(1, Math.ceil(total.value / limit.value)),
 );
 
-const selectStatus = (value: ApplicationStatus | ''): void => {
-  statusFilter.value = value;
-  statusDropdownOpen.value = false;
-  onFilterChange();
-};
-
-const onDocClick = (e: MouseEvent): void => {
-  if (statusDropdownRef.value && !statusDropdownRef.value.contains(e.target as Node)) {
-    statusDropdownOpen.value = false;
-  }
-};
-const onDocKey = (e: KeyboardEvent): void => {
-  if (e.key === 'Escape') {
-    if (detailOpen.value) closeDetail();
-    else statusDropdownOpen.value = false;
-  }
-};
-
-// ---------------------------------------------------------------------------
-// Detail modal
-// ---------------------------------------------------------------------------
-const openDetail = async (row: EmployerApplicationRow): Promise<void> => {
-  detailRow.value = row;
-  detailOpen.value = true;
-  detailLoading.value = true;
-  try {
-    const { data } = await applicationApi.getById(row.id);
-    detail.value = data.data;
-  } catch {
-    detail.value = null;
-    toast.push({
-      variant: 'error',
-      title: 'Không tải được chi tiết',
-      body: 'Vui lòng thử lại sau.',
-    });
-  } finally {
-    detailLoading.value = false;
-  }
-};
-
-const closeDetail = (): void => {
-  detailOpen.value = false;
-  // Giữ row data để list highlight; reset detail khi modal đóng xong.
-  void nextTick(() => {
-    detail.value = null;
-  });
-};
-
-/**
- * Có CV đính kèm và URL accessible để preview iframe không.
- * PDF thường render inline OK; các format khác thì cho link download.
- */
-const cvIsPreviewable = computed<boolean>(() => {
-  const url = detail.value?.cv?.url;
-  if (!url) return false;
-  return /\.pdf($|\?)/i.test(url) || /^https?:\/\//i.test(url);
+const paginationPages = computed<(number | '…')[]>(() => {
+  const total_ = totalPages.value;
+  const current = page.value;
+  if (total_ <= 7) return Array.from({ length: total_ }, (_, i) => i + 1);
+  const pages: (number | '…')[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total_ - 1, current + 1);
+  if (start > 2) pages.push('…');
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (end < total_ - 1) pages.push('…');
+  pages.push(total_);
+  return pages;
 });
 
-/**
- * Src cho iframe — append Chrome PDFium fragment params để:
- *   - view=FitH       : fit width ngay khi load
- *   - toolbar=0       : ẩn top toolbar (page count, zoom controls)
- *   - navpanes=0      : ẩn sidebar thumbnail bên trái
- *   - statusbar=0     : ẩn status bar
- *   - messages=0      : ẩn dialog overlay
- * Fragment chỉ áp dụng cho PDF; các URL khác (ảnh, etc.) pass-through.
- *
- * Lưu ý: PDFium params chỉ honored trong Chrome/Edge. Firefox/Safari vẫn
- * render native viewer của họ — user có thể dùng "Mở tab mới" làm fallback.
- */
-const cvPreviewSrc = computed<string>(() => {
-  const url = detail.value?.cv?.url;
-  if (!url) return '';
-  if (!/\.pdf($|\?)/i.test(url)) return url;
-  const [base] = url.split('#');
-  return `${base}#view=FitH&toolbar=0&navpanes=0&statusbar=0&messages=0`;
-});
-
-// ---------------------------------------------------------------------------
-// Force download — bắt buộc save file xuống máy thay vì mở tab mới.
-//
-// Lý do không dùng `<a download href=...>`:
-//   - MinIO chạy ở origin khác (`localhost:9000` vs `localhost:5173`) → trình
-//     duyệt bỏ qua thuộc tính `download` cho cross-origin. Click vào link
-//     mở PDF inline trong tab mới, không lưu xuống.
-//   - Fetch → blob → URL.createObjectURL → click anchor trong cùng origin
-//     → browser mới honor `download` attribute.
-//
-// Bonus: cũng bypass vấn đề file cũ trong bucket chưa có Content-Disposition.
-const downloading = ref(false);
-const downloadFile = async (url: string, fallbackName: string): Promise<void> => {
-  if (!url || downloading.value) return;
-  downloading.value = true;
-  try {
-    const res = await fetch(url, { credentials: 'omit' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-
-    // Lấy filename gợi ý từ Content-Disposition nếu server trả về; fallback
-    // sang tên CV hoặc tên phái sinh từ URL.
-    const cd = res.headers.get('Content-Disposition') ?? '';
-    const starMatch = cd.match(/filename\*=UTF-8''([^;]+)/i);
-    const plainMatch = cd.match(/filename="?([^";]+)"?/i);
-    const suggested = starMatch
-      ? decodeURIComponent(starMatch[1])
-      : plainMatch
-        ? plainMatch[1]
-        : null;
-    const filename = suggested || fallbackName || url.split('/').pop() || 'download';
-
-    const objUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objUrl;
-    a.download = filename;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Revoke sau 1 tick để browser kịp start download trên Safari/Firefox.
-    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
-  } catch (err) {
-    toast.push({
-      variant: 'error',
-      title: 'Tải về thất bại',
-      body: 'Không thể tải file. Vui lòng thử lại sau.',
-    });
-  } finally {
-    downloading.value = false;
-  }
+const goToPage = (n: number): void => {
+  if (n < 1 || n > totalPages.value || n === page.value) return;
+  void fetchPage(n);
 };
 
-// ---------------------------------------------------------------------------
-// Match ring animation
-// ---------------------------------------------------------------------------
-const animateMatchPercent = (target: number): void => {
-  if (matchPercentRaf !== null) cancelAnimationFrame(matchPercentRaf);
+/** Tab đang active ở detail panel — Overview / Profile / Activity / Notes / Files. */
+type TabKey = 'Tổng quan' | 'Thư' | 'CV' | 'So khớp';
+const activeTab = ref<TabKey>('Tổng quan');
+const tabs: TabKey[] = ['Tổng quan', 'Thư', 'CV', 'So khớp'];
+
+/**
+ * AI match reasoning — extract từ `detailData` để bind vào tab "So khớp".
+ * Match AppliedJobsView pattern (mirror ở ApplicationDetailPanel).
+ */
+const aiReasoning = computed(() => detailData.value?.aiMatchReasoning ?? null);
+const coverLetter = computed(() => detailData.value?.coverLetter ?? null);
+
+/** Ngày tạo job relative — không có sẵn trong mock, dùng trực tiếp date. */
+const selectedMatchText = computed(() => `${selectedApplication.value.match}%`);
+
+const selectedStageStyle = computed(() => STAGE_STYLE[selectedApplication.value.stage]);
+
+/* ============================================================================
+ * Match level — phân cấp mức độ phù hợp để đổi màu progress bar (list) +
+ * ring (detail). Mirror với pattern `MATCH_LEVEL` ở AppliedJobsView /
+ * ApplicationDetailPanel để đồng nhất UX toàn app.
+ * ==========================================================================*/
+type MatchLevel = 'high' | 'mid' | 'low';
+
+const MATCH_LEVEL_STYLE: Record<
+  MatchLevel,
+  { bar: string; ring: string; text: string; label: string }
+> = {
+  high: { bar: 'bg-emerald-500', ring: '#10b981', text: 'text-emerald-700', label: 'Phù hợp cao' },
+  mid:  { bar: 'bg-amber-500',   ring: '#f59e0b', text: 'text-amber-700',   label: 'Trung bình' },
+  low:  { bar: 'bg-rose-500',    ring: '#f43f5e', text: 'text-rose-700',    label: 'Thấp' },
+};
+
+const matchLevelOf = (m: number): MatchLevel =>
+  m >= 80 ? 'high' : m >= 50 ? 'mid' : 'low';
+
+/* ============================================================================
+ * Match ring + counter animation
+ * ==========================================================================*/
+/** Bán kính ring (r) và stroke width — dùng để tính chu vi SVG. */
+const RING_RADIUS = 24;
+const RING_STROKE = 4;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+/** Target offset = circumference * (1 - match/100). Truyền qua CSS var để
+ *  keyframes `draw-ring` animate từ full → target. */
+const ringOffset = computed(
+  () => RING_CIRCUMFERENCE * (1 - Math.max(0, Math.min(100, selectedApplication.value.match)) / 100),
+);
+
+/** Number counter hiển thị trong ring — animate từ 0 → match% khi selected
+ *  candidate đổi (ease-out cubic, 1.2s) để cảm giác "chạy tới" mượt. */
+const animatedMatch = ref(0);
+let countRaf: number | null = null;
+
+const animateCount = (target: number): void => {
+  if (countRaf !== null) cancelAnimationFrame(countRaf);
   const start = performance.now();
   const duration = 1200;
   const from = 0;
   const step = (now: number): void => {
     const t = Math.min(1, (now - start) / duration);
     const eased = 1 - Math.pow(1 - t, 3);
-    matchPercentNumber.value = Math.round(from + (target - from) * eased);
+    animatedMatch.value = Math.round(from + (target - from) * eased);
     if (t < 1) {
-      matchPercentRaf = requestAnimationFrame(step);
+      countRaf = requestAnimationFrame(step);
     } else {
-      matchPercentRaf = null;
+      countRaf = null;
     }
   };
-  matchPercentRaf = requestAnimationFrame(step);
+  countRaf = requestAnimationFrame(step);
 };
 
 watch(
-  () => detail.value?.aiMatchScore,
-  (raw) => {
-    if (raw == null) {
-      if (matchPercentRaf !== null) cancelAnimationFrame(matchPercentRaf);
-      matchPercentRaf = null;
-      matchPercentNumber.value = 0;
-      return;
-    }
-    const n = Number(raw);
-    if (Number.isFinite(n)) animateMatchPercent(Math.max(0, Math.min(100, n)));
-  },
+  () => selectedApplication.value.match,
+  (m) => animateCount(m),
   { immediate: true },
 );
 
-// ---------------------------------------------------------------------------
-// Actions
-// ---------------------------------------------------------------------------
-const recomputeMatch = async (id: string): Promise<void> => {
-  if (recomputing.value) return;
-  recomputing.value = id;
-  try {
-    await applicationApi.recomputeMatch(id);
-    const row = rows.value.find((r) => r.id === id);
-    if (row) {
-      row.aiMatchScore = null;
-      // Reset reason về null để badge chuyển về spinner (worker sẽ ghi lại
-      // 'success' / 'quota_exceeded' / 'failed' khi job chạy xong).
-      row.aiMatchReason = null;
+/**
+ * Per-row animated match % cho list — key theo applicationId để mỗi row
+ * có giá trị đếm riêng. Khi `applications` thay đổi (fetch page mới) → reset
+ * tất cả về 0 rồi chạy rAF tween lên target, kết hợp với `transition-all`
+ * ở CSS để progress bar fill mượt song song với số nhảy.
+ */
+const animatedMatches = ref<Record<string, number>>({});
+let rowRaf: number | null = null;
+
+const animateRows = (list: Application[]): void => {
+  if (rowRaf !== null) cancelAnimationFrame(rowRaf);
+  const ids = list.map((a) => a.applicationId ?? a.email);
+  const targets = new Map(ids.map((id, i) => [id, list[i]!.match]));
+  const reset: Record<string, number> = {};
+  ids.forEach((id) => (reset[id] = 0));
+  animatedMatches.value = reset;
+
+  const start = performance.now();
+  const duration = 1200;
+  const step = (now: number): void => {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const next: Record<string, number> = {};
+    for (const id of ids) next[id] = Math.round((targets.get(id) ?? 0) * eased);
+    animatedMatches.value = next;
+    if (t < 1) {
+      rowRaf = requestAnimationFrame(step);
+    } else {
+      rowRaf = null;
     }
-    if (detail.value?.id === id) {
-      detail.value.aiMatchScore = null;
-      if (detail.value.aiMatchReasoning) {
-        detail.value.aiMatchReasoning = { ...detail.value.aiMatchReasoning, reason: undefined };
-      }
-    }
-    toast.push({
-      variant: 'info',
-      title: 'Đã yêu cầu chấm lại',
-      body: 'AI đang chấm điểm, kết quả sẽ cập nhật trong vài giây.',
-    });
-  } catch {
-    toast.push({
-      variant: 'error',
-      title: 'Yêu cầu thất bại',
-      body: 'Không thể chấm lại lúc này. Vui lòng thử lại sau.',
-    });
-  } finally {
-    recomputing.value = null;
-  }
+  };
+  rowRaf = requestAnimationFrame(step);
 };
-
-const updateStatus = async (id: string, newStatus: ApplicationStatus): Promise<void> => {
-  if (statusUpdating.value) return;
-  statusUpdating.value = id;
-  try {
-    const { data } = await applicationApi.updateStatus(id, { status: newStatus });
-    const row = rows.value.find((r) => r.id === id);
-    if (row) {
-      row.status = data.data.status;
-      row.stage = data.data.stage;
-      if (newStatus === 'viewed') row.viewedAt = new Date().toISOString();
-    }
-    if (detail.value?.id === id) {
-      detail.value.status = data.data.status;
-      detail.value.stage = data.data.stage;
-      if (newStatus === 'viewed') detail.value.viewedAt = new Date().toISOString();
-    }
-    toast.push({
-      variant: 'success',
-      title: 'Đã cập nhật trạng thái',
-      body: STATUS_LABEL[newStatus],
-    });
-  } catch {
-    toast.push({
-      variant: 'error',
-      title: 'Cập nhật thất bại',
-      body: 'Vui lòng thử lại sau.',
-    });
-  } finally {
-    statusUpdating.value = null;
-  }
+const gotoActiveTab = (tab: TabKey): void => {
+  activeTab.value = tab;
 };
-
-// ---------------------------------------------------------------------------
-// Realtime
-// ---------------------------------------------------------------------------
-let socket: ReturnType<typeof getSocket> | null = null;
-
-const onNotificationNew = (row: { type: string }): void => {
-  if (row.type === 'application_new') {
-    // Đơn mới tới → refetch list rồi seed timeline. Push realtime cũng là
-    // được nhưng fetchList đảm bảo data đầy đủ (candidateName, jobTitle, …).
-    void fetchList();
-  }
-};
-
-const onMatchReady = (payload: ApplicationMatchReadyPayload): void => {
-  const row = rows.value.find((r) => r.id === payload.applicationId);
-  if (!row) return;
-
-  // Patch `aiMatchReason` từ socket để badge chuyển terminal ngay khi worker
-  // emit 'quota_exceeded' / 'failed' (không cần refetch). Reason không có
-  // trong payload (legacy caller) → giữ nguyên giá trị hiện tại của row.
-  if (payload.reason) {
-    row.aiMatchReason = payload.reason;
-  }
-
-  // Patch `aiMatchScore` chỉ khi worker trả về matchPercent (case success).
-  // Null matchPercent + reason='quota_exceeded'/'failed' → KHÔNG touch score
-  // (giữ NULL → row vẫn ở cột "Chưa chấm AI" với badge terminal).
-  if (payload.matchPercent != null) {
-    row.aiMatchScore = String(payload.matchPercent);
-  }
-
-  if (detail.value?.id === payload.applicationId) {
-    if (payload.matchPercent != null) {
-      detail.value.aiMatchScore = String(payload.matchPercent);
-    }
-    // detail payload không expose aiMatchReason — refetch để đồng bộ.
-    if (payload.reason && payload.reason !== 'success') {
-      void applicationApi.getById(payload.applicationId).then((res) => {
-        detail.value = res.data.data;
-      }).catch(() => {});
-    }
-  }
-};
-
-onMounted(async () => {
-  document.addEventListener('mousedown', onDocClick);
-  document.addEventListener('keydown', onDocKey);
-  await fetchList();
-  if (auth.isAuthenticated) {
-    socket = getSocket();
-    if (!socket.connected) socket.connect();
-    socket.on('notification:new', onNotificationNew);
-    socket.on('application:match-ready', onMatchReady);
-  }
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocClick);
-  document.removeEventListener('keydown', onDocKey);
-  if (matchPercentRaf !== null) cancelAnimationFrame(matchPercentRaf);
-});
+watch(
+  () => applications.value,
+  (list) => animateRows(list),
+  { immediate: true },
+);
 
 onUnmounted(() => {
-  if (socket) {
-    socket.off('notification:new', onNotificationNew);
-    socket.off('application:match-ready', onMatchReady);
-  }
+  if (countRaf !== null) cancelAnimationFrame(countRaf);
+  if (rowRaf !== null) cancelAnimationFrame(rowRaf);
 });
-
-// ---------------------------------------------------------------------------
-// Formatters
-// ---------------------------------------------------------------------------
-const formatMatchScore = (score: string | null): string => {
-  if (score == null) return '';
-  const n = Number(score);
-  return Number.isFinite(n) ? `${Math.round(n)}%` : '';
-};
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50/50 p-5 md:p-8">
-    <div class="max-w-5xl mx-auto">
-      <!-- Header -->
-      <header class="mb-6">
-        <h1 class="text-xl font-semibold text-gray-900 tracking-tight">Đơn ứng tuyển</h1>
-        <p class="text-sm text-gray-500 mt-1">
-          Danh sách ứng viên đã apply vào job của các công ty bạn quản lý.
-        </p>
-      </header>
-
-      <!-- Sticky filter bar -->
-      <div
-        class="sticky top-0 z-20 -mx-1 px-1 pt-1 pb-3 bg-gray-50/80 backdrop-blur-sm border-b border-gray-200/60 mb-4 flex items-center gap-2"
-      >
-        <div ref="statusDropdownRef" class="relative inline-block">
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 text-xs text-gray-700 border border-gray-200 hover:text-gray-900 hover:bg-gray-100/70 rounded transition"
-            :class="statusDropdownOpen ? 'bg-gray-100/70 text-gray-900' : ''"
-            aria-haspopup="listbox"
-            :aria-expanded="statusDropdownOpen"
-            @click="statusDropdownOpen = !statusDropdownOpen"
-          >
-            <span>{{ currentStatusLabel }}</span>
-            <ChevronDown
-              class="w-3.5 h-3.5 transition"
-              :class="statusDropdownOpen ? 'rotate-180' : ''"
-            />
-          </button>
-          <Transition>
-            <ul
-              v-if="statusDropdownOpen"
-              class="absolute top-full left-0 mt-1 z-30 min-w-[180px] bg-white border border-gray-200 rounded shadow-sm overflow-hidden py-0.5"
+  <div class="bg-[#f7f9fc] font-poppins text-[#17233c]">
+    <div
+      class="flex flex-col lg:flex-row lg:h-screen lg:overflow-hidden bg-white shadow-[0_10px_40px_rgba(31,52,85,.08)]"
+    >
+      <!-- ============ Main: list ============ -->
+      <main class="min-w-0 flex-1 p-4 sm:p-5 lg:p-6 overflow-y-auto lg:overflow-y-hidden scrollbar-thin">
+        <div class="mb-5 flex items-start justify-between gap-2 flex-wrap">
+          <div>
+            <h1 class="text-xl font-semibold text-gray-900 tracking-tight">Danh sách ứng tuyển</h1>
+            <p class="text-[12px] text-[#8190a5]">Quản lý các đơn ứng tuyển và duy trì quy trình tuyển dụng của bạn.</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <div
+              class="flex h-10 w-full sm:w-[215px] items-center gap-2 rounded-lg border border-[#e3e8ef] bg-white px-3 text-[12px] text-[#a0acbc]"
             >
-              <li
-                v-for="opt in STATUS_OPTIONS"
-                :key="opt.value"
-                role="option"
-                :aria-selected="statusFilter === opt.value"
-                class="relative flex items-center gap-1.5 pl-7 pr-2 py-1 text-xs cursor-pointer transition"
-                :class="
-                  statusFilter === opt.value
-                    ? 'bg-primary-50 text-primary-700 font-medium'
-                    : 'text-gray-700 hover:bg-gray-50'
-                "
-                @click="selectStatus(opt.value)"
+              <Search class="h-4 w-4" />
+              <span>Search...</span>
+            </div>
+            <button
+              type="button"
+              class="flex h-10 items-center gap-2 rounded-lg border border-[#e3e8ef] px-3 text-[12px] font-medium"
+            >
+              <Filter class="h-4 w-4" /> <span class="hidden sm:inline">Filter</span>
+            </button>
+            <button type="button" class="grid h-10 w-10 place-items-center rounded-lg border border-[#e3e8ef]">
+              <MoreHorizontal class="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <section class="overflow-hidden rounded-xl border border-[#e7ebf1] bg-white">
+          <div class="px-2 pb-2 pt-2">
+            <h2 class="text-[15px] font-semibold">Tất cả các đơn ứng tuyển</h2>
+          </div>
+
+          <!-- Column headers -->
+          <div
+            class="grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.7fr_1.7fr_1fr_1fr_0.7fr] items-center border-y border-[#eef1f5] px-4 py-3 text-[12px] font-medium text-[#7c889a]"
+          >
+            <div>Ứng viên</div>
+            <div>Việc làm</div>
+            <div>Giai đoạn</div>
+            <div>Phù hợp</div>
+            <div class="hidden sm:block">Thời gian</div>
+          </div>
+
+          <!-- Rows -->
+          <div
+            v-for="(a, i) in applications"
+            :key="`${a.email}-${i}`"
+            class="grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.7fr_1.7fr_1fr_1fr_0.7fr] items-center px-4 py-2.5 text-[13px] border-b border-[#eef1f5] cursor-pointer transition"
+            :class="isSelected(a) ? 'bg-[#edf4ff]' : 'bg-white hover:bg-gray-50'"
+            @click="selectApplication(a)"
+          >
+            <!-- Application -->
+            <div class="flex min-w-0 items-center gap-2">
+              <div
+                class="relative h-8 w-8 shrink-0 rounded-lg overflow-hidden bg-gradient-to-br from-primary-50 to-primary-100 ring-1 ring-black/5"
+                :aria-label="a.name"
               >
-                <Check
-                  v-if="statusFilter === opt.value"
-                  class="absolute left-2 w-3.5 h-3.5 text-primary-600"
+                <img
+                  v-if="a.avatarUrl"
+                  :src="a.avatarUrl"
+                  :alt="a.name"
+                  class="absolute inset-0 h-full w-full object-cover"
+                  loading="lazy"
+                  @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
                 />
-                <span class="truncate">{{ opt.label }}</span>
-              </li>
-            </ul>
-          </Transition>
-        </div>
-        <button
-          type="button"
-          class="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 rounded transition"
-          @click="fetchList"
-        >
-          <RefreshCw class="w-3.5 h-3.5" />
-          Làm mới
-        </button>
-      </div>
-
-      <!-- Loading -->
-      <div
-        v-if="loading"
-        class="flex items-center justify-center py-16 text-sm text-gray-500"
-      >
-        <Loader2 class="w-5 h-5 mr-2 animate-spin" /> Đang tải...
-      </div>
-
-      <!-- Error -->
-      <div
-        v-else-if="error"
-        class="flex items-start gap-3 p-4 rounded-lg bg-red-50 border border-red-200 text-sm text-red-900"
-      >
-        <AlertCircle class="w-5 h-5 mt-0.5 shrink-0" />
-        <div>
-          <p class="font-medium">{{ error }}</p>
-          <button
-            type="button"
-            class="mt-2 text-xs font-medium underline"
-            @click="fetchList"
-          >
-            Thử lại
-          </button>
-        </div>
-      </div>
-
-      <!-- Empty -->
-      <div
-        v-else-if="rows.length === 0"
-        class="bg-white border border-gray-200 rounded-xl p-10 text-center"
-      >
-        <template v-if="statusFilter">
-          <div
-            class="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3"
-          >
-            <Search class="w-6 h-6 text-gray-500" />
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900">
-            Không có đơn nào ở trạng thái "{{
-              STATUS_LABEL[statusFilter as ApplicationStatus]
-            }}"
-          </h3>
-          <p class="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
-            Thử bỏ bộ lọc để xem tất cả đơn.
-          </p>
-        </template>
-        <template v-else>
-          <div
-            class="w-12 h-12 rounded-full bg-primary-50 flex items-center justify-center mx-auto mb-3"
-          >
-            <Briefcase class="w-6 h-6 text-primary-600" />
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900">Chưa có đơn ứng tuyển nào</h3>
-          <p class="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
-            Khi có ứng viên apply vào job của công ty bạn, đơn sẽ hiện ở đây.
-          </p>
-        </template>
-      </div>
-
-      <!-- ============ 2 cột: Đã chấm AI · Chưa chấm AI ============ -->
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-        <!-- ===== Cột trái: Đã chấm AI ===== -->
-        <section class="min-w-0">
-          <header
-            class="sticky top-12 z-10 -mx-1 px-1 py-2.5 bg-gray-50/80 backdrop-blur-sm flex items-center gap-2 border-b border-gray-200/60"
-          >
-            <span
-              class="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0"
-            >
-              <BarChart3 class="w-3.5 h-3.5 text-emerald-600" />
-            </span>
-            <h2 class="text-sm font-semibold text-gray-900">Đã chấm AI</h2>
-            <span
-              class="text-[11px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5"
-            >
-              {{ scoredRows.length }}
-            </span>
-            <!--
-              Nút sort — click để đổi chiều sort giữa "Mới nhất" (desc, mặc định)
-              và "Cũ nhất" (asc). Cả 2 cột cùng share 1 sortDir để hiển thị
-              đồng nhất.
-            -->
-            <button
-              type="button"
-              class="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 hover:text-gray-900 transition"
-              :aria-label="`Sắp xếp ${sortDir === 'desc' ? 'mới nhất trước' : 'cũ nhất trước'}`"
-              @click="toggleSort"
-            >
-              <ArrowUpDown class="w-3 h-3" />
-              {{ sortDir === 'desc' ? 'Mới nhất' : 'Cũ nhất' }}
-            </button>
-          </header>
-          <div v-if="scoredRows.length === 0" class="mt-3 bg-white border border-dashed border-gray-200 rounded-xl p-8 text-center">
-            <div class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-2">
-              <BarChart3 class="w-4 h-4 text-gray-400" />
-            </div>
-            <p class="text-xs font-semibold text-gray-700">Chưa có đơn nào được chấm AI</p>
-            <p class="text-[11px] text-gray-500 mt-1">Khi AI xử lý xong, đơn sẽ tự động xuất hiện ở đây.</p>
-          </div>
-          <div v-else class="mt-3 space-y-3">
-            <article
-              v-for="row in scoredRows"
-              :key="row.id"
-              class="group bg-white border border-gray-200 rounded-[14px] p-4 shadow-sm hover:shadow-md hover:-translate-y-px hover:border-gray-300 transition cursor-pointer flex gap-3.5"
-              @click="openDetail(row)"
-            >
-              <div
-                class="shrink-0 w-[42px] h-[42px] rounded-[10px] overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 text-primary-700 font-bold text-[15px] ring-1 ring-black/5"
-                :aria-label="row.candidateName ?? 'Ứng viên'"
-              >
-                <span>{{ candidateInitial(row.candidateName) }}</span>
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-start justify-between gap-2.5">
-                  <div class="min-w-0">
-                    <h3 class="text-[14.5px] font-semibold tracking-tight text-gray-900 truncate">
-                      {{ row.candidateName ?? 'Ứng viên ẩn danh' }}
-                    </h3>
-                    <p class="text-[12.5px] text-gray-500 mt-0.5 truncate">
-                      {{ row.jobTitle ?? '(Job đã bị xoá)' }}
-                    </p>
-                  </div>
-                  <span
-                    class="shrink-0 inline-flex items-center gap-1 rounded-full pl-1.5 pr-2.5 py-1 text-[11.5px] font-semibold whitespace-nowrap"
-                    :class="STATUS_COLOR[row.status]"
-                  >
-                    <Circle class="w-1.5 h-1.5 fill-current opacity-80" />
-                    {{ STATUS_LABEL[row.status] }}
-                  </span>
-                </div>
-                <div class="mt-2 flex items-center gap-3 flex-wrap">
-                  <span class="inline-flex items-center gap-1 text-[11.5px] text-gray-500">
-                    <Calendar class="w-3 h-3" />
-                    {{ dayjs(row.appliedAt).format('DD/MM/YYYY HH:mm') }}
-                  </span>
-                  <span
-                    class="inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full text-[11.5px] font-semibold"
-                    :class="MATCH_LEVEL[matchLevelFromPercent(Number(row.aiMatchScore))].text"
-                    :style="{
-                      background: MATCH_LEVEL[matchLevelFromPercent(Number(row.aiMatchScore))].bg,
-                    }"
-                  >
-                    <!-- Ring 22px — fill % theo matchPercent, màu viền theo level (cao/TB/thấp).
-                         r=9, circumference ≈ 56.55; offset = 56.55 * (1 - pct/100). -->
-                    <svg
-                      width="22"
-                      height="22"
-                      viewBox="0 0 22 22"
-                      class="-rotate-90 shrink-0"
-                      :aria-label="`AI match ${formatMatchScore(row.aiMatchScore)}`"
-                    >
-                      <circle
-                        cx="11"
-                        cy="11"
-                        r="9"
-                        fill="none"
-                        stroke="#e5e7eb"
-                        stroke-width="2.5"
-                      />
-                      <circle
-                        cx="11"
-                        cy="11"
-                        r="9"
-                        fill="none"
-                        :stroke="MATCH_LEVEL[matchLevelFromPercent(Number(row.aiMatchScore))].ring"
-                        stroke-width="2.5"
-                        stroke-linecap="round"
-                        :stroke-dasharray="56.55"
-                        :stroke-dashoffset="
-                          56.55 *
-                          (1 -
-                            Math.max(0, Math.min(100, Number(row.aiMatchScore))) /
-                              100)
-                        "
-                      />
-                    </svg>
-                    {{ formatMatchScore(row.aiMatchScore) }}
-                    ·
-                    {{ MATCH_LEVEL[matchLevelFromPercent(Number(row.aiMatchScore))].label }}
-                  </span>
-                </div>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <!-- ===== Cột phải: Chưa chấm AI ===== -->
-        <section class="min-w-0">
-          <header
-            class="sticky top-12 z-10 -mx-1 px-1 py-2.5 bg-gray-50/80 backdrop-blur-sm flex items-center gap-2 border-b border-gray-200/60"
-          >
-            <span
-              class="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center shrink-0"
-            >
-              <Clock class="w-3.5 h-3.5 text-violet-600" />
-            </span>
-            <h2 class="text-sm font-semibold text-gray-900">Chưa chấm AI</h2>
-            <span
-              class="text-[11px] font-bold text-violet-700 bg-violet-100 rounded-full px-2 py-0.5"
-            >
-              {{ pendingRows.length }}
-            </span>
-            <!--
-              Nút sort — cùng sortDir với cột trái để đồng bộ khi user muốn xem
-              "cũ nhất" ở cả 2 cột cùng lúc (chỉ cần bấm 1 bên).
-            -->
-            <button
-              type="button"
-              class="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 hover:text-gray-900 transition"
-              :aria-label="`Sắp xếp ${sortDir === 'desc' ? 'mới nhất trước' : 'cũ nhất trước'}`"
-              @click="toggleSort"
-            >
-              <ArrowUpDown class="w-3 h-3" />
-              {{ sortDir === 'desc' ? 'Mới nhất' : 'Cũ nhất' }}
-            </button>
-          </header>
-          <div v-if="pendingRows.length === 0" class="mt-3 bg-white border border-dashed border-gray-200 rounded-xl p-8 text-center">
-            <div class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-2">
-              <Clock class="w-4 h-4 text-gray-400" />
-            </div>
-            <p class="text-xs font-semibold text-gray-700">Tất cả đơn đã được chấm AI</p>
-            <p class="text-[11px] text-gray-500 mt-1">Không có đơn nào đang chờ xử lý.</p>
-          </div>
-          <div v-else class="mt-3 space-y-3">
-            <article
-              v-for="row in pendingRows"
-              :key="row.id"
-              class="group bg-white border border-gray-200 rounded-[14px] p-4 shadow-sm hover:shadow-md hover:-translate-y-px hover:border-gray-300 transition cursor-pointer flex gap-3.5"
-              @click="openDetail(row)"
-            >
-              <div
-                class="shrink-0 w-[42px] h-[42px] rounded-[10px] overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 text-primary-700 font-bold text-[15px] ring-1 ring-black/5"
-                :aria-label="row.candidateName ?? 'Ứng viên'"
-              >
-                <span>{{ candidateInitial(row.candidateName) }}</span>
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-start justify-between gap-2.5">
-                  <div class="min-w-0">
-                    <h3 class="text-[14.5px] font-semibold tracking-tight text-gray-900 truncate">
-                      {{ row.candidateName ?? 'Ứng viên ẩn danh' }}
-                    </h3>
-                    <p class="text-[12.5px] text-gray-500 mt-0.5 truncate">
-                      {{ row.jobTitle ?? '(Job đã bị xoá)' }}
-                    </p>
-                  </div>
-                  <span
-                    class="shrink-0 inline-flex items-center gap-1 rounded-full pl-1.5 pr-2.5 py-1 text-[11.5px] font-semibold whitespace-nowrap"
-                    :class="STATUS_COLOR[row.status]"
-                  >
-                    <Circle class="w-1.5 h-1.5 fill-current opacity-80" />
-                    {{ STATUS_LABEL[row.status] }}
-                  </span>
-                </div>
-                <div class="mt-2 flex items-center gap-3 flex-wrap">
-                  <span class="inline-flex items-center gap-1 text-[11.5px] text-gray-500">
-                    <Calendar class="w-3 h-3" />
-                    {{ dayjs(row.appliedAt).format('DD/MM/YYYY HH:mm') }}
-                  </span>
-                  <!-- Badge AI matching — 3 trạng thái:
-                       - reason undefined → worker đang chạy, spinner
-                       - reason quota_exceeded / failed → trạng thái terminal,
-                         employer có thể bấm "Chấm lại" trong popup (chỉ 'failed'). -->
-                  <span
-                    v-if="row.aiMatchReason === 'quota_exceeded' || row.aiMatchReason === 'failed'"
-                    class="inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-full text-[11.5px] font-semibold"
-                    :class="MATCH_FAIL_BADGE[row.aiMatchReason].class"
-                  >
-                    <span
-                      class="w-1.5 h-1.5 rounded-full"
-                      :class="MATCH_FAIL_BADGE[row.aiMatchReason].dotClass"
-                    />
-                    {{ MATCH_FAIL_BADGE[row.aiMatchReason].label }}
-                  </span>
-                  <span
-                    v-else
-                    class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-violet-100 text-violet-800 text-[11.5px] font-semibold"
-                  >
-                    <Loader2 class="w-3 h-3 animate-spin" />
-                    Đang so khớp
-                  </span>
-                </div>
-              </div>
-            </article>
-          </div>
-        </section>
-      </div>
-
-      <!-- Pagination (áp dụng cho cả 2 cột — vì cùng gọi 1 endpoint paginated) -->
-      <nav class="mt-4 pt-3 border-t border-gray-200/60 flex items-center justify-between text-sm text-gray-600">
-        <p>
-          Trang <span class="font-medium">{{ page }}</span> / {{ totalPages }}
-          · {{ total }} đơn
-        </p>
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            class="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            :disabled="page <= 1"
-            @click="goPrev"
-          >
-            Trước
-          </button>
-          <button
-            type="button"
-            class="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            :disabled="page >= totalPages"
-            @click="goNext"
-          >
-            Sau
-          </button>
-        </div>
-      </nav>
-    </div>
-
-    <!-- ============ Detail modal ============ -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div
-          v-if="detailOpen"
-          class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
-          @click.self="closeDetail"
-        >
-          <div
-            class="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col"
-          >
-            <!-- Modal header -->
-            <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
-              <div class="flex items-center gap-3 min-w-0">
-                <div
-                  class="shrink-0 w-11 h-11 rounded-[10px] overflow-hidden flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 text-primary-700 font-bold text-base ring-1 ring-black/5"
+                <span
+                  v-else
+                  class="absolute inset-0 grid place-items-center text-primary-700 font-bold text-[12px]"
                 >
-                  <span>{{
-                    candidateInitial(detailRow?.candidateName ?? null)
-                  }}</span>
-                </div>
-                <div class="min-w-0">
-                  <h2 class="text-base font-bold tracking-tight text-gray-900 truncate">
-                    {{
-                      detailRow?.candidateName ?? 'Ứng viên ẩn danh'
-                    }}
-                  </h2>
-                  <p class="text-xs text-gray-500 truncate">
-                    Ứng tuyển:
-                    {{ detail?.jobTitle ?? detailRow?.jobTitle ?? '(Job đã bị xoá)' }}
-                  </p>
-                </div>
+                  {{ avatarInitial(a.name) }}
+                </span>
               </div>
+              <div class="min-w-0">
+                <div class="truncate font-semibold" :title="a.name">{{ truncate(a.name, 14) }}</div>
+                <div class="hidden sm:block truncate text-[11px] text-[#94a3b8]" :title="a.email">{{ truncate(a.email, 18) }}</div>
+              </div>
+            </div>
+
+            <!-- Position -->
+            <div class="flex min-w-0 items-center">
+              <div class="min-w-0">
+                <div class="truncate font-medium" :title="a.position">{{ truncate(a.position, 24) }}</div>
+              </div>
+            </div>
+
+            <!-- Stage -->
+            <div>
+              <span
+                class="inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium"
+                :class="[STAGE_STYLE[a.stage].bg, STAGE_STYLE[a.stage].text]"
+              >{{ STAGE_LABEL[a.stage] }}</span>
+            </div>
+
+            <!-- Match -->
+            <div>
+              <div
+                class="font-semibold tabular-nums"
+                :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatches[a.applicationId ?? a.email] ?? a.match)].text"
+              >
+                {{ animatedMatches[a.applicationId ?? a.email] ?? 0 }}%
+              </div>
+              <div class="mt-1 h-1.5 w-[60px] sm:w-[85px] rounded-full bg-[#e8eef8]">
+                <!--
+                  Bar color bám theo animated % (không phải target) → bắt đầu
+                  luôn ở màu đỏ (rose) khi % = 0, rồi chuyển amber khi vượt
+                  50%, rồi emerald khi vượt 80%. `transition-colors` để đổi
+                  màu mượt song song với fill width.
+                -->
+                <div
+                  class="h-full rounded-full transition-all duration-[1100ms] ease-out"
+                  :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatches[a.applicationId ?? a.email] ?? a.match)].bar"
+                  :style="{ width: `${animatedMatches[a.applicationId ?? a.email] ?? 0}%` }"
+                ></div>
+              </div>
+            </div>
+
+            <!-- Applied -->
+            <div class="hidden sm:block text-[12px] text-[#475569]" :title="formatDate(a.date)">{{ formatTime(a.date) }}</div>
+          </div>
+
+          <!-- Pagination footer — bind theo state thật từ API response. -->
+          <div
+            class="flex items-center justify-between border-t border-[#eef1f5] px-4 py-3 text-[12px] text-[#7c889a]"
+          >
+            <span>
+              Showing
+              <strong class="text-[#334155]">{{ applications.length === 0 ? 0 : (page - 1) * limit + 1 }}</strong>
+              to
+              <strong class="text-[#334155]">{{ (page - 1) * limit + applications.length }}</strong>
+              of <strong class="text-[#334155]">{{ total }}</strong> applications
+            </span>
+            <div class="flex items-center gap-2">
               <button
                 type="button"
-                class="text-gray-400 hover:text-gray-600 shrink-0"
-                aria-label="Đóng"
-                @click="closeDetail"
+                class="grid h-8 w-8 place-items-center rounded-lg border border-[#e3e8ef] text-[#7c889a] hover:bg-[#f8fafc] transition disabled:opacity-40 disabled:cursor-not-allowed"
+                :disabled="page <= 1"
+                aria-label="Trang trước"
+                @click="goToPage(page - 1)"
               >
-                <X class="w-5 h-5" />
+                <ChevronLeft class="h-3.5 w-3.5" />
+              </button>
+
+              <!-- Page numbers + ellipsis window. -->
+              <template v-for="(p, idx) in paginationPages" :key="`${p}-${idx}`">
+                <span
+                  v-if="p === '…'"
+                  class="h-8 min-w-8 px-2 inline-flex items-center justify-center text-[#7c889a]"
+                  aria-hidden="true"
+                >…</span>
+                <button
+                  v-else
+                  type="button"
+                  class="h-8 min-w-8 px-2.5 inline-flex items-center justify-center rounded-lg text-[12px] font-medium transition"
+                  :class="p === page
+                    ? 'bg-[#1769e8] text-white'
+                    : 'border border-[#e3e8ef] text-[#334155] hover:bg-[#f8fafc]'"
+                  :aria-current="p === page ? 'page' : undefined"
+                  @click="goToPage(p)"
+                >{{ p }}</button>
+              </template>
+
+              <button
+                type="button"
+                class="grid h-8 w-8 place-items-center rounded-lg border border-[#e3e8ef] text-[#7c889a] hover:bg-[#f8fafc] transition disabled:opacity-40 disabled:cursor-not-allowed"
+                :disabled="page >= totalPages"
+                aria-label="Trang sau"
+                @click="goToPage(page + 1)"
+              >
+                <ChevronRight class="h-3.5 w-3.5" />
               </button>
             </div>
+          </div>
+        </section>
+      </main>
 
-            <!-- Modal body -->
-            <div class="flex-1 overflow-y-auto scrollbar-thin">
-              <div v-if="detailLoading" class="flex items-center justify-center py-20">
-                <Loader2 class="w-6 h-6 animate-spin text-gray-400" />
-              </div>
-              <div v-else-if="detail" class="p-5 space-y-4">
-                <!-- AI match card -->
-                <div
-                  class="rounded-2xl bg-gradient-to-br from-violet-50 to-primary-50 p-4 flex items-center gap-4"
+      <!-- ============ Detail panel ============ -->
+      <!-- overflow-x-hidden: tắt thanh cuộn ngang — sticky action bar dùng -mx-5
+           tràn ra 20px mỗi bên là nguồn tràn ngang phổ biến nhất. -->
+      <aside class="w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] lg:shrink-0 border-t lg:border-t-0 lg:border-l border-[#e9edf3] bg-white p-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
+        <div class="border-none bg-white">
+          <!--
+            Header block — chia 2 phần tách biệt để tránh bị rối khi panel
+            hẹp:
+              1. Row 1 (Identity): avatar + (name + position) | close button.
+              2. Row 2 (Match Score): ring + label "Strong match" đặt full-width,
+                 tách khỏi identity để dễ scan.
+          -->
+          <div class="relative border-b border-[#edf0f4] px-5 pt-5 pb-5">
+            <button
+              type="button"
+              class="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg border border-[#e1e7ef] text-[#64748b] hover:bg-gray-50 transition"
+              aria-label="Đóng"
+            >
+              <CloseIcon class="h-4 w-4" />
+            </button>
+
+            <!-- Row 1: Avatar + identity -->
+            <div class="flex items-center gap-4 pr-12">
+              <div
+                class="relative h-20 w-20 shrink-0 rounded-xl overflow-hidden bg-gradient-to-br from-primary-50 to-primary-100 ring-4 ring-[#f1f4f8]"
+                :aria-label="selectedApplication.name"
+              >
+                <img
+                  v-if="selectedApplication.avatarUrl"
+                  :src="selectedApplication.avatarUrl"
+                  :alt="selectedApplication.name"
+                  class="absolute inset-0 h-full w-full object-cover"
+                  loading="lazy"
+                  @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
+                />
+                <span
+                  v-else
+                  class="absolute inset-0 grid place-items-center text-primary-700 font-bold text-[28px]"
                 >
-                  <template v-if="detail.aiMatchScore != null">
+                  {{ avatarInitial(selectedApplication.name) }}
+                </span>
+              </div>
+              <div class="min-w-0 flex-1">
+                <h2 class="text-[22px] font-bold leading-tight truncate">
+                  {{ selectedApplication.name }}
+                </h2>
+                <div class="mt-2 flex items-center gap-2 min-w-0">
+                  <div class="min-w-0">
+                    <div class="text-[13px] font-semibold truncate">{{ selectedApplication.position }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Row 2: Match Score tách riêng, full-width — màu theo level. -->
+            <div class="mt-5 flex items-center gap-3 rounded-xl bg-[#f8fafc] p-3">
+              <div class="relative h-14 w-14 shrink-0">
+                <svg
+                  class="absolute inset-0 -rotate-90"
+                  width="56"
+                  height="56"
+                  viewBox="0 0 56 56"
+                  aria-hidden="true"
+                >
+                  <!-- Track -->
+                  <circle
+                    cx="28"
+                    cy="28"
+                    :r="RING_RADIUS"
+                    fill="none"
+                    stroke="#e3e8ef"
+                    :stroke-width="RING_STROKE"
+                  />
+                  <!-- Progress ring — stroke đổi màu theo animated match (không
+                       phải target) → bắt đầu rose rồi chuyển amber/emerald khi
+                       số chạy qua ngưỡng. `:key` re-mount element khi match
+                       đổi để restart CSS `draw-ring` animation (Vue reuse DOM
+                       nếu không có key mới → animation chỉ chạy lần đầu). -->
+                  <circle
+                    :key="`${selectedApplication.applicationId}-${selectedApplication.match}`"
+                    cx="28"
+                    cy="28"
+                    :r="RING_RADIUS"
+                    fill="none"
+                    :stroke="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].ring"
+                    :stroke-width="RING_STROKE"
+                    stroke-linecap="round"
+                    :stroke-dasharray="RING_CIRCUMFERENCE"
+                    :stroke-dashoffset="ringOffset"
+                    :style="{ '--ring-target': ringOffset }"
+                    class="match-ring"
+                  />
+                </svg>
+                <div
+                  class="absolute inset-0 grid place-items-center text-[12px] font-bold tabular-nums"
+                  :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].text"
+                >
+                  {{ animatedMatch }}%
+                </div>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[10px] text-[#94a3b8]">Match Score</div>
+                <div
+                  class="text-[12px] font-semibold"
+                  :class="MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].text"
+                >
+                  {{ MATCH_LEVEL_STYLE[matchLevelOf(animatedMatch)].label }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="mt-5 flex gap-7 text-[12px] font-medium text-[#64748b]">
+              <button
+                v-for="t in tabs"
+                :key="t"
+                type="button"
+                class="pb-3 border-b-2 transition"
+                :class="activeTab === t ? 'border-[#1769e8] text-[#1769e8]' : 'border-transparent'"
+                @click="gotoActiveTab(t)"
+              >{{ t }}</button>
+            </div>
+          </div>
+
+          <!--
+            Body content — switch theo `activeTab`. Dùng `v-show` thay vì
+            `v-if`/`v-else-if` chain vì Volar parser strict không chấp nhận
+            whitespace giữa các sibling conditional (vue-tsc OK nhưng IDE
+            diagnostic báo lỗi). v-show đơn giản hơn + 4 tab chỉ toggle
+            visibility, không cần render lại DOM tree mỗi lần chuyển.
+          -->
+          <div class="p-5">
+            <div v-show="activeTab === 'Tổng quan'" class="space-y-4">
+              <h3 class="text-[13px] font-semibold">Application Overview</h3>
+            <div class="rounded-xl border border-[#e8edf3] p-4">
+              <div class="grid grid-cols-2 gap-y-4 text-[11px] text-[#64748b]">
+                <div class="space-y-3">
+                  <!--
+                    4 trường contact lấy từ `cv.parsedData` (jsonb) — name /
+                    email / phone / github. Fallback giá trị hardcoded khi
+                    API fail hoặc parsedData null (mock / chưa load).
+                  -->
+                  <div class="flex gap-2 items-center truncate">
+                    <Mail class="h-4 w-4 shrink-0" />
+                    <span class="truncate">{{ parsedData?.email ?? 'sarah.m@abcvild.com' }}</span>
+                  </div>
+                  <div class="flex gap-2 items-center truncate">
+                    <Phone class="h-4 w-4 shrink-0" />
+                    <span class="truncate">{{ parsedData?.phone ?? '+1 (415) 555-0124' }}</span>
+                  </div>
+                  <div class="flex gap-2 items-center truncate">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0">
+                      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+                      <path d="M9 18c-4.51 2-5-2-7-2.5" />
+                    </svg>
+                    <a
+                      v-if="parsedData?.github"
+                      :href="parsedData.github"
+                      target="_blank"
+                      rel="noopener"
+                      class="truncate text-[#1e40af] hover:underline"
+                    >{{ parsedData.github }}</a>
+                    <span v-else class="truncate">github.com/sarahmiller</span>
+                  </div>
+                  <div class="flex gap-2 items-center truncate">
+                    <User class="h-4 w-4 shrink-0" />
+                    <span class="truncate">{{ parsedData?.name ?? 'San Francisco, CA' }}</span>
+                  </div>
+                </div>
+                <div class="border-l border-[#edf0f4] pl-5">
+                  <div class="text-[10px] text-[#94a3b8]">Source</div>
+                  <div class="mt-1 font-semibold text-[#334155]">Jobmatch</div>
+                  <div class="mt-5 text-[10px] text-[#94a3b8]">Applied</div>
+                  <div class="mt-1 font-semibold text-[#334155]">{{ formatDate(selectedApplication.date) }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 class="mb-2 text-[13px] font-semibold">Skills</h3>
+              <div class="flex flex-wrap gap-2">
+                <!--
+                  Skills render từ `skills` ref — mặc định slice 6 đầu, các
+                  skill còn lại gom vào 1 chip "+N" click để xổ ra toàn bộ
+                  (toggle `skillsExpanded`). Watch `skills` để reset expand
+                  khi switch candidate — tránh trạng thái expand kẹt từ row
+                  trước. Mặc định dùng MOCK_SKILLS, override bằng data thật
+                  từ `applicationApi.getById` (matchedSkills) khi user click
+                  row hoặc auto-load row đầu tiên sau khi fetchPage xong.
+                -->
+                <span v-for="s in visibleSkills" :key="s" class="pill">{{ s }}</span>
+                <button
+                  v-if="!skillsExpanded && hiddenSkillsCount > 0"
+                  type="button"
+                  class="pill hover:bg-[#eef2ff] cursor-pointer"
+                  :title="`Xem thêm ${hiddenSkillsCount} skills`"
+                  @click="skillsExpanded = true"
+                >+{{ hiddenSkillsCount }}</button>
+                <button
+                  v-else-if="skillsExpanded && skills.length > SKILL_VISIBLE_MAX"
+                  type="button"
+                  class="pill hover:bg-[#eef2ff] cursor-pointer"
+                  title="Thu gọn"
+                  @click="skillsExpanded = false"
+                >−</button>
+                <span v-if="detailLoading" class="pill text-[#94a3b8]">…</span>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-[#cfe0ff] bg-[#eef5ff] p-4">
+              <div class="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[#1769e8]">
+                <Sparkles class="h-4 w-4" /> AI Summary
+              </div>
+              <p class="text-[11px] leading-5 text-[#53657d]">
+                {{ aiReasoning?.rationale ?? 'AI chưa chấm điểm ứng viên này, vui lòng quay lại sau.' }}
+              </p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="rounded-xl border border-[#e6ebf1] p-4">
+                <div class="text-[12px] font-semibold">Current Stage</div>
+                <span
+                  class="mt-3 inline-flex rounded-full px-3 py-2 text-[11px] font-medium"
+                  :class="[selectedStageStyle.bg, selectedStageStyle.text]"
+                >{{ STAGE_LABEL[selectedApplication.stage] }}</span>
+              </div>
+              <div class="rounded-xl border border-[#e6ebf1] p-4">
+                <div class="text-[12px] font-semibold">Next Interview</div>
+                <div class="mt-3 flex items-center gap-3">
+                  <span
+                    class="grid h-9 w-9 place-items-center rounded-full bg-[#eaf2ff] text-[#1769e8]"
+                  >
+                    <Calendar class="h-4 w-4" />
+                  </span>
+                  <div>
+                    <div class="text-[11px] font-semibold">Tomorrow</div>
+                    <div class="text-[10px] text-[#64748b]">10:30 AM</div>
+                  </div>
+                  <ChevronRight class="ml-auto h-4 w-4 text-[#1769e8]" />
+                </div>
+              </div>
+            </div>
+            </div>
+            <div v-show="activeTab == 'Thư'" class="space-y-3">
+              <h3 class="text-[13px] font-semibold">Thư xin việc</h3>
+              <div
+                v-if="coverLetter"
+                class="rounded-xl border border-[#e8edf3] p-4 text-[12.5px] leading-relaxed text-[#334155] whitespace-pre-wrap break-words"
+              >
+                {{ coverLetter }}
+              </div>
+              <div
+                v-else
+                class="rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-6 flex flex-col items-center justify-center text-center"
+              >
+                <Inbox class="w-8 h-8 text-[#94a3b8] mb-2" />
+                <p class="text-[12.5px] text-[#64748b]">
+                  Ứng viên chưa gửi thư xin việc cho đơn này.
+                </p>
+              </div>
+            </div>
+            <div v-show="activeTab === 'CV'" class="space-y-3">
+              <h3 class="text-[13px] font-semibold">CV</h3>
+              <div class="rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-6 flex flex-col items-center justify-center text-center">
+                <Inbox class="w-8 h-8 text-[#94a3b8] mb-2" />
+                <p class="text-[12.5px] text-[#64748b]">
+                  Tính năng ghi chú đang phát triển — sẽ sớm có mặt.
+                </p>
+              </div>
+            </div>
+            <div v-show="activeTab === 'So khớp'" class="space-y-4">
+              <h3 class="text-[13px] font-semibold">AI Matching</h3>
+
+              <!--
+                AI Match card — re-use radial ring pattern từ ApplicationDetailPanel
+                (candidate-side). `aiReasoning` có thể null khi AI chưa chấm →
+                empty state. Khi `reason` là `quota_exceeded` / `failed` →
+                terminal badge thay vì spinner.
+              -->
+              <section
+                v-if="aiReasoning || detailData?.aiMatchScore != null"
+                class="rounded-[14px] border border-violet-100 overflow-hidden"
+                style="background: linear-gradient(180deg, #F4EEFE 0%, #FBFAFF 100%);"
+              >
+                <div class="flex items-center gap-1.5 px-4 pt-4">
+                  <Sparkles class="w-3.5 h-3.5 text-violet-600" />
+                  <h4 class="text-[13px] font-bold text-violet-700">AI Matching</h4>
+                </div>
+
+                <!-- Score radial ring + label -->
+                <div class="p-4 flex items-center gap-3.5">
+                  <template v-if="detailData?.aiMatchScore != null">
                     <div class="relative shrink-0 w-16 h-16">
-                      <svg
-                        width="64"
-                        height="64"
-                        viewBox="0 0 64 64"
-                        class="-rotate-90"
-                      >
+                      <svg width="64" height="64" viewBox="0 0 64 64" class="-rotate-90">
+                        <circle cx="32" cy="32" r="27" fill="none" stroke="#E6DCFB" stroke-width="7" />
                         <circle
-                          cx="32"
-                          cy="32"
-                          r="27"
-                          fill="none"
-                          stroke="#E6DCFB"
-                          stroke-width="7"
-                        />
-                        <circle
-                          cx="32"
-                          cy="32"
-                          r="27"
-                          fill="none"
-                          :stroke="
-                            MATCH_LEVEL[matchLevelFromPercent(Number(detail.aiMatchScore))]
-                              .ring
-                          "
-                          stroke-width="7"
-                          stroke-linecap="round"
+                          :key="`ai-${detailData.aiMatchScore}`"
+                          cx="32" cy="32" r="27" fill="none"
+                          :stroke="MATCH_LEVEL_STYLE[matchLevelOf(Number(detailData.aiMatchScore))].ring"
+                          stroke-width="7" stroke-linecap="round"
                           :stroke-dasharray="169.6"
-                          :stroke-dashoffset="
-                            169.6 *
-                            (1 -
-                              Math.max(
-                                0,
-                                Math.min(100, Number(detail.aiMatchScore)),
-                              ) /
-                                100)
-                          "
+                          :stroke-dashoffset="169.6 * (1 - Math.max(0, Math.min(100, Number(detailData.aiMatchScore))) / 100)"
                           class="match-ring"
-                          :style="{
-                            '--ring-target':
-                              169.6 *
-                              (1 -
-                                Math.max(
-                                  0,
-                                  Math.min(100, Number(detail.aiMatchScore)),
-                                ) /
-                                  100),
-                          }"
+                          :style="{ '--ring-target': 169.6 * (1 - Math.max(0, Math.min(100, Number(detailData.aiMatchScore))) / 100) }"
                         />
                       </svg>
-                      <div
-                        class="absolute inset-0 flex items-center justify-center text-[15px] font-extrabold text-violet-700"
-                      >
-                        {{ matchPercentNumber }}%
+                      <div class="absolute inset-0 grid place-items-center text-[15px] font-extrabold text-violet-700">
+                        {{ Math.round(Number(detailData.aiMatchScore)) }}%
                       </div>
                     </div>
                     <div class="min-w-0 flex-1">
-                      <p class="text-sm font-bold text-gray-900">Mức độ phù hợp:</p>
-                      <p
-                        class="text-xs font-semibold"
-                        :class="
-                          MATCH_LEVEL[matchLevelFromPercent(Number(detail.aiMatchScore))].text
-                        "
-                      >
-                        {{
-                          MATCH_LEVEL[
-                            matchLevelFromPercent(Number(detail.aiMatchScore))
-                          ].label
-                        }}
+                      <p class="text-[13px] font-bold text-gray-900">
+                        Mức độ phù hợp:
+                        <span :class="MATCH_LEVEL_STYLE[matchLevelOf(Number(detailData.aiMatchScore))].text">
+                          {{ MATCH_LEVEL_STYLE[matchLevelOf(Number(detailData.aiMatchScore))].label }}
+                        </span>
                       </p>
-                      <p class="text-[11px] text-gray-500 mt-0.5">
-                        AI chấm dựa trên CV + JD
+                      <p v-if="aiReasoning?.rationale" class="text-[11.5px] text-gray-600 mt-1 leading-relaxed">
+                        {{ aiReasoning.rationale }}
                       </p>
                     </div>
-                    <button
-                      v-if="recomputing !== detail.id"
-                      type="button"
-                      class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-md bg-white border border-violet-200 text-violet-700 hover:bg-violet-50 transition disabled:opacity-50"
-                      :disabled="recomputing !== null"
-                      @click="recomputeMatch(detail.id)"
-                    >
-                      <Sparkles class="w-3 h-3" />
-                      Chấm lại
-                    </button>
                   </template>
-                  <template v-else>
-                    <span
-                      class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-violet-100 text-violet-800 text-[11.5px] font-semibold"
-                    >
-                      <Loader2
-                        v-if="recomputing === detail.id"
-                        class="w-3 h-3 animate-spin"
-                      />
-                      <span v-if="recomputing === detail.id">Đang so khớp</span>
-                      <span v-else>Chưa có AI match</span>
-                    </span>
-                    <button
-                      v-if="recomputing !== detail.id"
-                      type="button"
-                      class="ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-md bg-violet-200 hover:bg-violet-300 text-violet-800 transition disabled:opacity-50"
-                      :disabled="recomputing !== null"
-                      @click="recomputeMatch(detail.id)"
-                    >
-                      <Sparkles class="w-3 h-3" />
-                      So khớp AI
-                    </button>
-                  </template>
+                  <span v-else class="inline-flex items-center gap-1.5 text-xs text-amber-700">
+                    <Loader2 class="w-3.5 h-3.5 animate-spin" /> Đang so khớp
+                  </span>
                 </div>
 
-                <!-- CV đã nộp + preview -->
-                <section
-                  v-if="detail.cv"
-                  class="rounded-xl border border-gray-200 overflow-hidden"
-                >
-                  <div
-                    class="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50/50"
-                  >
-                    <div class="flex items-center gap-2 min-w-0">
-                      <FileText class="w-4 h-4 text-gray-400 shrink-0" />
-                      <p class="text-sm font-semibold text-gray-900 truncate">
-                        {{ detail.cv.title || 'CV đã nộp' }}
-                      </p>
-                    </div>
-                    <div v-if="detail.cv.url" class="flex items-center gap-1.5 shrink-0">
-                      <a
-                        :href="detail.cv.url"
-                        target="_blank"
-                        rel="noopener"
-                        class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition"
-                      >
-                        <ExternalLink class="w-3 h-3" />
-                        Mở tab mới
-                      </a>
-                      <button
-                        type="button"
-                        :disabled="downloading"
-                        class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
-                        @click="downloadFile(detail.cv!.url, detail.cv?.title || 'cv')"
-                      >
-                        <Download class="w-3 h-3" />
-                        Tải về
-                      </button>
-                    </div>
-                  </div>
-                  <!-- Preview iframe — render khi URL accessible -->
-                  <div
-                    v-if="detail.cv.url && cvIsPreviewable"
-                    class="bg-gray-100 -mx-4"
-                    style="height: 480px"
-                  >
-                    <iframe
-                      :src="cvPreviewSrc"
-                      class="w-full h-full border-0"
-                      :title="detail.cv.title || 'CV preview'"
-                    />
-                  </div>
-                  <div
-                    v-else-if="detail.cv.url"
-                    class="p-6 text-center text-xs text-gray-500"
-                  >
-                    Không thể preview trực tiếp. Bấm "Mở tab mới" hoặc "Tải về" để xem.
-                  </div>
-                  <div v-else class="p-6 text-center text-xs text-gray-500">
-                    CV chưa có file đính kèm.
-                  </div>
-                </section>
-                <section
-                  v-else
-                  class="rounded-xl border border-gray-200 p-6 text-center"
-                >
-                  <FileText class="w-6 h-6 text-gray-300 mx-auto mb-2" />
-                  <p class="text-sm font-semibold text-gray-900">Ứng viên không đính kèm CV</p>
-                  <p class="text-xs text-gray-500 mt-1">
-                    Đơn này được nộp không kèm CV.
-                  </p>
-                </section>
+                <!-- Terminal state badge -->
+                <div v-if="aiReasoning?.reason === 'quota_exceeded'" class="px-4 pb-3">
+                  <span class="inline-flex items-center gap-1.5 text-xs text-amber-700">
+                    <AlertCircle class="w-3.5 h-3.5" /> Hết lượt AI match
+                  </span>
+                </div>
+                <div v-if="aiReasoning?.reason === 'failed'" class="px-4 pb-3">
+                  <span class="inline-flex items-center gap-1.5 text-xs text-rose-700">
+                    <AlertCircle class="w-3.5 h-3.5" /> AI match tạm lỗi
+                  </span>
+                </div>
 
-                <!-- Candidate info -->
-                <section class="rounded-xl border border-gray-200 p-4">
-                  <p class="text-xs font-semibold text-gray-900 mb-2.5">
-                    Thông tin ứng viên
-                  </p>
-                  <div class="grid sm:grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <span class="text-gray-500 w-20 shrink-0">Họ tên:</span>
-                      <span class="font-medium text-gray-900 truncate">
-                        {{ detailRow?.candidateName ?? 'Ẩn danh' }}
-                      </span>
-                    </div>
-                    <div
-                      v-if="detail.cv?.candidateId"
-                      class="flex items-center gap-2 min-w-0"
-                    >
-                      <span class="text-gray-500 w-20 shrink-0">User ID:</span>
-                      <span class="font-mono text-gray-700 truncate text-[11px]">
-                        {{ detail.cv.candidateId }}
-                      </span>
-                    </div>
-                    <div
-                      v-if="detailRow?.candidateEmail"
-                      class="flex items-center gap-2 min-w-0 sm:col-span-2"
-                    >
-                      <span class="text-gray-500 w-20 shrink-0">Email:</span>
-                      <a
-                        :href="`mailto:${detailRow.candidateEmail}`"
-                        class="inline-flex items-center gap-1 font-medium text-primary-700 hover:underline truncate"
-                      >
-                        <Mail class="w-3 h-3 shrink-0" />
-                        {{ detailRow.candidateEmail }}
-                      </a>
-                    </div>
+                <!-- Matched skills -->
+                <div v-if="aiReasoning?.matchedSkills?.length" class="px-4 pb-4">
+                  <h5 class="text-[12.5px] font-bold text-emerald-700 mb-2">Kỹ năng phù hợp</h5>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="(s, i) in aiReasoning.matchedSkills"
+                      :key="`m-${i}`"
+                      class="text-[12px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1"
+                    >{{ s }}</span>
                   </div>
+                </div>
 
-                  <!-- Cover letter -->
-                  <div v-if="detail.coverLetter" class="mt-3 pt-3 border-t border-gray-100">
-                    <p class="text-xs font-semibold text-gray-900 mb-1.5">
-                      Thư xin việc
-                    </p>
-                    <p
-                      class="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed"
-                    >
-                      {{ detail.coverLetter }}
-                    </p>
+                <!-- Missing skills -->
+                <div v-if="aiReasoning?.missingSkills?.length" class="px-4 pb-4">
+                  <h5 class="text-[12.5px] font-bold text-amber-700 mb-2">Còn thiếu</h5>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="(s, i) in aiReasoning.missingSkills"
+                      :key="`ms-${i}`"
+                      class="text-[12px] font-semibold text-amber-800 bg-amber-100 rounded-md px-2 py-1"
+                    >{{ s }}</span>
                   </div>
-                </section>
+                </div>
 
-                <!-- Timeline -->
-                <section class="rounded-xl border border-gray-200 p-4">
-                  <p class="text-xs font-semibold text-gray-900 mb-2.5">Thời gian</p>
-                  <div class="space-y-1.5 text-xs text-gray-600">
-                    <p class="flex items-center gap-2">
-                      <Calendar class="w-3.5 h-3.5 text-gray-400" />
-                      Nộp: {{ dayjs(detail.appliedAt).format('DD/MM/YYYY HH:mm') }}
-                    </p>
-                    <p v-if="detail.viewedAt" class="flex items-center gap-2">
-                      <Eye class="w-3.5 h-3.5 text-gray-400" />
-                      Bạn đã xem: {{ dayjs(detail.viewedAt).format('DD/MM/YYYY HH:mm') }}
-                    </p>
-                  </div>
-                </section>
-
-                <!-- Status update -->
-                <section class="rounded-xl border border-gray-200 p-4">
-                  <p class="text-xs font-semibold text-gray-900 mb-2.5">
-                    Cập nhật trạng thái
-                  </p>
-                  <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                    <button
-                      v-for="s in STATUS_FLOW"
-                      :key="s"
-                      type="button"
-                      class="px-2 py-1.5 text-xs font-medium rounded-md border transition inline-flex items-center justify-center gap-1"
-                      :class="
-                        detail.status === s
-                          ? 'border-primary-500 bg-primary-50 text-primary-700'
-                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-                      "
-                      :disabled="statusUpdating !== null"
-                      @click="updateStatus(detail.id, s)"
+                <!-- Strengths -->
+                <div v-if="aiReasoning?.strengths?.length" class="px-4 pb-4">
+                  <h5 class="text-[12.5px] font-bold text-emerald-700 mb-2">Điểm mạnh</h5>
+                  <ul class="space-y-1.5">
+                    <li
+                      v-for="(s, i) in aiReasoning.strengths"
+                      :key="`s-${i}`"
+                      class="flex items-start gap-2 text-[12.5px] leading-relaxed text-gray-700"
                     >
-                      <Loader2
-                        v-if="statusUpdating === detail.id"
-                        class="w-3 h-3 animate-spin"
-                      />
-                      <CheckCircle2 v-else-if="s === 'hired'" class="w-3 h-3" />
-                      <XCircle v-else-if="s === 'rejected'" class="w-3 h-3" />
-                      <Eye v-else-if="s === 'viewed'" class="w-3 h-3" />
-                      {{ STATUS_LABEL[s] }}
-                    </button>
-                  </div>
-                  <button
-                    v-if="
-                      detail.status !== 'rejected' &&
-                      detail.status !== 'withdrawn' &&
-                      detail.status !== 'hired'
-                    "
-                    type="button"
-                    class="mt-2 w-full px-2 py-1.5 text-xs font-medium rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition inline-flex items-center justify-center gap-1"
-                    :disabled="statusUpdating !== null"
-                    @click="updateStatus(detail.id, 'rejected')"
-                  >
-                    <XCircle class="w-3 h-3" />
-                    Từ chối đơn này
-                  </button>
-                </section>
+                      <Check class="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" stroke-width="3" />
+                      <span>{{ s }}</span>
+                    </li>
+                  </ul>
+                </div>
+
+                <!-- Concerns -->
+                <div v-if="aiReasoning?.concerns?.length" class="px-4 pb-4">
+                  <h5 class="text-[12.5px] font-bold text-rose-700 mb-2">Điểm cần lưu ý</h5>
+                  <ul class="space-y-1.5">
+                    <li
+                      v-for="(s, i) in aiReasoning.concerns"
+                      :key="`c-${i}`"
+                      class="flex items-start gap-2 text-[12.5px] leading-relaxed text-gray-700"
+                    >
+                      <AlertCircle class="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" stroke-width="2.5" />
+                      <span>{{ s }}</span>
+                    </li>
+                  </ul>
+                </div>
+              </section>
+
+              <!-- Empty state khi AI chưa có data -->
+              <div
+                v-else
+                class="rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-6 flex flex-col items-center justify-center text-center"
+              >
+                <Sparkles class="w-8 h-8 text-[#94a3b8] mb-2" />
+                <p class="text-[12.5px] text-[#64748b]">
+                  Chưa có kết quả AI matching cho đơn này.
+                </p>
               </div>
             </div>
           </div>
+
+          <!--
+            Action buttons — sticky bottom trong aside scroll container.
+            `bg-white` + top border + padding-top để tách khỏi content phía
+            trên khi user scroll.
+          -->
+            <div class="sticky bottom-0 z-10 -mx-5 bg-white border-t border-[#edf0f4] px-5 py-1">
+              <!-- Xác minh người tham chiếu — mở ReferencesModal. Disable cho
+                   row mock (chưa có applicationId thật từ API). -->
+              <button
+                type="button"
+                :disabled="!canOpenReferences"
+                class="mb-3 flex h-11 w-full items-center justify-center gap-2 border border-[#cfe0ff] border-l-0 bg-[#eef5ff] text-[11px] font-semibold text-[#1769e8] transition hover:bg-[#e0edff] disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Gửi email xác minh người tham chiếu qua n8n"
+                @click="referencesOpen = true"
+              >
+                <ShieldCheck class="h-4 w-4" /> Xác minh người tham chiếu
+              </button>
+              <div class="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  class="flex h-11 items-center justify-center gap-2 rounded-lg border border-[#dce4ef] bg-white text-[11px] font-semibold text-[#1769e8]"
+                >
+                  <CalendarPlus class="h-4 w-4" /> Schedule Interview
+                </button>
+                <button
+                  type="button"
+                  class="flex h-11 items-center justify-center gap-2 rounded-lg bg-[#1769e8] text-[11px] font-semibold text-white shadow-sm"
+                >
+                  View Full Profile <ArrowRight class="h-4 w-4" />
+                </button>
+              </div>
+            </div>
         </div>
-      </Transition>
-    </Teleport>
+      </aside>
+
+    <!-- References modal — Teleport to body, độc lập với panel layout.
+         applicationId rỗng (mock/empty) → modal tự guard, không fetch. -->
+    <ReferencesModal
+      :application-id="selectedApplication.applicationId ?? ''"
+      :open="referencesOpen"
+      @close="referencesOpen = false"
+    />
   </div>
+  </div>
+
 </template>
 
 <style scoped>
-/* Match ring — animate từ 0% (full offset) đến % thực tế.
-   Sync 1.2s với rAF counter trong script. */
+/*
+ * Match ring animation — dashoffset chạy từ full (ring ẩn) về target
+ * (ring hiển thị đúng % match). Mỗi lần `ringOffset` đổi → keyframes re-run
+ * nhờ `:key` pseudo + class mới (xem template comment).
+ */
 .match-ring {
   animation: draw-ring 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 @keyframes draw-ring {
   from {
-    stroke-dashoffset: 169.6;
+    stroke-dashoffset: 150.8;
   }
   to {
-    stroke-dashoffset: var(--ring-target, 169.6);
+    stroke-dashoffset: var(--ring-target, 0);
   }
 }
 
-/* Modal fade + scale nhẹ. */
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 200ms ease;
+/*
+ * Scrollbar mỏng (~6px) cho 2 panel overflow-y-auto. Webkit + Firefox đều
+ * style để thanh cuộn không chiếm quá nhiều diện tích.
+ */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
-.modal-enter-active > div,
-.modal-leave-active > div {
-  transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
 }
-.modal-enter-from > div,
-.modal-leave-to > div {
-  transform: scale(0.96);
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/*
+ * Pill chip cho Skills section — match với mockup inline style:
+ * rounded-full border + bg + padding + font-medium + text color.
+ */
+.pill {
+  display: inline-flex;
+  border-radius: 9999px;
+  border: 1px solid #dce5f3;
+  background-color: #f1f5fb;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #334155;
 }
 </style>

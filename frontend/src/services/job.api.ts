@@ -23,7 +23,18 @@ export interface ApiResponse<T> {
   data: T;
 }
 
+/** Slim item cho dropdown filter — chỉ id + title (xem GET /jobs/names). */
+export interface JobNameItem {
+  id: string;
+  title: string;
+}
+
 export const jobApi = {
+  /** GET /jobs/names — slim list job của company employer (dropdown filter
+   *  trang Applications). ?keyword= optional — filter title ILIKE. */
+  listNames: (params?: { keyword?: string }) =>
+    http.get<ApiResponse<JobNameItem[]>>('/jobs/names', { params }),
+
   list: (params?: ListJobQuery) =>
     http.get<ApiResponse<JobListItem[]> & { pagination: JobListResponse['pagination'] }>(
       '/jobs',

@@ -34,8 +34,7 @@ BEGIN
 
     IF dup_users > 0 THEN
         RAISE EXCEPTION
-            'uniq_one_active_sub_per_user: % user(s) có >1 subscription active. '
-            || 'Chạy SQL dọn bên dưới (bỏ comment) rồi migration lại.',
+            'uniq_one_active_sub_per_user: % user(s) có >1 subscription active — cần dọn dữ liệu trước khi tạo index',
             dup_users
             USING HINT = 'Xem phần "SQL dọn dữ liệu" trong file migration này';
     END IF;
