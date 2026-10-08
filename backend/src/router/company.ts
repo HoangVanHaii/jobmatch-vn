@@ -24,7 +24,8 @@ companyRouter.get('/', optionalAuth, validateListCompanies, companyController.li
 companyRouter.get('/me', auth, companyController.getMyCompany);
 companyRouter.get('/me/invites', auth, companyController.getMyInvites);
 companyRouter.get('/by-slug/:slug', optionalAuth, companyController.getBySlug);
-companyRouter.get('/:id', optionalAuth, validateCompanyIdParam, companyController.getById);
+// C-01/C-02 fix: company detail yêu cầu đăng nhập (FE chỉ dùng trong area đã auth).
+companyRouter.get('/:id', auth, validateCompanyIdParam, companyController.getById);
 
 // --- Tạo (employer | admin) — controller tự insert owner vào company_members ---
 companyRouter.post('/', ...createCompany, validateCreateCompany, companyController.create);

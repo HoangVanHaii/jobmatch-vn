@@ -421,9 +421,27 @@ const goBack = (): void => {
 };
 
 const onApply = (): void => {
-  if (!job.value) return;
+  if (!job.value || !canApply.value) return;
   applyModalOpen.value = true;
 };
+
+/**
+ * Guard apply (TASK 1 step 8): chỉ cho apply khi job đang live và chưa quá
+ * deadline. BE vẫn enforce lại (JOB_NOT_APPLYABLE / JOB_EXPIRED) — đây là
+ * UX layer để không click hụt.
+ */
+const deadlinePassed = computed((): boolean => {
+  const d = job.value?.deadline;
+  if (!d) return false;
+  const t = new Date(d).getTime();
+  return !Number.isNaN(t) && t < Date.now();
+});
+const isExpiredJob = computed((): boolean =>
+  job.value?.isExpired === true || job.value?.status === 'expired',
+);
+const canApply = computed((): boolean =>
+  job.value?.status === 'live' && !deadlinePassed.value,
+);
 
 const onApplied = (_applicationId: string): void => {
   void fetchDetail();
@@ -1020,7 +1038,9 @@ const cancelEditFeedback = (): void => {
           <div class="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition inline-flex items-center gap-1.5"
+              class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#1677FF]"
+              :disabled="!canApply"
+              :title="!canApply ? 'Job này hiện không nhận hồ sơ' : undefined"
               @click="onApply"
             >
               <Send class="w-3.5 h-3.5" />
@@ -1080,6 +1100,22 @@ const cancelEditFeedback = (): void => {
               </Transition>
             </div>
           </div>
+        </div>
+
+        <!-- Banner job hết hạn / không nhận hồ sơ (TASK 1 step 8) -->
+        <div
+          v-if="isExpiredJob || !canApply"
+          class="mb-3 flex items-start gap-2 p-3 rounded-lg border text-xs"
+          :class="isExpiredJob
+            ? 'bg-amber-50 border-amber-200 text-amber-900'
+            : 'bg-slate-50 border-[#EEF1F5] text-slate-700'"
+        >
+          <AlertCircle class="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            {{ isExpiredJob
+              ? 'Tin tuyển dụng đã hết hạn.'
+              : 'Tin tuyển dụng này hiện không nhận hồ sơ mới.' }}
+          </span>
         </div>
 
         <!-- Tabs -->
@@ -1497,7 +1533,8 @@ const cancelEditFeedback = (): void => {
                 <p class="text-[12px] mb-3">Apply để xem điểm phù hợp của bạn với job này.</p>
                 <button
                   type="button"
-                  class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition"
+                  class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="!canApply"
                   @click="onApply"
                 >Ứng tuyển</button>
               </div>
