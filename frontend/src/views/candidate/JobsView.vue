@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue';
 import { onClickOutside } from '@vueuse/core';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
@@ -10,7 +10,7 @@ import { useJobStore } from '@stores/job';
 import { useDebounce } from '@composables/useDebounce';
 import { jobApi } from '@services/job.api';
 import { savedJobApi } from '@services/savedJob.api';
-import type { JobListItem, JobLevel, JobType } from '@/types/job';
+import type { JobListItem, JobLevel, JobType, ListJobQuery } from '@/types/job';
 import {
   Briefcase,
   BookOpen,
@@ -21,6 +21,7 @@ import {
   GraduationCap,
   Laptop,
   MapPin,
+  SearchX,
   Sprout,
   Sparkles,
   Users,
@@ -29,6 +30,47 @@ import {
 
 dayjs.extend(relativeTime);
 dayjs.locale('vi');
+
+/* ============================================================================
+ * URL query ↔ filter state
+ *
+ * URL là nguồn chân truth cho search/filter/pagination: mỗi lần filter thay
+ * đổi thì sync vào query string (xem `syncQueryToUrl`), và lúc mount đọc
+ * ngược lại để khôi phục — nhờ vậy browser Back từ Job Detail (hoặc F5,
+ * share link) trả về đúng list như trước khi rời trang.
+ * ========================================================================== */
+const route = useRoute();
+
+/** Đọc 1 query param dạng string (value có thể là string[] — trường hợp đó bỏ). */
+const queryString = (key: string): string | null => {
+  const v = route.query[key];
+  return typeof v === 'string' && v !== '' ? v : null;
+};
+/** Đọc query param số — null khi thiếu/âm/không parse được. */
+const queryNum = (key: string): number | null => {
+  const v = queryString(key);
+  if (v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+};
+
+/** Filters đọc từ URL lúc mount — dùng để init state bên dưới. `type`/`level`
+ *  chưa validate chống enum thật — chỉ được dùng khi khớp option load từ API
+ *  (xem onMounted), URL lạ không bao giờ gửi thẳng lên BE. */
+const initialFilters = {
+  search: queryString('keyword') ?? '',
+  location: queryString('location'),
+  jobType: queryString('type') as JobType | null,
+  jobLevel: queryString('level') as JobLevel | null,
+  salaryMin: queryNum('salaryMin'),
+  salaryMax: queryNum('salaryMax'),
+  page: Math.max(1, queryNum('page') ?? 1),
+};
+
+/** true trong lúc khôi phục state từ URL — chặn watcher tự fetch; khi hydrate
+ *  xong, onMounted gọi đúng 1 lần `fetchList` với filter từ URL (xem cuối
+ *  onMounted). */
+let isHydrating = true;
 
 
 /** Open state riêng cho dropdown Location trên search bar — tách khỏi
@@ -232,8 +274,9 @@ const onJobTypeToggle = (clicked: JobTypeOption): void => {
 
 
 /** Location filter — `null` nghĩa là "Anywhere" (không filter).
- *  Danh sách city load từ `jobApi.cities()` (BE đã strip prefix). */
-const selectedLocation = ref<string | null>(null);
+ *  Danh sách city load từ `jobApi.cities()` (BE đã strip prefix).
+ *  Init từ URL khi có (hydrate — xem `initialFilters`). */
+const selectedLocation = ref<string | null>(initialFilters.location);
 const cities = ref<string[]>([]);
 const locationsLoading = ref(false);
 const locationsError = ref<string | null>(null);
@@ -259,12 +302,13 @@ const SALARY_FALLBACK_BOUNDS = { min: 0, max: 200_000_000 };
 const salaryBounds = ref<{ min: number; max: number }>(SALARY_FALLBACK_BOUNDS);
 
 /**
- * Slider value (VND, tuyệt đối — không phải percent). Initial = full bounds.
- * Khi user kéo thumb → setTimeout 300ms → fetchList với overlap filter.
+ * Slider value (VND, tuyệt đối — không phải percent). Initial từ URL khi có,
+ * không thì full bounds. Khi user kéo thumb → setTimeout 300ms → fetchList
+ * với overlap filter.
  */
 const salaryRange = ref<[number, number]>([
-  SALARY_FALLBACK_BOUNDS.min,
-  SALARY_FALLBACK_BOUNDS.max,
+  initialFilters.salaryMin ?? SALARY_FALLBACK_BOUNDS.min,
+  initialFilters.salaryMax ?? SALARY_FALLBACK_BOUNDS.max,
 ]);
 
 /** JobType list — collapse về 2 option đầu (theo mockup), "View All" toggle
@@ -356,6 +400,7 @@ const paginationPages = computed<(number | '…')[]>(() => {
 const goToPage = (n: number): void => {
   if (n < 1 || n > totalPages.value || n === page.value) return;
   store.setPage(n);
+  syncQueryToUrl();
   // Scroll job list lên top — UX tốt hơn khi chuyển trang.
   // Dùng `nextTick` chờ DOM update sau khi `items` thay đổi.
   void Promise.resolve().then(() => {
@@ -370,7 +415,7 @@ const goToPage = (n: number): void => {
  * ========================================================================== */
 const store = useJobStore();
 const router = useRouter();
-const { items, total, page, pageSize, totalPages } = storeToRefs(store);
+const { items, total, page, pageSize, totalPages, loading } = storeToRefs(store);
 
 /**
  * Hiển thị count linh động — ưu tiên `total` (từ pagination) nhưng fallback
@@ -381,8 +426,10 @@ const { items, total, page, pageSize, totalPages } = storeToRefs(store);
  */
 const resultCount = computed<number>(() => items.value.length || total.value || 0);
 
-/** Search keyword — bind với input, debounce rồi fetch lại list. */
-const searchKeyword = ref('');
+/** Search keyword — bind với input, debounce rồi fetch lại list. Init từ URL
+ *  TRƯỚC `useDebounce` để `debouncedKeyword` khởi tạo cùng giá trị (watcher
+ *  debounce không fire lúc hydrate — không gây fetch thừa khi mount). */
+const searchKeyword = ref(initialFilters.search);
 const debouncedKeyword = useDebounce(searchKeyword, 300);
 
 const savedJobIds = ref<Set<string>>(new Set());
@@ -391,45 +438,87 @@ const savedJobsLoading = ref(false);
 watch(debouncedKeyword, (kw) => {
   const trimmed = kw.trim();
   void store.fetchList({ search: trimmed || undefined }, 1);
+  syncQueryToUrl();
 });
 
 /** Watch Location — tương tự keyword: luôn set `locationCity` (undefined khi
- *  clear để spread xoá key cũ trong `query.value`). */
+ *  clear để spread xoá key cũ trong `query.value`). Guard `isHydrating`:
+ *  giá trị init từ URL không được tự fetch (fetch tổng chạy ở onMounted). */
 watch(selectedLocation, (city) => {
+  if (isHydrating) return;
   void store.fetchList({ locationCity: city || undefined }, 1);
+  syncQueryToUrl();
 });
 
-/** Watch combined jobTypes + jobLevels + salaryRange — batch 1 lần khi
- *  cả array populate từ API HOẶC khi user toggle filter. Dùng 1 watcher
- *  cho 3 filter nguồn → tránh 2-3 request song song khi init.
+/** Watch combined jobTypes + jobLevels + salaryRange — batch 1 lần khi user
+ *  toggle filter/kéo slider. Dùng 1 watcher cho 3 filter nguồn → thay đổi
+ *  nhiều filter liên tiếp gom thành 1 request.
  *
- *  Dùng `setTimeout(50)` debounce: clear timer cũ + set timer mới → chỉ tick
- *  cuối cùng chạy callback → 1 fetchList duy nhất. 50ms đủ batch hết các
- *  Promise resolve liên tiếp nhưng vẫn responsive khi user click checkbox. */
+ *  Dùng `setTimeout(200)` debounce: clear timer cũ + set timer mới → chỉ tick
+ *  cuối cùng chạy callback → 1 fetchList duy nhất. 200ms gom trọn 1 lần kéo
+ *  slider (bỏ qua micro-pause tay < 200ms) mà vẫn nhanh khi click checkbox.
+ *  Guard `isHydrating`: khi populate options từ API lúc mount (cả khi khôi
+ *  phục checked từ URL), watcher fire nhưng phải bỏ — fetch tổng chạy đúng
+ *  1 lần ở cuối onMounted. */
 let filterBatchHandle: ReturnType<typeof setTimeout> | null = null;
 watch(
   [jobTypes, jobLevels, salaryRange],
   () => {
+    if (isHydrating) return;
     if (filterBatchHandle) clearTimeout(filterBatchHandle);
     filterBatchHandle = setTimeout(() => {
       filterBatchHandle = null;
-      const pickedType = jobTypes.value.find((o) => o.checked);
-      const pickedLevel = jobLevels.value.find((o) => o.checked);
-      const [lo, hi] = salaryRange.value;
-      // Skip salary filter khi slider ở đúng bounds (tolerance 1 VND cho
-      // float precision edge case) → tránh request thừa + index scan.
-      const atMinBound = lo <= salaryBounds.value.min + 1;
-      const atMaxBound = hi >= salaryBounds.value.max - 1;
-      void store.fetchList({
-        jobType: pickedType ? pickedType.key : undefined,
-        jobLevel: pickedLevel ? pickedLevel.key : undefined,
-        salaryMin: atMinBound ? undefined : Math.round(lo),
-        salaryMax: atMaxBound ? undefined : Math.round(hi),
-      }, 1);
-    }, 50);
+      void store.fetchList(currentFilterQuery(), 1);
+      syncQueryToUrl();
+    }, 200);
   },
   { deep: true },
 );
+
+/**
+ * Build `ListJobQuery` từ state UI hiện tại — dùng chung cho fetch (batch
+ * watcher + hydrate) và sync URL. Mọi key luôn có mặt (undefined khi trống)
+ * → spread trong `fetchList` ghi đè sạch query stale (Pinia store sống qua
+ * các lần remount khi back từ Job Detail).
+ *
+ * `checked` chỉ có nghĩa sau khi options load từ API — nhờ vậy enum lạ trong
+ * URL tự bị bỏ qua: không option nào khớp → key undefined, không gửi lên BE.
+ */
+const currentFilterQuery = (): ListJobQuery => {
+  const pickedType = jobTypes.value.find((o) => o.checked);
+  const pickedLevel = jobLevels.value.find((o) => o.checked);
+  const [lo, hi] = salaryRange.value;
+  // Skip salary filter khi slider ở đúng bounds (tolerance 1 VND cho
+  // float precision edge case) → tránh request thừa + index scan.
+  const atMinBound = lo <= salaryBounds.value.min + 1;
+  const atMaxBound = hi >= salaryBounds.value.max - 1;
+  return {
+    search: debouncedKeyword.value.trim() || undefined,
+    locationCity: selectedLocation.value ?? undefined,
+    jobType: pickedType?.key,
+    jobLevel: pickedLevel?.key,
+    salaryMin: atMinBound ? undefined : Math.round(lo),
+    salaryMax: atMaxBound ? undefined : Math.round(hi),
+  };
+};
+
+/**
+ * Sync filter + page hiện tại vào URL bằng `router.replace` (không push —
+ * tránh phình history khi gõ chữ/kéo slider). URL mới ghi đè trên cùng 1
+ * history entry → browser Back từ Job Detail quay về đúng trạng thái list.
+ */
+const syncQueryToUrl = (): void => {
+  const q = currentFilterQuery();
+  const query: Record<string, string> = {};
+  if (q.search) query.keyword = q.search;
+  if (q.locationCity) query.location = q.locationCity;
+  if (q.jobType) query.type = q.jobType;
+  if (q.jobLevel) query.level = q.jobLevel;
+  if (q.salaryMin != null) query.salaryMin = String(q.salaryMin);
+  if (q.salaryMax != null) query.salaryMax = String(q.salaryMax);
+  if (page.value > 1) query.page = String(page.value);
+  void router.replace({ query });
+};
 
 /** Toggle JobLevel option — single-select (radio) + clear khi click option
  *  đang checked. Logic giống `onJobTypeToggle`. */
@@ -452,9 +541,10 @@ onBeforeUnmount(() => {
 
 });
 onMounted(async () => {
-  // KHÔNG fetch jobs ở đây — watcher jobType có `immediate: true` sẽ handle
-  // initial filter (Part-Time đang checked theo mockup). Tránh race giữa
-  // 2 request: onMounted gọi `{}` sẽ đè mất filter đã apply.
+  // KHÔNG fetch jobs ở đây — fetch ban đầu chạy đúng 1 lần ở cuối hàm này
+  // (sau khi options/cities/bounds đã load) với filter đọc từ URL, thay vì
+  // để watcher tự fetch khi populate options (tránh race nhiều request đè
+  // nhau như trước).
   // Song song: load cities + jobTypes + saved jobs của user.
   locationsLoading.value = true;
   savedJobsLoading.value = true;
@@ -469,21 +559,30 @@ onMounted(async () => {
       .then(({ data }) => {
         // Build jobTypes từ enum values API + label map. Nếu BE thêm value
         // mới chưa có trong JOB_TYPE_LABELS → fallback raw enum value.
+        // `checked` theo URL (hydrate) — giá trị lạ trong URL không khớp
+        // option nào → không có gì checked, tự loại khỏi filter.
         jobTypes.value = data.data.map((key) => ({
           key: key as JobType,
           label: JOB_TYPE_LABELS[key as JobType] ?? key,
-          checked: false,
+          checked: key === initialFilters.jobType,
         }));
+        // Option khôi phục nằm ngoài 2 option đầu → mở "Xem hết" để user
+        // thấy checkbox đang checked.
+        const topKeys = jobTypes.value.slice(0, VISIBLE_JOB_TYPES_COUNT).map((o) => o.key);
+        if (initialFilters.jobType && !topKeys.includes(initialFilters.jobType)) {
+          showAllJobTypes.value = true;
+        }
       })
       .catch((e) => { console.error('Load job-types failed:', e); }),
     jobApi.jobLevels()
       .then(({ data }) => {
         // Tương tự jobTypes: build options từ API + label map, fallback raw
-        // enum value nếu BE thêm value mới chưa có trong map.
+        // enum value nếu BE thêm value mới chưa có trong map. `checked` theo
+        // URL (hydrate).
         jobLevels.value = data.data.map((key) => ({
           key: key as JobLevel,
           label: JOB_LEVEL_LABELS[key as JobLevel] ?? key,
-          checked: false,
+          checked: key === initialFilters.jobLevel,
         }));
       })
       .catch((e) => { console.error('Load job-levels failed:', e); }),
@@ -495,7 +594,14 @@ onMounted(async () => {
         // thì giữ fallback để slider không crash.
         if (min != null && max != null && max > min && max > 0) {
           salaryBounds.value = { min, max };
-          salaryRange.value = [min, max];
+          if (isHydrating && (initialFilters.salaryMin != null || initialFilters.salaryMax != null)) {
+            // Khôi phục từ URL: giữ range user đã chọn, clamp vào bounds thật.
+            const lo = Math.max(min, Math.min(max, salaryRange.value[0]));
+            const hi = Math.max(min, Math.min(max, salaryRange.value[1]));
+            salaryRange.value = lo <= hi ? [lo, hi] : [min, max];
+          } else {
+            salaryRange.value = [min, max];
+          }
         }
       })
       .catch((e) => { console.error('Load salary-range failed:', e); }),
@@ -509,6 +615,14 @@ onMounted(async () => {
       .catch(() => { /* 401 (chưa login) → để Set rỗng, icon hiển thị outline */ })
       .finally(() => { savedJobsLoading.value = false; }),
   ]);
+
+  // Hydrate xong → mở khoá watcher và fetch đúng 1 lần với filter từ URL
+  // (URL trống → filter mặc định). resetFilters trước để không kế thừa query
+  // stale trong store (store sống qua remount khi back từ Job Detail, và
+  // dùng chung với JobSearchView).
+  isHydrating = false;
+  store.resetFilters();
+  void store.fetchList(currentFilterQuery(), initialFilters.page);
 
   // Đóng dropdown khi click ra ngoài container — dùng onClickOutside của
   // @vueuse/core (auto cleanup khi unmount). Mỗi dropdown 1 handler riêng,
@@ -642,6 +756,27 @@ const clearKeyword = (): void => {
 };
 
 /**
+ * Nút Search — bấm là fetch ngay với keyword đang gõ (bỏ chờ debounce 300ms).
+ *
+ * 2 nhánh để tránh double request:
+ *  - Keyword KHÁC lần fetch trước → chỉ đẩy vào `debouncedKeyword`, watcher
+ *    fire fetch + sync URL (timer debounce cũ sau đó set lại cùng giá trị →
+ *    không fire thêm lần nữa).
+ *  - Keyword GIỐNG lần fetch trước (auto-fetch đã chạy sau 300ms) → watcher
+ *    sẽ KHÔNG fire nếu chỉ gán giá trị → tự gọi fetch + sync trực tiếp.
+ */
+const onSearchSubmit = (): void => {
+  const next = searchKeyword.value;
+  if (debouncedKeyword.value === next) {
+    const trimmed = next.trim();
+    void store.fetchList({ search: trimmed || undefined }, 1);
+    syncQueryToUrl();
+  } else {
+    debouncedKeyword.value = next;
+  }
+};
+
+/**
  * Reset TẤT CẢ filter về trạng thái rỗng — keyword, location, jobType,
  * jobLevel. Gọi 1 lần → các watcher tương ứng (keyword 300ms debounced,
  * location/jobType/jobLevel sync) sẽ fetch lại list với filter rỗng.
@@ -702,9 +837,9 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
   <!-- Outer = full viewport height + flex column. `overflow-hidden` chặn body
        scroll toàn trang — chỉ cho phép scroll trong 2 cột (sidebar + main).
        `flex-1 min-h-0` quan trọng để cho phép children overflow. -->
-    <div class="h-screen overflow-hidden w-full bg-white font-poppins text-[#0F172A] flex flex-col">
+    <div class="h-screen overflow-clip w-full bg-white font-poppins text-[#0F172A] flex flex-col">
     <!-- ============ Body: sidebar + main ============ -->
-    <div class="w-full grid grid-cols-12 gap-4 flex-1 min-h-0 ">
+    <div class="w-full grid grid-cols-12 lg:grid-rows-[minmax(0,1fr)] gap-4 flex-1 min-h-0">
       <!-- ============ Sidebar filter (cuộn riêng, ẩn thanh cuộn) ============ -->
       <aside class="col-span-12 lg:col-span-3 xl:col-span-3 overflow-y-auto scrollbar-none">
         <div class="bg-white rounded-2xl rounded-tr-none border-r border-[#E5E7EB] p-5">
@@ -799,7 +934,7 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
             </button>
             <ul v-if="expanded.jobType" class="mt-3 space-y-2.5 bg-[#F1F5F9] rounded-lg p-3">
               <li v-for="t in visibleJobTypes" :key="t.key" class="flex items-center gap-2.5">
-                <label class="inline-flex items-center gap-2.5 cursor-pointer group">
+                <label class="relative inline-flex items-center gap-2.5 cursor-pointer group">
                   <input
                     type="checkbox"
                     :checked="t.checked"
@@ -911,7 +1046,7 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
               </p>
               <ul v-else class="space-y-2.5">
                 <li v-for="l in jobLevels" :key="l.key" class="flex items-center gap-2.5">
-                  <label class="inline-flex items-center gap-2.5 cursor-pointer group">
+                  <label class="relative inline-flex items-center gap-2.5 cursor-pointer group">
                     <input
                       type="checkbox"
                       :checked="l.checked"
@@ -1002,7 +1137,9 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
 
               <!-- Location — dropdown bind `selectedLocation` chung với sidebar
                    filter (2 nơi đồng bộ, click 1 chỗ thì cả 2 cập nhật). -->
-              <div ref="searchBarLocation" class="relative h-full border-l border-[#E2E8F0]">
+              <!-- Mobile: ẩn Location/JobType trên search bar (chật chữ, đẩy
+                   nút Search tràn màn hình) — filter vẫn còn ở sidebar. -->
+              <div ref="searchBarLocation" class="relative h-full border-l border-[#E2E8F0] hidden lg:block">
                 <button
                   type="button"
                   class="flex items-center gap-2 h-full px-4 bg-white text-[13px] text-[#334155] hover:bg-[#F8FAFC] transition whitespace-nowrap"
@@ -1050,7 +1187,7 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
 
               <!-- JobType — dropdown bind `jobTypes` chung với sidebar filter.
                    Sync 2 chiều: chọn ở search bar sẽ update sidebar và ngược lại. -->
-              <div ref="searchBarJobType" class="relative h-full border-l border-[#E2E8F0]">
+              <div ref="searchBarJobType" class="relative h-full border-l border-[#E2E8F0] hidden lg:block">
                 <button
                   type="button"
                   class="flex items-center gap-2 h-full px-4 bg-white text-[13px] text-[#334155] hover:bg-[#F8FAFC] transition whitespace-nowrap"
@@ -1102,6 +1239,7 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
                       font-medium
                       transition
                       rounded-r-[10px]"
+                @click="onSearchSubmit"
               >
                 Search
               </button>
@@ -1292,6 +1430,18 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
               </button>
             </div>
           </article>
+
+          <!-- Empty state: chỉ hiện khi fetch xong mà 0 kết quả (gate !loading để tránh nháy). -->
+          <div v-if="!jobs.length && !loading" class="py-16 flex flex-col items-center gap-2 text-center">
+            <SearchX class="w-10 h-10 text-[#94A3B8]" aria-hidden="true" />
+            <p class="text-[14px] font-semibold text-[#0F172A]">Không có việc làm phù hợp</p>
+            <p class="text-[12.5px] text-[#64748B]">Thử xoá bớt bộ lọc hoặc mở rộng phạm vi tìm kiếm.</p>
+            <button
+              type="button"
+              class="mt-2 h-9 px-5 rounded-lg bg-[#1E40AF] hover:bg-[#1E3A8A] text-white text-[12.5px] font-semibold transition shadow-sm"
+              @click="clearAllFilters"
+            >Xoá bộ lọc</button>
+          </div>
         </div>
 
 

@@ -51,3 +51,6 @@ tmp/
 
 # Docker
 .docker/
+
+AGENTS.md
+CLAUDE.md
