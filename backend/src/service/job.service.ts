@@ -148,8 +148,12 @@ export const jobService = {
       }
       // Input rỗng sau sanitize → match all (giữ nguyên filter khác).
     }
-    if (filters.jobLevel) conditions.push(eq(jobs.jobLevel, filters.jobLevel));
-    if (filters.jobType) conditions.push(eq(jobs.jobType, filters.jobType));
+    if (filters.jobLevel && filters.jobLevel.length > 0) {
+      conditions.push(inArray(jobs.jobLevel, filters.jobLevel));
+    }
+    if (filters.jobType && filters.jobType.length > 0) {
+      conditions.push(inArray(jobs.jobType, filters.jobType));
+    }
 
     // Nếu employer truyền cả `companyId` lẫn `filters.status` (filter thêm trong
     // trang "Job đã đăng") → AND thêm điều kiện status. Nhánh `if (companyId)`
@@ -858,11 +862,11 @@ generateDraft: async (
     if (filters.status && filters.status.length > 0) {
       conditions.push(inArray(jobs.status, filters.status));
     }
-    if (filters.jobLevel) {
-      conditions.push(eq(jobs.jobLevel, filters.jobLevel));
+    if (filters.jobLevel && filters.jobLevel.length > 0) {
+      conditions.push(inArray(jobs.jobLevel, filters.jobLevel));
     }
-    if (filters.jobType) {
-      conditions.push(eq(jobs.jobType, filters.jobType));
+    if (filters.jobType && filters.jobType.length > 0) {
+      conditions.push(inArray(jobs.jobType, filters.jobType));
     }
     if (filters.search) {
       // Dùng buildPrefixTsquery thay vì `plainto_tsquery` — hỗ trợ prefix match

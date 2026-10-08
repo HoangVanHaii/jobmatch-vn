@@ -4,6 +4,7 @@ import { Loader2, X, XCircle, Copy, CheckCircle2, CreditCard, Calendar, Clock, H
 import QRCode from 'qrcode';
 import { paymentApi } from '@services/payment.api';
 import { connectSocket } from '@services/socket';
+import { extractErrorMessage } from '@services/http';
 import { usePaymentUpdates } from '@composables/usePaymentUpdates';
 import type { PaymentWithPlan } from '@/types/payment';
 import type { PaymentStatus } from '@/types/payment';
@@ -20,6 +21,12 @@ const emit = defineEmits<{
      * Payload: paymentId để parent refresh đúng row trong list.
      */
     cancelled: [paymentId: string];
+    /**
+     * Emit khi đơn TỰ ĐỔI trạng thái qua socket realtime (paid/failed sau khi
+     * user quét QR ở tab khác) — parent cần tự refresh list + panel gói vì
+     * modal không thể cập nhật data của parent.
+     */
+    statusChanged: [paymentId: string];
 }>();
 
 const data = ref<PaymentWithPlan | null>(null);
@@ -45,7 +52,7 @@ async function fetchDetail(id: string) {
         data.value = result;
     } catch (err: any) {
         if (err?.name === 'CanceledError') return;
-        errorMsg.value = err?.response?.data?.error?.message ?? 'Không thể tải chi tiết thanh toán';
+        errorMsg.value = extractErrorMessage(err, 'Không thể tải chi tiết thanh toán');
     } finally {
         loading.value = false;
     }
@@ -99,11 +106,18 @@ const currentOrderCode = computed<string | null>(() => data.value?.orderCode ?? 
 usePaymentUpdates(currentOrderCode, {
     onPaid: () => {
         // PayOS webhook đã commit DB → refetch để lấy status='paid', subscriptionId, payosTxnId mới nhất.
-        if (props.paymentId) fetchDetail(props.paymentId);
+        // Emit thêm cho parent: list + panel gói ngoài modal vẫn stale nếu không refetch.
+        if (props.paymentId) {
+            fetchDetail(props.paymentId);
+            emit('statusChanged', props.paymentId);
+        }
     },
     onFailed: () => {
-        // Thanh toán fail → refetch để hiển thị status='failed'.
-        if (props.paymentId) fetchDetail(props.paymentId);
+        // Thanh toán fail → refetch để hiển thị status='failed' + báo parent refresh list.
+        if (props.paymentId) {
+            fetchDetail(props.paymentId);
+            emit('statusChanged', props.paymentId);
+        }
     },
 });
 
@@ -181,8 +195,7 @@ async function cancelPayment() {
         emit('cancelled', props.paymentId);
     } catch (err: any) {
         if (err?.name === 'CanceledError') return;
-        errorMsg.value =
-            err?.response?.data?.error?.message ?? 'Không thể hủy thanh toán. Vui lòng thử lại.';
+        errorMsg.value = extractErrorMessage(err, 'Không thể hủy thanh toán. Vui lòng thử lại.');
     } finally {
         cancelling.value = false;
     }
