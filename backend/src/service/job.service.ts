@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { db } from '../config/database';
 import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
-import { eq, desc, asc, and, sql, inArray, type SQL } from 'drizzle-orm';
+import { eq, desc, asc, and, ilike, sql, inArray, type SQL } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { Job, JobListItem, ExportApplicationsJobData, JobStatus, JobDetailPayload } from '@/interface/job';
 import {
@@ -98,6 +98,31 @@ const generateUniqueSlug = async (title: string): Promise<string> => {
 };
 
 export const jobService = {
+  /**
+   * Slim list id + title của job thuộc 1 company — cho dropdown filter
+   * trang Applications (employer). Không phân trang: 1 company có ít job,
+   * trả hết 1 lần để FE populate dropdown. Chỉ select 2 cột để nhẹ.
+   *
+   * `keyword` optional — filter title ILIKE %keyword% (case-insensitive,
+   * FE debounce 300ms khi user gõ). Trim + rỗng → bỏ filter.
+   */
+  listJobNames: async (
+    companyId: string,
+    keyword?: string,
+  ): Promise<Array<{ id: string; title: string }>> => {
+    const kw = keyword?.trim();
+    return db
+      .select({ id: jobs.id, title: jobs.title })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.companyId, companyId),
+          kw ? ilike(jobs.title, `%${kw}%`) : undefined,
+        ),
+      )
+      .orderBy(desc(jobs.createdAt));
+  },
+
   list: async (filters: JobListQuery, companyId?: string): Promise<{ data: JobListItem[]; total: number }> => {
     const conditions = [];
     // Logic filter status tuỳ ngữ cảnh:

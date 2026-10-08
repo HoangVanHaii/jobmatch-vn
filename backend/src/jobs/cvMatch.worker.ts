@@ -96,6 +96,8 @@ export const cvMatchWorker = new Worker(
         jobLevel: jobs.jobLevel,
         jobType: jobs.jobType,
         industry: jobs.industry,
+        // Employer nhận event 'application:scored' khi điểm chấm xong.
+        postedBy: jobs.postedBy,
       })
       .from(jobs)
       .where(eq(jobs.id, jobId))
@@ -252,6 +254,17 @@ export const cvMatchWorker = new Worker(
         matchPercent: result.data.matchPercent,
         rationale: result.data.rationale,
       });
+
+      // Employer-side: list ứng tuyển đang hiển thị score=0 lúc queue chưa
+      // xong — bắn event riêng để FE employer cập nhật điểm tức thời.
+      if (dbJob.postedBy) {
+        notificationGateway.emitToUser(dbJob.postedBy, 'application:scored', {
+          applicationId,
+          jobId,
+          matchPercent: result.data.matchPercent,
+          reason: 'success',
+        });
+      }
 
       return result.data;
     } catch (err) {

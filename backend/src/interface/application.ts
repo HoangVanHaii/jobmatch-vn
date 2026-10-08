@@ -185,6 +185,8 @@ export interface ApplicationDetail {
   aiMatchReasoning: ApplicationMatchReasoning | null;
   coverLetter: string | null;
   cv: ApplicationCvSnapshot | null;
+  /** CV id gốc — employer dùng để gọi download PDF CV direct. */
+  cvId: string;
   appliedAt: Date;
   viewedAt: Date | null;
   updatedAt: Date;

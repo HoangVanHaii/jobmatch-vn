@@ -19,6 +19,10 @@ const routes: RouteRecordRaw[] = [
   // nhưng không có route → user click → 404 → vi phạm legal compliance.
   { path: '/terms', name: 'terms', component: () => import('@views/pages/TermsView.vue') },
   { path: '/privacy', name: 'privacy', component: () => import('@views/pages/PrivacyView.vue') },
+  // Reference verification — trang PUBLIC cho referee (người tham chiếu, không
+  // có tài khoản). Token 64 hex trong URL là proof-of-access duy nhất.
+  // Link đến từ email n8n `reference_verify` (xem referenceVerify service).
+  { path: '/verify/reference/:token', name: 'reference-verify', component: () => import('@views/public/RefereeVerifyView.vue') },
   { path: '/auth/callback/:provider', name: 'oauth-callback', component: () => import('@views/auth/OAuthCallbackView.vue'),
     // Validate ngay tại route guard — invalid provider (vd user gõ /auth/callback/resumes
     // do typo hay stale tab) → redirect thẳng về /login TRƯỚC khi component mount.

@@ -27,6 +27,9 @@ jobRouter.get('/search', optionalAuth, validate(jobSearchQuerySchema, 'query'), 
 // Employer xem job của company mình — yêu cầu auth, controller tự resolve
 // companyId từ session user (qua companyMemberService.findMembershipByUserId).
 jobRouter.get('/company', auth, employerOnly, validate(jobListQuerySchema, 'query'), jobController.listOfCompany);
+// Slim list id + title cho dropdown filter đơn ứng tuyển — KHÔNG có query,
+// khai báo TRƯỚC `/:id` để Express không match "names" làm id.
+jobRouter.get('/names', auth, employerOnly, jobController.listNames);
 jobRouter.get('/industries', optionalAuth, jobController.listIndustries);
 jobRouter.get('/cities', optionalAuth, jobController.listCities);
 jobRouter.get('/job-types', optionalAuth, jobController.listJobTypes);

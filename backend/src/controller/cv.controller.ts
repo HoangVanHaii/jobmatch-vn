@@ -1,4 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
+import { and, eq } from 'drizzle-orm';
+import { db } from '../config/database';
+import { applications, companyMembers, jobs } from '../db/schema';
 import { cvService } from '../service/cv.service';
 import type { CreateCvInput, CreateDirectCvInput, CvSource, UpdateDirectCvInput } from '../interface/cv';
 import { AppError } from "../middleware/errorHandler";
@@ -228,10 +231,55 @@ notificationGateway.emitToUser(candidateId, "cv:status-changed", {
    */
   downloadPdf: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const candidateId = requireSelfCandidateId(req);
+      const userId = requireSelfCandidateId(req);
+      const role = req.user?.role;
       const { cvId } = req.params as { cvId: string };
 
-      const cv = await cvService.getDetail(candidateId, cvId);
+      // Authorization theo role:
+      //   - candidate → chỉ CV của chính mình (hành vi cũ).
+      //   - employer/admin → được tải PDF CV direct nằm trong ≥1 application
+      //     mà họ own (postedBy, hoặc active member của company post job) —
+      //     mirror ownership pattern application.service. Không own → 404
+      //     (không leak existence).
+      let ownerCandidateId = userId;
+
+      if (role === 'employer' || role === 'admin') {
+        const [appRow] = await db
+          .select({
+            candidateId: applications.candidateId,
+            postedBy: jobs.postedBy,
+            companyId: jobs.companyId,
+          })
+          .from(applications)
+          .innerJoin(jobs, eq(applications.jobId, jobs.id))
+          .where(eq(applications.cvId, cvId))
+          .limit(1);
+
+        if (!appRow) {
+          throw new AppError(404, 'CV_NOT_FOUND', 'CV not found or already deleted');
+        }
+
+        if (role !== 'admin' && appRow.postedBy !== userId) {
+          const [member] = await db
+            .select({ id: companyMembers.id })
+            .from(companyMembers)
+            .where(
+              and(
+                eq(companyMembers.companyId, appRow.companyId),
+                eq(companyMembers.userId, userId),
+                eq(companyMembers.status, 'active'),
+              ),
+            )
+            .limit(1);
+          if (!member) {
+            throw new AppError(404, 'CV_NOT_FOUND', 'CV not found or already deleted');
+          }
+        }
+
+        ownerCandidateId = appRow.candidateId;
+      }
+
+      const cv = await cvService.getDetail(ownerCandidateId, cvId);
       if (!cv) {
         throw new AppError(404, 'CV_NOT_FOUND', 'CV not found or already deleted');
       }
@@ -244,7 +292,7 @@ notificationGateway.emitToUser(candidateId, "cv:status-changed", {
           'Chỉ CV direct (tạo từ form) mới hỗ trợ render PDF. CV upload dùng /download.',
         );
       }
-      if (!cv.templateId || cv.templateId < 1 || cv.templateId > 5) {
+      if (!cv.templateId || cv.templateId < 1 || cv.templateId > 7) {
         throw new AppError(
           400,
           'CV_TEMPLATE_INVALID',

@@ -105,4 +105,13 @@ export const cvApi = {
       `/cvs/${encodeURIComponent(cvId)}/render-data`,
       { ...(token ? { params: { token } } : {}), ...config },
     ),
+
+  /**
+   * GET /cvs/:cvId/download-pdf — BE Playwright render CV direct → PDF buffer.
+   * responseType 'blob' (nhị phân, KHÔNG qua JSON envelope unwrap). Caller tự
+   * tạo objectURL + <a download> để lưu file. Employer được gọi khi CV nằm
+   * trong application mình own (BE authorize theo role).
+   */
+  downloadPdf: (cvId: string) =>
+    http.get<Blob>(`/cvs/${encodeURIComponent(cvId)}/download-pdf`, { responseType: 'blob' }),
 };

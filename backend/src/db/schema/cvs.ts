@@ -49,6 +49,14 @@ export const cvs = pgTable('cvs', {
     languages?: Array<Record<string, unknown>>;
     projects?: Array<Record<string, unknown>>;
     certifications?: Array<Record<string, unknown>>;
+    references?: Array<{
+      name: string;
+      email?: string;
+      phone?: string;
+      relationship?: string;
+      company?: string;
+      position?: string;
+    }>;
   }>(),
   ai_analysis: jsonb('ai_analysis').$type<AiAnalysis>(),
   /**

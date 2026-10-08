@@ -91,6 +91,27 @@ export const jobController = {
     } catch (err) { next(err); }
   },
 
+  /**
+   * GET /jobs/names — slim list (id + title) các job của company employer
+   * đang thuộc. Dùng cho dropdown filter đơn ứng tuyển (trang Applications).
+   * Cùng scope với listOfCompany (first active membership) để dropdown và
+   * list job page khớp nhau.
+   */
+  listNames: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      const membership = await companyMemberService.findMembershipByUserId(userId);
+      if (!membership) {
+        res.json({ success: true, data: [] });
+        return;
+      }
+      // ?keyword= optional — filter title (cap 100 ký tự chống query rác).
+      const keyword = typeof req.query.keyword === 'string' ? req.query.keyword.slice(0, 100) : undefined;
+      const data = await jobService.listJobNames(membership.companyId, keyword);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
   listOfCompany: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const filters = req.query as unknown as JobListQuery;

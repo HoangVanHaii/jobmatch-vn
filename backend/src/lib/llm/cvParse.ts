@@ -65,6 +65,14 @@ export const cvParsedDataSchema = z.object({
   skills: z.array(z.string()).optional(),
   languages: z.array(languageItemSchema).optional(),
   projects: z.array(projectItemSchema).optional(),
+  references: z.array(z.object({
+    name: z.string(),
+    email: z.string().optional(),
+    phone: z.string().optional(),
+    relationship: z.string().optional(),
+    company: z.string().optional(),
+    position: z.string().optional(),
+  })).optional(),
   certifications: z.array(certificationItemSchema).optional(),
 });
 

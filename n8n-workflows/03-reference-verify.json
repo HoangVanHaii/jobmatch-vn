@@ -17,11 +17,11 @@
     {
       "parameters": {
         "fromEmail": "no-reply@jobmatch.vn",
-        "toEmail": "={{$json.body.refereeEmail}}",
+        "toEmail": "={{$json.refereeEmail || $json.body?.refereeEmail}}",
         "subject": "Xác nhận thông tin ứng viên - JobMatch VN",
-        "text": "Xin chào {{$json.body.refereeName}},\n\nBạn được {{$json.body.candidateName}} liệt kê là người tham chiếu trong CV ứng tuyển.\n\nVui lòng xác nhận thông tin bằng cách click link:\n{{$json.body.verifyUrl}}\n\nLink có hiệu lực trong 14 ngày.\n\nCảm ơn bạn,\nJobMatch VN",
+        "text": "=Xin chào {{$json.refereeName || $json.body?.refereeName}},\n\nBạn được {{$json.candidateName || $json.body?.candidateName || 'một ứng viên'}} liệt kê là người tham chiếu trong CV ứng tuyển vị trí {{$json.jobTitle || $json.body?.jobTitle || ''}}.\n\nVui lòng xác nhận thông tin bằng cách click link:\n{{$json.verifyUrl || $json.body?.verifyUrl}}\n\nLink có hiệu lực trong 14 ngày.\n\nCảm ơn bạn,\nJobMatch VN",
         "options": {
-          "host": "localhost",
+          "host": "mailhog",
           "port": 1025
         }
       },
@@ -29,7 +29,10 @@
       "name": "Send Verify Email",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 1,
-      "position": [450, 300]
+      "position": [450, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
     }
   ],
   "connections": {

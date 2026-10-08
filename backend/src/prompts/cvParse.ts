@@ -74,6 +74,16 @@ Output schema (BẮT BUỘC trả JSON matching):
       "issuer": string?,
       "date": string?                    // "YYYY-MM"
     }
+  ]?,
+  "references": [                       // người tham chiếu — optional
+    {
+      "name": string,
+      "email"?: string,                 // null/omit nếu CV không có email
+      "phone"?: string,
+      "relationship"?: string,          // "Cựu quản lý trực tiếp", "Đồng nghiệp"...
+      "company"?: string,               // công ty tại thời điểm làm chung
+      "position"?: string                // chức danh referee (nếu CV có)
+    }
   ]?
 }
 

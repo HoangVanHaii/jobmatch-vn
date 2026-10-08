@@ -15,6 +15,11 @@ export const cvRouter = Router();
 
 cvRouter.get("/:cvId/render-data", cvController.getRenderData);
 
+// download-pdf ĐẶT TRƯỚC `use(auth, candidateOnly)` — employer cũng tải được
+// PDF CV direct (CV nằm trong application mình own). Controller tự authorize:
+// candidate = self, employer/admin = ownership qua application → jobs.
+cvRouter.get("/:cvId/download-pdf", auth, cvDownloadRateLimiter, validateCvIdParam, cvController.downloadPdf);
+
 cvRouter.use(auth, candidateOnly);
 
 cvRouter.post("/upload", auth, cvAiRateLimiter, validateCreateCv, cvController.upload);
@@ -22,8 +27,6 @@ cvRouter.post("/upload", auth, cvAiRateLimiter, validateCreateCv, cvController.u
 cvRouter.get("/", auth, validateListCvQuery, cvController.list);
 
 cvRouter.get("/:cvId", auth, validateCvIdParam, cvController.getDetail);
-
-cvRouter.get("/:cvId/download-pdf", auth, cvDownloadRateLimiter, validateCvIdParam, cvController.downloadPdf);
 
 cvRouter.post("/direct", auth, cvAiRateLimiter, validateCreateDirectCv, cvController.create);
 
