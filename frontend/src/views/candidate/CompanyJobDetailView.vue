@@ -17,7 +17,6 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   ArrowRight,
-  Loader2,
   Github,
   Twitter,
   Linkedin,
@@ -29,7 +28,7 @@ import {
 import { companyApi } from '@services/company.api'
 import { companyMemberApi } from '@services/companyMember.api'
 import type { Company } from '@/types/company'
-import type { CompanyMember } from '@/types/companyMember'
+import type { PublicCompanyMember } from '@/types/companyMember'
 
 const props = defineProps<{
   /** Optional companyId từ parent — ưu tiên hơn query param + getMyCompany fallback. */
@@ -40,7 +39,7 @@ const route = useRoute()
 
 // ===== State =====
 const company = ref<Company | null>(null)
-const members = ref<CompanyMember[]>([])
+const members = ref<PublicCompanyMember[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 
@@ -58,35 +57,39 @@ const resolveCompanyId = async (): Promise<string | null> => {
   }
 };
 
+let fetchSeq = 0;
 const fetchCompany = async (id: string): Promise<void> => {
+  const seq = ++fetchSeq;
   loading.value = true;
   error.value = null;
   try {
     // Gọi company trước, members sau — để error company không block load members.
     const companyRes = await companyApi.getById(id);
+    if (seq !== fetchSeq) return; // fetch mới hơn đã bắt đầu — bỏ kết quả stale
     company.value = companyRes.data.data;
-    console.log('[TechNovaMockup] loaded company:', company.value?.name);
   } catch (e: unknown) {
-    console.error('[TechNovaMockup] companyApi.getById failed:', e);
+    if (seq !== fetchSeq) return;
     error.value = e instanceof Error ? e.message : 'Không tải được thông tin công ty';
     company.value = null;
   }
   try {
-    const membersRes = await companyMemberApi.list(id);
+    const membersRes = await companyMemberApi.listPublic(id);
+    if (seq !== fetchSeq) return;
     members.value = membersRes.data.data ?? [];
-    console.log('[TechNovaMockup] loaded members:', members.value.length);
   } catch (e: unknown) {
-    console.error('[TechNovaMockup] companyMemberApi.list failed:', e);
+    if (seq !== fetchSeq) return;
     // Không fail toàn bộ — chỉ set rỗng, vẫn hiển thị company info.
     members.value = [];
   } finally {
-    loading.value = false;
+    // Chỉ fetch mới nhất được tắt loading — tránh fetch cũ kẹt skeleton
+    if (seq === fetchSeq) loading.value = false;
   }
 };
 
 onMounted(async () => {
   const id = await resolveCompanyId();
-  if (id) await fetchCompany(id);
+    if (id) await fetchCompany(id);
+  
 });
 
 // Re-fetch khi prop companyId đổi (vd parent truyền sang job khác)
@@ -97,9 +100,11 @@ watch(
   },
 );
 
-/** Top 3 members có avatar để hiển thị trust row. */
-const topMembers = computed(() =>
-  members.value.filter((m) => !!m.user?.avatarUrl).slice(0, 3),
+/** Trust row — chỉ member active có user info; hiển thị tối đa 3 avatar. */
+/** Server đã lọc chỉ member active — FE cắt tối đa 3 avatar + đếm +N. */
+const visibleMembers = computed(() => members.value.slice(0, 3));
+const extraMembers = computed(() =>
+  Math.max(0, members.value.length - visibleMembers.value.length),
 );
 
 /** Sub copy: ưu tiên description từ company, fallback text mặc định. */
@@ -124,14 +129,6 @@ const canToggleDesc = computed(() => heroSub.value.length > DESC_TRUNCATE_AT);
 const toggleDesc = (): void => {
   descExpanded.value = !descExpanded.value;
 };
-
-/** Hero badge: ưu tiên industry, fallback mặc định. */
-const heroBadge = computed(() => {
-  if (company.value?.industry) {
-    return `Giải pháp sáng tạo cho ${company.value.industry}`;
-  }
-  return 'Giải pháp sáng tạo cho tương lai số';
-});
 
 /** Company name hiển thị — fallback "TechNova" nếu chưa load. */
 const companyName = computed(() => company.value?.name ?? 'TechNova');
@@ -204,6 +201,15 @@ const showAllJobs = ref(false);
 /** Danh sách job an toàn (rỗng nếu company/jobs null) — dùng cho v-for + length checks. */
 const jobsList = computed(() => company.value?.jobs ?? []);
 
+/** "Liên hệ với chúng tôi" → báo parent mở popover nhắn nhanh (như tab Tổng quan). */
+const emit = defineEmits<{ (e: 'openChat'): void }>();
+
+/** "Khám phá dự án" → cuộn xuống section danh sách job. */
+const jobsSectionEl = ref<HTMLElement | null>(null);
+const scrollToJobs = (): void => {
+  jobsSectionEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
 /** Normalize URL: thêm https:// nếu thiếu protocol. */
 const normalizeUrl = (url: string): string => {
   if (!url) return '#';
@@ -269,42 +275,127 @@ const osmEmbedUrl = computed(() => {
 </script>
 
 <template>
-  <div class="font-poppins min-h-screen bg-white">
+  <div class="font-poppins bg-white">
+    <!-- ============== SKELETON (đang tải) ============== -->
+    <template v-if="loading">
+      <!-- Hero skeleton — cùng grid với hero thật để không layout shift -->
+      <section class="mx-auto max-w-[1400px] pt-4 pb-6 lg:px-6">
+        <div class="grid grid-cols-1 items-center gap-8 lg:grid-cols-[1fr_360px]">
+          <div class="animate-pulse">
+            <div class="h-5 w-40 rounded bg-slate-200" />
+
+            <div class="mt-3 space-y-2">
+              <div class="h-3 w-full max-w-xl rounded bg-slate-100" />
+              <div class="h-3 w-5/6 max-w-lg rounded bg-slate-100" />
+              <div class="h-3 w-2/3 max-w-md rounded bg-slate-100" />
+            </div>
+
+            <div class="mt-4 flex gap-4">
+              <div class="h-3 w-20 rounded bg-slate-100" />
+              <div class="h-3 w-24 rounded bg-slate-100" />
+              <div class="h-3 w-28 rounded bg-slate-100" />
+            </div>
+
+            <div class="mt-4 flex gap-3">
+              <div class="h-9 w-36 rounded-md bg-slate-200" />
+              <div class="h-9 w-28 rounded-md bg-slate-100" />
+            </div>
+
+            <div class="mt-5 flex items-center gap-3">
+              <div class="flex -space-x-2">
+                <div class="h-8 w-8 rounded-full bg-slate-200" />
+                <div class="h-8 w-8 rounded-full bg-slate-200" />
+                <div class="h-8 w-8 rounded-full bg-slate-200" />
+              </div>
+
+              <div class="h-3 w-48 rounded bg-slate-100" />
+            </div>
+          </div>
+
+          <div class="mx-auto w-full max-w-[320px] animate-pulse">
+            <div class="aspect-square w-full rounded-xl bg-slate-100" />
+          </div>
+        </div>
+      </section>
+
+      <!-- Jobs + sidebar skeleton -->
+      <section class="bg-slate-50/60 py-6">
+        <div class="mx-auto max-w-[1400px] lg:px-6">
+          <div class="animate-pulse">
+            <div class="h-5 w-48 rounded bg-slate-200" />
+            <div class="mt-3 h-3 w-80 max-w-full rounded bg-slate-100" />
+          </div>
+
+          <div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div class="animate-pulse lg:col-span-2">
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div
+                  v-for="i in 4"
+                  :key="`job-skeleton-${i}`"
+                  class="rounded-md border border-slate-200 bg-white p-4"
+                >
+                  <div class="animate-pulse">
+                    <div class="h-4 w-3/4 rounded bg-slate-200" />
+
+                    <div class="mt-2 flex gap-2">
+                      <div class="h-5 w-16 rounded-full bg-slate-100" />
+                      <div class="h-5 w-20 rounded-full bg-slate-100" />
+                    </div>
+
+                    <div class="mt-2 h-3 w-28 rounded bg-slate-100" />
+
+                    <div class="mt-2 flex justify-between">
+                      <div class="h-3 w-24 rounded bg-slate-100" />
+                      <div class="h-3 w-16 rounded bg-slate-100" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="animate-pulse space-y-4">
+              <div class="rounded-md border border-slate-200 bg-white p-4">
+                <div class="mb-3 h-3 w-32 rounded bg-slate-200" />
+
+                <div class="space-y-2">
+                  <div class="h-8 rounded-lg bg-slate-100" />
+                  <div class="h-8 rounded-lg bg-slate-100" />
+                  <div class="h-8 rounded-lg bg-slate-100" />
+                </div>
+              </div>
+
+              <div class="rounded-md border border-slate-200 bg-white p-4">
+                <div class="mb-3 h-3 w-20 rounded bg-slate-200" />
+
+                <div class="space-y-2">
+                  <div class="h-3 w-full rounded bg-slate-100" />
+                  <div class="h-3 w-4/5 rounded bg-slate-100" />
+                </div>
+
+                <div class="mt-3 h-48 rounded-lg bg-slate-100" />
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <template v-else>
     <!-- ============== TOP NAV ============== -->
    
 
     <!-- ============== HERO ============== -->
-    <section class="mx-auto max-w-[1200px] px-1 pt-5 pb-20">
-      <div class="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
+    <section class="mx-auto max-w-[1400px] pt-4 pb-6 lg:px-6">
+      <div class="grid grid-cols-1 items-center gap-8 lg:grid-cols-[1fr_360px]">
         <!-- Left: copy -->
         <div>
-          <!-- Badge -->
-          <span
-            class="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600"
-          >
-            <span class="h-1.5 w-1.5 rounded-full bg-blue-600" />
-
-            {{ heroBadge }}
-          </span>
-
           <!-- Heading -->
-          <h1 class="mt-5 text-3xl font-bold leading-tight tracking-tight text-slate-900">
-            Technology by
-            <br />
-
-            <span class="font-bold text-slate-900">
-              {{ companyName }}.
-            </span>
-
-            <br />
-
-            <span class="font-bold text-slate-400">
-              {{ company?.industry ?? 'Design' }}.
-            </span>
+          <h1 class="text-[15.5px] font-semibold tracking-tight text-slate-900">
+            {{ companyName }}
           </h1>
 
           <!-- Sub copy -->
-          <p class="mt-6 max-w-md text-sm leading-relaxed text-slate-500">
+          <p class="mt-3 text-[12.5px] leading-[1.55] text-slate-500">
             {{ displayDesc }}
 
             <button
@@ -313,7 +404,7 @@ const osmEmbedUrl = computed(() => {
               class="ml-1 font-medium text-blue-600 hover:underline focus:outline-none"
               @click="toggleDesc"
             >
-              {{ descExpanded ? 'see less' : '… see more' }}
+              {{ descExpanded ? '...see less' : '...see more' }}
             </button>
           </p>
 
@@ -322,8 +413,9 @@ const osmEmbedUrl = computed(() => {
             v-if="
               company?.sizeRange || foundedDate || company?.website || company?.industry
             "
-            class="mt-7 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500"
+            class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-slate-500"
           >
+            <span v-if="company?.industry">{{ company.industry }}</span>
             <span v-if="company?.sizeRange" class="inline-flex items-center gap-1.5">
               <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-5a4 4 0 11-8 0 4 4 0 018 0zm6 0a4 4 0 11-8 0 4 4 0 018 0z" />
@@ -356,35 +448,38 @@ const osmEmbedUrl = computed(() => {
           </div>
 
           <!-- CTA buttons -->
-          <div class="mt-7 flex flex-wrap items-center gap-3">
+          <div class="mt-4 flex flex-wrap items-center gap-3">
             <button
-              class="inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
+              type="button"
+              class="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3.5 py-2 text-[12.5px] font-medium text-white transition hover:bg-blue-700"
+              @click="emit('openChat')"
             >
-              Bắt đầu dự án mới
+              Liên hệ với chúng tôi
 
-              <ArrowRight :size="16" />
+              <ArrowRight :size="14" />
             </button>
 
             <button
-              class="rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              type="button"
+              class="rounded-md border border-slate-200 bg-white px-3.5 py-[7px] text-[12.5px] font-medium text-slate-700 transition hover:bg-slate-50"
+              @click="scrollToJobs"
             >
               Khám phá dự án
             </button>
           </div>
 
           <!-- Trust -->
-          <div class="mt-8 flex items-center gap-3">
+          <div v-if="visibleMembers.length > 0" class="mt-5 flex items-center gap-3">
             <div class="flex -space-x-2">
-              <template v-if="members.length > 0">
+              <template v-for="m in visibleMembers" :key="m.id">
                 <div
-                  v-for="m in members"
-                  :key="m.id"
                   class="relative h-8 w-8 shrink-0 overflow-hidden rounded-full border-2 border-white bg-blue-600"
+                  :title="m.fullName ?? ''"
                 >
                   <img
-                    v-if="m.user?.avatarUrl"
-                    :src="m.user.avatarUrl"
-                    :alt="m.user?.fullName ?? ''"
+                    v-if="m.avatarUrl"
+                    :src="m.avatarUrl"
+                    :alt="m.fullName ?? ''"
                     class="h-full w-full object-cover"
                   />
 
@@ -392,35 +487,28 @@ const osmEmbedUrl = computed(() => {
                     v-else
                     class="absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-white"
                   >
-                    {{ (m.user?.fullName ?? '?').charAt(0).toUpperCase() }}
+                    {{ (m.fullName ?? '?').charAt(0).toUpperCase() }}
                   </span>
                 </div>
               </template>
 
-              <template v-else>
-                <div
-                  v-for="i in 3"
-                  :key="`placeholder-${i}`"
-                  class="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-blue-600 text-[10px] font-semibold text-white"
-                >
-                  ?
-                </div>
-              </template>
+              <div
+                v-if="extraMembers > 0"
+                class="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-blue-600 text-[10px] font-semibold text-white"
+              >
+                +{{ extraMembers }}
+              </div>
             </div>
 
-            <p class="text-xs text-slate-500">
-              {{
-                members.length > 0
-                  ? `Được tin dùng bởi ${members.length} thành viên và các doanh nghiệp đang phát triển`
-                  : 'Được các startup và doanh nghiệp đang phát triển tin dùng'
-              }}
+            <p class="text-[11px] text-slate-500">
+              {{ members.length }} thành viên đang làm việc tại {{ companyName }}
             </p>
           </div>
         </div>
 
         <!-- Right: image card -->
         <div class="relative">
-          <div class="overflow-hidden rounded-3xl bg-slate-100 shadow-xl">
+          <div class="mx-auto max-w-[320px] overflow-hidden rounded-xl bg-slate-100 shadow-xl">
             <img
               v-if="logoUrl"
               :src="logoUrl"
@@ -441,35 +529,27 @@ const osmEmbedUrl = computed(() => {
     </section>
 
     <!-- ============== WHY CHOOSE ============== -->
-    <section class="bg-slate-50/60 py-20">
-      <div class="mx-auto max-w-[1200px] px-8">
-        <div class="text-center">
-          <h2 class="text-3xl font-bold tracking-tight text-slate-900">
+    <section ref="jobsSectionEl" class="bg-slate-50/60 py-6">
+      <div class="mx-auto max-w-[1400px] lg:px-6">
+        <div>
+          <h2 class="text-[15.5px] font-semibold tracking-tight text-slate-900">
             Khám phá {{ companyName }}
           </h2>
 
-          <p class="mx-auto mt-3 max-w-xl text-sm text-slate-500">
+          <p class="mt-3 max-w-xl text-sm text-slate-500">
             Các vị trí đang tuyển dụng tại {{ companyName }} — cập nhật trực tiếp từ hệ thống.
           </p>
         </div>
 
-        <div class="mt-12 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <!-- LEFT: jobs -->
           <div class="lg:col-span-2">
-            <!-- Loading skeleton -->
-            <div
-              v-if="loading && (!company?.jobs || company.jobs.length === 0)"
-              class="flex justify-center py-10"
-            >
-              <Loader2 class="h-6 w-6 animate-spin text-slate-400" />
-            </div>
-
             <!-- Empty state -->
             <div
-              v-else-if="!company?.jobs || company.jobs.length === 0"
+              v-if="!company?.jobs || company.jobs.length === 0"
               class="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center"
             >
-              <p class="text-sm text-slate-500">
+              <p class="text-[12.5px] leading-[1.55] text-slate-500">
                 Hiện chưa có bài đăng tuyển dụng nào.
               </p>
             </div>
@@ -479,9 +559,9 @@ const osmEmbedUrl = computed(() => {
               <article
                 v-for="job in showAllJobs ? jobsList : jobsList.slice(0, 6)"
                 :key="job.id"
-                class="rounded-md border border-slate-200 bg-white p-5 transition hover:border-blue-300 hover:shadow-md"
+                class="rounded-md border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:shadow-md"
               >
-                <h3 class="text-base font-semibold text-slate-900">
+                <h3 class="text-sm font-semibold text-slate-900">
                   {{ job.title }}
                 </h3>
 
@@ -503,7 +583,7 @@ const osmEmbedUrl = computed(() => {
 
                 <p
                   v-if="job.salaryMin || job.salaryMax"
-                  class="mt-3 text-sm font-medium text-slate-700"
+                  class="mt-2 text-[12.5px] font-semibold text-slate-700"
                 >
                   {{
                     job.salaryMin && job.salaryMax
@@ -514,11 +594,11 @@ const osmEmbedUrl = computed(() => {
 
                 <div
                   v-if="jobLocation(job.location) || job.slug"
-                  class="mt-3 flex items-center justify-between gap-2"
+                  class="mt-2 flex items-center justify-between gap-2"
                 >
                   <p
                     v-if="jobLocation(job.location)"
-                    class="text-xs text-slate-500"
+                    class="text-[11px] text-slate-500"
                   >
                     📍 {{ jobLocation(job.location) }}
                   </p>
@@ -539,11 +619,11 @@ const osmEmbedUrl = computed(() => {
             <!-- Xem thêm / Thu gọn -->
             <div
               v-if="jobsList.length > 6"
-              class="mt-8 flex justify-center"
+              class="mt-5 flex justify-center"
             >
               <button
                 type="button"
-                class="rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                class="rounded-md border border-slate-200 bg-white px-3.5 py-[7px] text-[12.5px] font-medium text-slate-700 transition hover:bg-slate-50"
                 @click="showAllJobs = !showAllJobs"
               >
                 {{ showAllJobs ? 'Thu gọn' : `Xem thêm (${jobsList.length - 6})` }}
@@ -552,11 +632,11 @@ const osmEmbedUrl = computed(() => {
           </div>
 
           <!-- RIGHT: social + address sidebar -->
-          <aside class="space-y-6">
+          <aside class="space-y-4">
             <!-- Social links -->
             <div
               v-if="company?.social && Object.keys(company.social).length > 0"
-              class="rounded-md border border-slate-200 bg-white p-5"
+              class="rounded-md border border-slate-200 bg-white p-4"
             >
               <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Liên kết mạng xã hội
@@ -569,7 +649,7 @@ const osmEmbedUrl = computed(() => {
                   :href="normalizeUrl(url)"
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="inline-flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2 text-sm text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
+                  class="inline-flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2 text-[12.5px] text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
                 >
                   <span class="flex items-center gap-2">
                     <component
@@ -601,13 +681,13 @@ const osmEmbedUrl = computed(() => {
             <!-- Address -->
             <div
               v-if="company?.address && hasAddress(company.address)"
-              class="rounded-md border border-slate-200 bg-white p-5"
+              class="rounded-md border border-slate-200 bg-white p-4"
             >
               <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Địa chỉ
               </h3>
 
-              <div class="flex items-start gap-2 text-sm text-slate-700">
+              <div class="flex items-start gap-2 text-[12.5px] text-slate-700">
                 <svg
                   class="mt-0.5 h-4 w-4 shrink-0 text-slate-400"
                   fill="none"
@@ -628,7 +708,7 @@ const osmEmbedUrl = computed(() => {
                   />
                 </svg>
 
-                <p class="leading-relaxed">
+                <p class="leading-[1.55]">
                   {{ addressText(company.address) }}
                 </p>
               </div>
@@ -652,6 +732,7 @@ const osmEmbedUrl = computed(() => {
         </div>
       </div>
     </section>
+    </template>
   </div>
 </template>
 

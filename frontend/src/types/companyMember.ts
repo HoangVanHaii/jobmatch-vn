@@ -39,6 +39,14 @@ export interface CompanyMemberUserInfo {
   avatarUrl: string | null;
 }
 
+/** Member active dạng rút gọn từ GET /companies/:id/members/public —
+ *  profile công khai cho candidate (chỉ tên + avatar, không email/role). */
+export interface PublicCompanyMember {
+  id: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+}
+
 /**
  * Một dòng trong bảng company_members — BE trả kèm user info từ
  * listByCompany / accept / decline / remove / leave.
