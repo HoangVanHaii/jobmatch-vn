@@ -24,6 +24,7 @@ import {
 } from '../db/schema';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
+import { getPgErrorCode } from '../utils/pgError';
 import { logger } from '../config/logger';
 import { notificationService } from './notification.service';
 import { notificationGateway } from '../socket/notificationGateway';
@@ -362,7 +363,10 @@ export const create = async (
     return created;
   } catch (err) {
     // PostgreSQL unique violation (23505) — trùng (cv_id, job_id).
-    if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+    // M-01 fix: drizzle-orm 0.45 bọc driver error trong DrizzleQueryError
+    // (mã thật ở .cause) — đọc err.code trực tiếp không bắt được → 500 thay
+    // vì 409. Dùng getPgErrorCode duyệt chain .cause.
+    if (getPgErrorCode(err) === '23505') {
       throw new AppError(
         409,
         'ALREADY_APPLIED',
