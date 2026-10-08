@@ -48,7 +48,6 @@ import {
   BookOpen,
   Users,
   X,
-  HelpCircle,
 } from 'lucide-vue-next';
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
@@ -64,7 +63,6 @@ import { useSavedJobStore } from '@stores/savedJob';
 import { useAuthStore } from '@stores/auth';
 import { uploadApi, formatFileSize } from '@services/upload.api';
 import { fileIconInfo } from '@utils/fileIcon';
-import CompanyMap from '@components/candidate/CompanyMap.vue';
 import {
   APPLICANTS_CHART_DATA,
   MOCK_KEY_RESPONSIBILITIES,
@@ -74,7 +72,7 @@ import type { Company } from '@/types/company';
 import type { Socket } from 'socket.io-client';
 import { getSocket } from '@services/socket';
 import ApplyJob from '@components/job/ApplyJob.vue';
-import TechNovaMockupView from '@views/employer/TechNovaMockupView.vue';
+import TechNovaMockupView from '@views/candidate/CompanyJobDetailView.vue';
 import type {
   ApplicationMatchReadyPayload,
   ApplicationMatchSkippedPayload,
@@ -495,8 +493,10 @@ const fetchDetail = async () => {
   }
 };
 
-onMounted(() => {
-  void fetchDetail();
+onMounted(async () => {
+  // fetchDetail phải xong trước (job.value có id) rồi mới fetch myFeedback —
+  // nếu chạy song song, fetchMyFeedback early-return do job.value = null.
+  await fetchDetail();
   void savedJobStore.fetchIds();
   void fetchMyFeedback();
   void fetchMyApplicationStatus();
@@ -1020,14 +1020,6 @@ const cancelEditFeedback = (): void => {
           <div class="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              aria-label="Trợ giúp"
-              title="Trợ giúp"
-              class="h-8 w-8 grid place-items-center rounded-md border border-[#EEF1F5] bg-white text-[#334155] hover:bg-[#F8FAFB]"
-            >
-              <HelpCircle class="w-4 h-4" />
-            </button>
-            <button
-              type="button"
               class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition inline-flex items-center gap-1.5"
               @click="onApply"
             >
@@ -1179,9 +1171,9 @@ const cancelEditFeedback = (): void => {
                   </div>
                 </div>
                 <div>
-                  <div class="text-[10.5px] text-[#64748B] mb-0.5">Yêu cầu</div>
+                    <div class="text-[10.5px] text-[#64748B] mb-0.5">Cấp bậc</div>
                   <div class="text-[12.5px] font-semibold text-[#0F172A]">
-                    {{  '—' }}
+                    {{ formatJobLevel(job.jobLevel) || '—' }}
                   </div>
                 </div>
               </div>
@@ -1332,19 +1324,22 @@ const cancelEditFeedback = (): void => {
                 </div>
               </header>
 
+              <!-- Chưa apply (đã đăng nhập): chỉ banner nhắc — không render form -->
               <div
-                v-if="isCandidateLoggedIn"
+                v-if="isCandidateLoggedIn && !canRateFeedback"
+                class="mb-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900"
+              >
+                <AlertCircle class="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>
+                  Bạn cần <strong>ứng tuyển job này bằng ít nhất 1 CV</strong> trước khi đánh giá.
+                </span>
+              </div>
+
+              <!-- Form đánh giá — chỉ hiện khi đã apply -->
+              <div
+                v-else-if="canRateFeedback"
                 class="border border-[#EEF1F5] rounded-lg p-4 bg-[#F8FAFB] mb-4"
               >
-                <div
-                  v-if="!canRateFeedback"
-                  class="mb-3 flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900"
-                >
-                  <AlertCircle class="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>
-                    Bạn cần <strong>ứng tuyển job này bằng ít nhất 1 CV</strong> trước khi đánh giá.
-                  </span>
-                </div>
                 <p class="text-[11px] font-bold tracking-wider text-[#64748B] mb-2.5">
                   {{ isEditingFeedback ? 'SỬA ĐÁNH GIÁ CỦA BẠN' : 'CHIA SẺ TRẢI NGHIỆM CỦA BẠN' }}
                 </p>
@@ -1482,12 +1477,6 @@ const cancelEditFeedback = (): void => {
                     class="ml-1 text-[11px] font-medium text-[#64748B]"
                   >({{ applicationList.length }})</span>
                 </h3>
-                <button
-                  class="h-6 w-6 grid place-items-center rounded-md hover:bg-[#F8FAFB] text-[#64748B]"
-                  aria-label="More"
-                >
-                  <MoreHorizontal class="w-3.5 h-3.5" />
-                </button>
               </div>
 
               <!-- Chưa login -->
@@ -1531,15 +1520,6 @@ const cancelEditFeedback = (): void => {
                         {{ app.cvTitle ?? '(CV đã xoá)' }}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      class="shrink-0 h-6 w-6 grid place-items-center rounded-md hover:bg-white text-[#64748B]"
-                      :aria-label="`Xem chi tiết đơn ${app.cvTitle ?? ''}`"
-                      :title="`Mở chi tiết đơn ${app.cvTitle ?? ''}`"
-                      @click="goToMyApplication(app.applicationId)"
-                    >
-                      <MoreHorizontal class="w-3.5 h-3.5" />
-                    </button>
                   </header>
 
                   <!-- Ready: hiển thị điểm + 3 bars + criteria list -->
@@ -1639,9 +1619,13 @@ const cancelEditFeedback = (): void => {
         </template>
         <!-- /Overview tab -->
 
-        <!-- Company_test tab — embed TechNovaMockupView để xem nhanh UI mock -->
+        <!-- Company tab — nhúng profile công ty; nút "Khám phá dự án" emit
+             openChat → parent mở popover nhắn nhanh có sẵn -->
         <template v-if="activeTab === 'company'">
-          <TechNovaMockupView :company-id="job?.companyId ?? null" />
+          <TechNovaMockupView
+            :company-id="job?.companyId ?? null"
+            @open-chat="toggleChat"
+          />
         </template>
         </div>
       </main>

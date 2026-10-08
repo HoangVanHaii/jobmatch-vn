@@ -74,6 +74,18 @@ companyMemberRouter.get(
 );
 
 /* ============================================================================
+ * GET /companies/:companyId/members/public — member active dạng rút gọn cho
+ * profile công khai (candidate Job Detail tab "Công ty").
+ * Chỉ trả fullName + avatarUrl — không email/role/invite metadata.
+ * Cần đăng nhập (auth) nhưng KHÔNG cần là member của công ty.
+ * ==========================================================================*/
+companyMemberRouter.get(
+  '/:companyId/members/public',
+  validateCompanyIdParams,
+  companyMemberController.listPublic,
+);
+
+/* ============================================================================
  * POST /companies/:companyId/members/invite — owner invite / re-invite
  * (Service tự phân nhánh case 1, 8, 9, 10 theo status của existing row)
  * ==========================================================================*/
