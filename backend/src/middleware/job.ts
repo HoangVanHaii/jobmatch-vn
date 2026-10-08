@@ -47,11 +47,35 @@ export const jobApplicantsOverTimeQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(90).default(10),
 });
 
+/**
+ * Query param multi-value cho jobType/jobLevel — filter multi-select trên
+ * trang việc làm (`?jobType=full-time,internship`). Chấp nhận:
+ *  - single string (request cũ `?jobType=full-time`) → mảng 1 phần tử
+ *  - CSV string `a,b` → split + trim + bỏ rỗng + dedupe
+ *  - array từ Express khi query key bị lặp (`?jobType=a&jobType=b`)
+ * Sau parse: rỗng hoàn toàn → `undefined` (không filter, không 400 cho
+ * `?jobType=`); mỗi phần tử vẫn do `item` (z.enum) validate chặt → giá trị
+ * lạ trả 400. Pattern split-CSV reuse từ `status` ở jobListQuerySchema.
+ */
+const csvEnumArray = <T extends z.ZodTypeAny>(item: T, max: number) =>
+  z.preprocess(
+    (v) => {
+      if (v === undefined || v === null) return undefined;
+      const raw = Array.isArray(v)
+        ? v.flatMap((x) => String(x).split(','))
+        : String(v).split(',');
+      const list = Array.from(new Set(raw.map((s) => s.trim()).filter(Boolean)));
+      return list.length > 0 ? list : undefined;
+    },
+    z.array(item).max(max).optional(),
+  );
+
 
 export const jobListQuerySchema = z.object({
   search: z.string().min(1).optional(),
-  jobLevel: jobLevelEnum.optional(),
-  jobType: jobTypeEnum.optional(),
+  // Multi-select (CSV/repeated-key) — BE lọc bằng IN; single cũ vẫn parse được.
+  jobLevel: csvEnumArray(jobLevelEnum, 7),
+  jobType: csvEnumArray(jobTypeEnum, 5),
 
   /**
    * Filter theo status job. Có thể truyền nhiều giá trị phân cách dấu phẩy,

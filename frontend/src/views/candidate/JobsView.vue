@@ -53,6 +53,20 @@ const queryNum = (key: string): number | null => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
 };
+/**
+ * Đọc query param multi-value (multi-select filter): nhận cả CSV
+ * `?type=full-time,internship` lẫn repeated key `?type=a&type=b` (Vue Router
+ * trả string[]). Split + trim + bỏ rỗng + dedupe. Giá trị lạ CHƯA lọc ở đây —
+ * phần hydrate chỉ tick option khớp enum load từ API, nên giá trị lạ tự bị
+ * bỏ và không bao giờ gửi lên BE.
+ */
+const queryCsv = (key: string): string[] => {
+  const raw = route.query[key];
+  const parts = (Array.isArray(raw) ? raw : [raw])
+    .filter((v): v is string => typeof v === 'string')
+    .flatMap((v) => v.split(','));
+  return Array.from(new Set(parts.map((s) => s.trim()).filter(Boolean)));
+};
 
 /** Filters đọc từ URL lúc mount — dùng để init state bên dưới. `type`/`level`
  *  chưa validate chống enum thật — chỉ được dùng khi khớp option load từ API
@@ -60,8 +74,8 @@ const queryNum = (key: string): number | null => {
 const initialFilters = {
   search: queryString('keyword') ?? '',
   location: queryString('location'),
-  jobType: queryString('type') as JobType | null,
-  jobLevel: queryString('level') as JobLevel | null,
+  jobType: queryCsv('type') as JobType[],
+  jobLevel: queryCsv('level') as JobLevel[],
   salaryMin: queryNum('salaryMin'),
   salaryMax: queryNum('salaryMax'),
   page: Math.max(1, queryNum('page') ?? 1),
@@ -86,12 +100,14 @@ const sidebarLocationRef = useTemplateRef<HTMLElement>('sidebarLocation');
 const searchBarLocationRef = useTemplateRef<HTMLElement>('searchBarLocation');
 const searchBarJobTypeRef = useTemplateRef<HTMLElement>('searchBarJobType');
 
-/** Label hiển thị trên button JobType search bar — lấy luôn `t.label` từ
- *  `jobTypes` để đồng nhất với sidebar + dropdown options (cùng string).
- *  `null` = Any. */
+/** Label hiển thị trên button JobType search bar — multi-select: 0 chọn →
+ *  null (placeholder "Hình thức"); 1 chọn → label option; nhiều → "N hình
+ *  thức" (đếm để label không làm vỡ layout khi chọn nhiều). */
 const searchBarJobTypeLabel = computed<string | null>(() => {
-  const picked = jobTypes.value.find((o) => o.checked);
-  return picked ? picked.label : null;
+  const picked = jobTypes.value.filter((o) => o.checked);
+  if (picked.length === 0) return null;
+  if (picked.length === 1) return picked[0].label;
+  return `${picked.length} hình thức`;
 });
 
 /** Các filter đang active hiển thị dưới "Search result" — list string ngắn
@@ -134,22 +150,24 @@ const activeFilterChips = computed<FilterChip[]>(() => {
       icon: LOCATION_CHIP.icon,
     });
   }
-  const pickedType = jobTypes.value.find((o) => o.checked);
-  if (pickedType) {
-    const meta = JOB_TYPE_CHIP[pickedType.key];
+  // Multi-select: mỗi option đang checked là 1 chip riêng (key chứa enum key
+  // để v-for diff đúng khi thêm/bớt).
+  for (const t of jobTypes.value) {
+    if (!t.checked) continue;
+    const meta = JOB_TYPE_CHIP[t.key];
     chips.push({
-      key: `type-${pickedType.key}`,
-      label: pickedType.label,
+      key: `type-${t.key}`,
+      label: t.label,
       class: meta.class,
       icon: meta.icon,
     });
   }
-  const pickedLevel = jobLevels.value.find((o) => o.checked);
-  if (pickedLevel) {
-    const meta = JOB_LEVEL_CHIP[pickedLevel.key];
+  for (const l of jobLevels.value) {
+    if (!l.checked) continue;
+    const meta = JOB_LEVEL_CHIP[l.key];
     chips.push({
-      key: `level-${pickedLevel.key}`,
-      label: pickedLevel.label,
+      key: `level-${l.key}`,
+      label: l.label,
       class: meta.class,
       icon: meta.icon,
     });
@@ -169,19 +187,20 @@ const activeFilterChips = computed<FilterChip[]>(() => {
   return chips;
 });
 
-/** Click 1 option JobType từ dropdown search bar — đồng bộ với sidebar
- *  bằng cách reuse `onJobTypeToggle` (single-select + clear). */
+/** Click 1 option JobType từ dropdown search bar — toggle độc lập option đó
+ *  (multi-select, đồng bộ tự động với sidebar vì cùng ref `jobTypes`).
+ *  KHÔNG đóng dropdown sau mỗi lần chọn — user tick nhiều option liên tiếp,
+ *  đóng bằng onClickOutside khi click ra ngoài. `null` ("Tất cả") → bỏ tick
+ *  toàn bộ. */
 const onSearchBarJobTypeSelect = (key: JobType | null): void => {
   if (key === null) {
-    // Clear tất cả — tìm option đang checked và uncheck.
     for (const t of jobTypes.value) {
-      if (t.checked) t.checked = false;
+      t.checked = false;
     }
     return;
   }
   const target = jobTypes.value.find((o) => o.key === key);
-  if (target && !target.checked) onJobTypeToggle(target);
-  searchBarJobTypeOpen.value = false;
+  if (target) target.checked = !target.checked;
 };
 
 
@@ -201,9 +220,8 @@ const toggleSection = (key: string): void => {
 
 
 /** Job Type checkboxes — UI giữ nguyên từ mockup, key ánh xạ sang enum backend.
- *  Backend chỉ nhận 1 `jobType` / query → treat như radio (chọn 1 checkbox
- *  thì uncheck các cái còn lại). Click vào checkbox đang checked → uncheck
- *  để clear filter.
+ *  Multi-select: nhiều checkbox có thể checked cùng lúc, BE nhận CSV
+ *  `?jobType=a,b` và lọc IN. Click checkbox đang checked → bỏ tick.
  *
  *  Lưu ý: `remote` và `student` không phải enum JobType thật của BE — map:
  *    - `remote`      → toggle `remoteOk=true` (xem watcher bên dưới)
@@ -214,7 +232,7 @@ const toggleSection = (key: string): void => {
  * JobType enum values load từ `GET /jobs/job-types` — sync với BE enum
  * `job_type`. Mapping `key → label` ở client để hiển thị tiếng Việt thân thiện
  * (vd "full-time" → "Toàn thời gian"). Mỗi option có `checked` để UI dùng
- * single-select (xem `onJobTypeToggle`).
+ * multi-select (xem `onJobTypeToggle`).
  *
  * Cũ từng hardcode 5 option (full-time/part-time/remote/student/contract) —
  * 'remote' map sang `remoteOk=true` (khác field), 'student' là mockup-only.
@@ -260,16 +278,10 @@ const JOB_LEVEL_LABELS: Record<JobLevel, string> = {
 const jobLevels = ref<JobLevelOption[]>([]);
 
 
-/** Toggle một option JobType. Single-select (radio) + cho phép clear khi
- *  click vào option đang checked. */
+/** Toggle một option JobType — multi-select checkbox: mỗi option độc lập,
+ *  click option đang checked → bỏ tick, chưa checked → tick thêm. */
 const onJobTypeToggle = (clicked: JobTypeOption): void => {
-  if (clicked.checked) {
-    // Click vào option đang checked → uncheck (clear filter).
-    clicked.checked = false;
-    return;
-  }
-  for (const t of jobTypes.value) t.checked = false;
-  clicked.checked = true;
+  clicked.checked = !clicked.checked;
 };
 
 
@@ -485,8 +497,8 @@ watch(
  * URL tự bị bỏ qua: không option nào khớp → key undefined, không gửi lên BE.
  */
 const currentFilterQuery = (): ListJobQuery => {
-  const pickedType = jobTypes.value.find((o) => o.checked);
-  const pickedLevel = jobLevels.value.find((o) => o.checked);
+  const selectedTypes = jobTypes.value.filter((o) => o.checked).map((o) => o.key);
+  const selectedLevels = jobLevels.value.filter((o) => o.checked).map((o) => o.key);
   const [lo, hi] = salaryRange.value;
   // Skip salary filter khi slider ở đúng bounds (tolerance 1 VND cho
   // float precision edge case) → tránh request thừa + index scan.
@@ -495,8 +507,10 @@ const currentFilterQuery = (): ListJobQuery => {
   return {
     search: debouncedKeyword.value.trim() || undefined,
     locationCity: selectedLocation.value ?? undefined,
-    jobType: pickedType?.key,
-    jobLevel: pickedLevel?.key,
+    // Multi-select: mảng (serializer http.ts ép String() thành CSV). Rỗng →
+    // undefined để store xoá key qua merge spread, không truyền [].
+    jobType: selectedTypes.length > 0 ? selectedTypes : undefined,
+    jobLevel: selectedLevels.length > 0 ? selectedLevels : undefined,
     salaryMin: atMinBound ? undefined : Math.round(lo),
     salaryMax: atMaxBound ? undefined : Math.round(hi),
   };
@@ -512,23 +526,18 @@ const syncQueryToUrl = (): void => {
   const query: Record<string, string> = {};
   if (q.search) query.keyword = q.search;
   if (q.locationCity) query.location = q.locationCity;
-  if (q.jobType) query.type = q.jobType;
-  if (q.jobLevel) query.level = q.jobLevel;
+  // Multi-select → CSV, thứ tự ổn định theo thứ tự option hiện có.
+  if (Array.isArray(q.jobType) && q.jobType.length > 0) query.type = q.jobType.join(',');
+  if (Array.isArray(q.jobLevel) && q.jobLevel.length > 0) query.level = q.jobLevel.join(',');
   if (q.salaryMin != null) query.salaryMin = String(q.salaryMin);
   if (q.salaryMax != null) query.salaryMax = String(q.salaryMax);
   if (page.value > 1) query.page = String(page.value);
   void router.replace({ query });
 };
 
-/** Toggle JobLevel option — single-select (radio) + clear khi click option
- *  đang checked. Logic giống `onJobTypeToggle`. */
+/** Toggle JobLevel option — multi-select, logic giống `onJobTypeToggle`. */
 const onJobLevelToggle = (clicked: JobLevelOption): void => {
-  if (clicked.checked) {
-    clicked.checked = false;
-    return;
-  }
-  for (const l of jobLevels.value) l.checked = false;
-  clicked.checked = true;
+  clicked.checked = !clicked.checked;
 };
 
 onMounted(() => {
@@ -564,12 +573,14 @@ onMounted(async () => {
         jobTypes.value = data.data.map((key) => ({
           key: key as JobType,
           label: JOB_TYPE_LABELS[key as JobType] ?? key,
-          checked: key === initialFilters.jobType,
+          // Hydrate multi-select: tick mọi giá trị URL khớp enum — giá trị lạ
+          // không khớp option nào → tự bị bỏ, không bao giờ gửi lên BE.
+          checked: initialFilters.jobType.includes(key as JobType),
         }));
         // Option khôi phục nằm ngoài 2 option đầu → mở "Xem hết" để user
         // thấy checkbox đang checked.
         const topKeys = jobTypes.value.slice(0, VISIBLE_JOB_TYPES_COUNT).map((o) => o.key);
-        if (initialFilters.jobType && !topKeys.includes(initialFilters.jobType)) {
+        if (initialFilters.jobType.some((t) => !topKeys.includes(t))) {
           showAllJobTypes.value = true;
         }
       })
@@ -582,7 +593,8 @@ onMounted(async () => {
         jobLevels.value = data.data.map((key) => ({
           key: key as JobLevel,
           label: JOB_LEVEL_LABELS[key as JobLevel] ?? key,
-          checked: key === initialFilters.jobLevel,
+          // Hydrate multi-select — tương tự jobTypes.
+          checked: initialFilters.jobLevel.includes(key as JobLevel),
         }));
       })
       .catch((e) => { console.error('Load job-levels failed:', e); }),

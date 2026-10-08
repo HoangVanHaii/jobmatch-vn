@@ -286,8 +286,14 @@ export interface SalaryRangeResponse {
 /** Query params cho GET /jobs. Mọi field optional — backend default = không filter. */
 export interface ListJobQuery {
   search?: string;
-  jobLevel?: JobLevel;
-  jobType?: JobType;
+  /**
+   * Multi-select filter — backend Zod parse CSV (`jobType=a,b`) lẫn single cũ
+   * (`jobType=a`) thành array. Union giữ tương thích caller single-select cũ
+   * (employer PostedJobsView, admin store) — họ truyền 1 giá trị vẫn chạy vì
+   * serializer (http.ts) ép String() thành CSV 1 phần tử.
+   */
+  jobLevel?: JobLevel | JobLevel[];
+  jobType?: JobType | JobType[];
   /**
    * Filter theo status. Single value là đủ cho UI dropdown hiện tại.
    * Backend (Zod) cũng chấp nhận comma-joined string `?status=live,ai_scanning`
