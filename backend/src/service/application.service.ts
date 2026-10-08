@@ -1038,38 +1038,6 @@ export const recomputeMatch = async (
   };
 };
 
-/**
- * Candidate rút đơn ứng tuyển — dùng cho `PATCH /applications/:id/withdraw`.
- *
- * Quy tắc rút:
- *   - Chỉ candidate sở hữu application mới được rút (auth scoping).
- *   - CHỈ cho phép rút khi status hiện tại là `pending` hoặc `viewed`.
- *     Lý do: sau khi vào screening/interview/offered thì candidate đã "engage"
- *     với employer nặng hơn — việc rút không hợp lý về mặt UX. Nếu muốn
- *     dừng thì candidate nên reply trực tiếp + để employer đổi status sang
- *     `rejected`.
- *   - KHÔNG cho rút khi:
- *       - `hired` (đã nhận job)
- *       - `rejected` (đã bị từ chối — không cần rút)
- *       - `withdrawn` (đã rút rồi — idempotent return success)
- *
- * Flow:
- *   1. Verify application tồn tại + thuộc candidate.
- *   2. Verify status transition hợp lệ (pending|viewed → withdrawn).
- *   3. UPDATE status='withdrawn', stage=null.
- *   4. Notify employer (best-effort, void) — type=application_withdrawn để
- *      employer bell + tab ứng tuyển realtime.
- *
- * Idempotent:
- *   - Nếu application đã ở status='withdrawn' → trả success (không throw 409).
- *     Hợp lý vì user có thể double-click nút "Rút đơn".
- *
- * Lưu ý:
- *   - KHÔNG xoá row, chỉ flip status. Lý do: giữ audit trail (employer có thể
- *     xem lại "candidate X đã apply rồi rút" qua filter status='withdrawn').
- *   - KHÔNG gọi notification 'application_new' hay 'application_match_ready'
- *     (đã qua rồi). Chỉ bắn 1 notification mới: application_withdrawn.
- */
 export const withdraw = async (
   applicationId: string,
   candidateId: string,

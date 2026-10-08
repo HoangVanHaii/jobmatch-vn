@@ -18,6 +18,7 @@ import {
   ArrowDown,
   RefreshCw,
   Loader2,
+  Check,
   Eye,
   FileText,
   ExternalLink,
@@ -37,6 +38,7 @@ import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue'
 import CvDetailView from '@components/cv/CvDetailView.vue';
 import { buildRenderData } from '@/composables/cvRenderData';
 import { clampTemplateId } from '@/utils/cvTemplates';
+import { STATUS_STAGE_PRESETS } from '@/utils/applicationStages';
 import type { Cv } from '@/types/cv';
 import type {
   ApplicationDetail,
@@ -211,7 +213,7 @@ const toggleJobSelect = (): void => {
   }
 };
 
-/** Click ngoài combobox → đóng cả 2 dropdown (job + status). */
+/** Click ngoài combobox → đóng cả 3 dropdown (job + status + stage preset). */
 const onDocClick = (e: MouseEvent): void => {
   const target = e.target as Node;
   if (jobSelectRoot.value && !jobSelectRoot.value.contains(target)) {
@@ -219,6 +221,9 @@ const onDocClick = (e: MouseEvent): void => {
   }
   if (statusSelectRoot.value && !statusSelectRoot.value.contains(target)) {
     statusSelectOpen.value = false;
+  }
+  if (stageRootEl.value && !stageRootEl.value.contains(target)) {
+    stageOptionsOpen.value = false;
   }
 };
 
@@ -424,6 +429,71 @@ const parsedData = ref<CvParsedShape | null>(null);
  * chưa fetch / API fail → render fallback hoặc empty state.
  */
 const detailData = ref<ApplicationDetail | null>(null);
+
+// ---------------------------------------------------------------------------
+// Stage editor — stage là TEXT TỰ DO (sub-stage trong 1 status, vd
+// 'english_test', 'reference-check'). Lưu qua PATCH /:id/status với status
+// HIỆN TẠI (chỉ đổi stage, không đụng status). Bỏ trống + lưu → xoá stage.
+// ---------------------------------------------------------------------------
+const stageDraft = ref('');
+const savingStage = ref(false);
+
+// Đổi ứng viên → reset draft theo stage của detail vừa fetch.
+watch(detailData, (d) => {
+  stageDraft.value = d?.stage ?? '';
+  stageOptionsOpen.value = false;
+});
+
+// Preset stage theo status hiện tại — gợi ý trong dropdown, VẪN cho gõ tay
+// (free text). Chọn preset → lưu luôn; gõ tay → bấm ✓/Enter như cũ.
+const stageOptionsOpen = ref(false);
+const stageRootEl = ref<HTMLElement | null>(null);
+
+const stagePresets = computed<string[]>(
+  () => [...(STATUS_STAGE_PRESETS[detailData.value?.status ?? 'pending'] ?? [])],
+);
+
+const filteredStagePresets = computed(() => {
+  const kw = stageDraft.value.trim().toLowerCase();
+  if (!kw) return stagePresets.value;
+  return stagePresets.value.filter((p) => p.toLowerCase().includes(kw));
+});
+
+const pickStagePreset = (s: string): void => {
+  stageDraft.value = s;
+  stageOptionsOpen.value = false;
+  void saveStage(); // chọn preset = ý định rõ ràng → lưu luôn
+};
+
+const saveStage = async (): Promise<void> => {
+  const appId = selectedApplication.value.applicationId;
+  const detail = detailData.value;
+  if (!appId || appId.startsWith('mock-app-') || !detail) return;
+  const trimmed = stageDraft.value.trim();
+  if (trimmed === (detail.stage ?? '')) return; // không đổi gì
+  savingStage.value = true;
+  try {
+    // status giữ nguyên — BE `stage ?? null` nên undefined/null = xoá stage.
+    await applicationApi.updateStatus(appId, {
+      status: detail.status,
+      stage: trimmed || undefined,
+    });
+    detail.stage = trimmed || null;
+    toast.push({
+      variant: 'success',
+      title: 'Đã lưu giai đoạn',
+      body: trimmed ? `Stage: "${trimmed}"` : 'Đã xoá stage.',
+    });
+  } catch (e) {
+    toast.push({
+      variant: 'error',
+      title: 'Lưu giai đoạn thất bại',
+      body: extractErrorMessage(e, 'Vui lòng thử lại.'),
+    });
+  } finally {
+    savingStage.value = false;
+  }
+};
 
 const selectApplication = async (a: Application): Promise<void> => {
   selectedApplication.value = a;
@@ -675,12 +745,26 @@ const onApplicationScored = (payload: {
   }
 };
 
+// Stage thay đổi từ server (vd ReferencesModal gửi email → BE auto-set
+// 'reference-check') → patch panel đang mở + draft (nếu user chưa gõ đè).
+const onStatusChanged = (payload: {
+  applicationId?: string;
+  stage?: string | null;
+}): void => {
+  if (!payload?.applicationId || payload.applicationId !== selectedApplication.value.applicationId) return;
+  if (detailData.value?.id === payload.applicationId) {
+    detailData.value.stage = payload.stage ?? null;
+    stageDraft.value = payload.stage ?? '';
+  }
+};
+
 onMounted(() => {
   void fetchPage(1);
   void loadJobNames();
   document.addEventListener('mousedown', onDocClick, true);
   getSocket().on('application:new', onApplicationNew);
   getSocket().on('application:scored', onApplicationScored);
+  getSocket().on('application:status-changed', onStatusChanged);
 });
 
 /**
@@ -897,6 +981,7 @@ onUnmounted(() => {
   document.removeEventListener('mousedown', onDocClick, true);
   getSocket().off('application:new', onApplicationNew);
   getSocket().off('application:scored', onApplicationScored);
+  getSocket().off('application:status-changed', onStatusChanged);
 });
 </script>
 
@@ -1401,26 +1486,120 @@ onUnmounted(() => {
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div class="rounded-xl border border-[#e6ebf1] p-4">
-                <div class="text-[12px] font-semibold">Trạng thái</div>
-                <span
-                  class="mt-3 inline-flex rounded-full px-3 py-2 text-[11px] font-medium"
-                  :class="[selectedStatusChip.bg, selectedStatusChip.text]"
-                >{{ selectedStatusLabel }}</span>
+                <div class="text-[12px] font-semibold">Giai đoạn chi tiết</div>
+                <p class="mt-1 text-[10px] text-[#94a3b8]">
+                  Trạng thái: <span class="font-medium" :class="selectedStatusChip.text">{{ selectedStatusLabel }}</span>
+                </p>
+                <!-- Stage — combobox: preset theo status + free text. Chọn
+                     preset → lưu luôn; gõ tay → ✓/Enter. Bỏ trống + lưu = xoá. -->
+                <div class="mt-2.5 flex items-start gap-2">
+                  <div ref="stageRootEl" class="relative w-full">
+                    <input
+                      v-model="stageDraft"
+                      type="text"
+                      maxlength="100"
+                      placeholder="VD: english_test, reference-check…"
+                      class="h-9 w-full rounded-lg border border-[#e3e8ef] bg-white px-3 text-[11px] text-[#334155] placeholder-[#a0acbc] outline-none focus:border-[#1769e8]"
+                      :disabled="savingStage || !canOpenReferences"
+                      @focus="stageOptionsOpen = true"
+                      @input="stageOptionsOpen = true"
+                      @keydown.esc="stageOptionsOpen = false"
+                      @keydown.enter.prevent="saveStage"
+                    />
+                    <div
+                      v-if="stageOptionsOpen && filteredStagePresets.length"
+                      class="absolute z-20 mt-1 w-full overflow-y-auto scrollbar-thin rounded-lg border border-[#e3e8ef] bg-white py-1 shadow-lg"
+                    >
+                      <button
+                        v-for="p in filteredStagePresets"
+                        :key="p"
+                        type="button"
+                        class="block w-full truncate px-3 py-2 text-left text-[11px] transition hover:bg-[#eef5ff]"
+                        :class="stageDraft === p ? 'font-semibold text-[#1769e8]' : 'text-[#334155]'"
+                        @mousedown.prevent="pickStagePreset(p)"
+                      >
+                        {{ p }}
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#1769e8] text-white transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Lưu giai đoạn"
+                    :disabled="savingStage || !canOpenReferences || stageDraft.trim() === (detailData?.stage ?? '')"
+                    @click="saveStage"
+                  >
+                    <Loader2 v-if="savingStage" class="h-3.5 w-3.5 animate-spin" />
+                    <Check v-else class="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
               <div class="rounded-xl border border-[#e6ebf1] p-4">
-                <div class="text-[12px] font-semibold">Next Interview</div>
-                <div class="mt-3 flex items-center gap-3">
-                  <span
-                    class="grid h-9 w-9 place-items-center rounded-full bg-[#eaf2ff] text-[#1769e8]"
+                <div class="text-[12px] font-semibold">Bước tiếp theo</div>
+
+                <!-- pending/viewed — promote lên screening -->
+                <template v-if="selectedApplication.status === 'pending' || selectedApplication.status === 'viewed'">
+                  <p class="mt-1.5 text-[11px] leading-4 text-[#64748b]">
+                    Duyệt hồ sơ rồi chuyển sang Sàng lọc để bắt đầu đánh giá.
+                  </p>
+                  <button
+                    type="button"
+                    :disabled="updatingStatus || !canOpenReferences"
+                    class="mt-2.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-[#1769e8] text-[11px] font-semibold text-white transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed"
+                    @click="changeStatus('screening')"
                   >
-                    <Calendar class="h-4 w-4" />
-                  </span>
-                  <div>
-                    <div class="text-[11px] font-semibold">Tomorrow</div>
-                    <div class="text-[10px] text-[#64748b]">10:30 AM</div>
+                    <ArrowRight class="h-3.5 w-3.5" /> Chuyển Screening
+                  </button>
+                </template>
+
+                <!-- screening — reference check (có thật) + AI test (Phase 3) -->
+                <template v-else-if="selectedApplication.status === 'screening'">
+                  <p class="mt-1.5 text-[11px] leading-4 text-[#64748b]">
+                    Công cụ sàng lọc ứng viên.
+                  </p>
+                  <button
+                    type="button"
+                    :disabled="!canOpenReferences"
+                    class="mt-2.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-[#1769e8] text-[11px] font-semibold text-white transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Gửi email xác minh người tham chiếu"
+                    @click="referencesOpen = true"
+                  >
+                    Xác minh tham chiếu
+                  </button>
+                  <div
+                    class="mt-2 flex h-9 w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#dce4ef] text-[11px] font-medium text-[#94a3b8]"
+                    title="Tính năng AI test (IQ/English) — Phase 3"
+                  >
+                     Giao bài test
                   </div>
-                  <ChevronRight class="ml-auto h-4 w-4 text-[#1769e8]" />
-                </div>
+                </template>
+
+                <!-- interview — scheduling chưa wire -->
+                <template v-else-if="selectedApplication.status === 'interview'">
+                  <p class="mt-1.5 text-[11px] leading-4 text-[#64748b]">
+                    Theo dõi lịch phỏng vấn ở trang Interviews.
+                  </p>
+                  <div
+                    class="mt-2.5 flex h-9 w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#dce4ef] text-[11px] font-medium text-[#94a3b8]"
+                    title="Tích hợp lịch phỏng vấn vào panel — sắp ra mắt"
+                  >
+                    <Calendar class="h-3.5 w-3.5" /> Lên lịch phỏng vấn — sắp ra mắt
+                  </div>
+                </template>
+
+                <!-- offered — chờ phản hồi -->
+                <template v-else-if="selectedApplication.status === 'offered'">
+                  <p class="mt-1.5 text-[11px] leading-4 text-[#64748b]">
+                    Offer đã gửi — chờ ứng viên phản hồi, sau đó bấm Hire.
+                  </p>
+                </template>
+
+                <!-- terminal -->
+                <template v-else>
+                  <p class="mt-1.5 text-[11px] leading-4 text-[#64748b]">
+                    Đơn đã ở trạng thái cuối — không còn bước tiếp theo.
+                  </p>
+                </template>
               </div>
             </div>
             </div>
@@ -1689,17 +1868,8 @@ onUnmounted(() => {
             trên khi user scroll.
           -->
             <div class="sticky bottom-0 z-10 -mx-5 bg-white border-t border-[#edf0f4] px-6 py-1">
-              <!-- Xác minh người tham chiếu — mở ReferencesModal. Disable cho
-                   row mock (chưa có applicationId thật từ API). -->
-              <button
-                type="button"
-                :disabled="!canOpenReferences"
-                class="mb-3 flex h-11 w-full items-center justify-center gap-2 border border-[#cfe0ff] border-l-0 bg-[#eef5ff] text-[11px] font-semibold text-[#1769e8] transition hover:bg-[#e0edff] disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Gửi email xác minh người tham chiếu qua n8n"
-                @click="referencesOpen = true"
-              >
-                <ShieldCheck class="h-4 w-4" /> Xác minh người tham chiếu
-              </button>
+              <!-- Nút "Xác minh tham chiếu" đã chuyển lên card "Bước tiếp theo"
+                   (tab Tổng quan) — tránh trùng 2 nút cùng chức năng. -->
               <div class="grid grid-cols-2 gap-3">
                 <template v-if="nextAction">
                   <!-- Từ chối — text-link gạch chân (không phải button) giống

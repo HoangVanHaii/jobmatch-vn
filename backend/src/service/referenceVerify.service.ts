@@ -257,6 +257,42 @@ export const sendVerification = async (
     .set({ status: 'sent', sentAt: new Date() })
     .where(eq(referenceVerifications.id, row.id));
 
+  // ---------------------------------------------------------------------------
+  // Auto-stage: HR vừa làm ACTION reference-check (gửi email xác minh) →
+  // gắn stage='reference-check' TỰ ĐỘNG — HR không phải vào combobox chọn
+  // lại. Không đụng status. Emit 'application:status-changed' cho CẢ employer
+  // (tab khác/refresh panel) và candidate (thấy "Giai đoạn: reference-check").
+  // ---------------------------------------------------------------------------
+  const [appRow] = await db
+    .select({
+      status: applications.status,
+      jobId: applications.jobId,
+      candidateId: applications.candidateId,
+      viewedAt: applications.viewedAt,
+    })
+    .from(applications)
+    .where(eq(applications.id, applicationId))
+    .limit(1);
+
+  if (appRow) {
+    const now = new Date();
+    await db
+      .update(applications)
+      .set({ stage: 'reference-check', updatedAt: now })
+      .where(eq(applications.id, applicationId));
+
+    const payload = {
+      applicationId,
+      jobId: appRow.jobId,
+      status: appRow.status as string,
+      stage: 'reference-check',
+      viewedAt: appRow.viewedAt ? appRow.viewedAt.toISOString() : null,
+      updatedAt: now.toISOString(),
+    };
+    notificationGateway.emitToUser(employerId, 'application:status-changed', payload);
+    notificationGateway.emitToUser(appRow.candidateId, 'application:status-changed', payload);
+  }
+
   logger.info(
     { referenceId: row.id, applicationId, refereeEmail: input.refereeEmail },
     'referenceVerify: email xác minh đã trigger qua n8n',

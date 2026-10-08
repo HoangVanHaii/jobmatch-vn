@@ -1,34 +1,4 @@
 <script setup lang="ts">
-/**
- * ApplicationDetailPanel — inline detail panel 1 application của candidate.
- *
- * Render inline trong master-detail 2 cột cùng list (không overlay/drawer).
- * Parent dùng flex/grid 2-cột:
- *   - Cột trái: list các application.
- *   - Cột phải: <ApplicationDetailPanel> (cố định 1 cột khi có selection).
- *
- * Props:
- *   - `application`: row từ listMine — dùng cho instant header render trước
- *     khi fetch detail xong (jobTitle, companyName, status…). Null = đóng.
- *   - `open`: v-model:open để parent show/hide. Khi đóng → parent nên
- *     un-render hoặc hiển thị placeholder.
- *
- * Emits:
- *   - `update:open`: parent bắt để set detailRow = null (reset selection).
- *   - `withdrawn(id)`: parent flip row.status='withdrawn' trong list optimistic.
- *
- * Sections (vertical scroll nếu tràn):
- *   - Header (sticky top): logo + jobTitle + company + status badge + close.
- *   - Job context: location (jobs.location jsonb), deadline countdown.
- *   - AI match card: score + reasoning (strengths / missing / concerns / rationale).
- *   - CV snapshot: title + file download (nếu có cv.url).
- *   - Cover letter: full text (nếu có).
- *   - Timeline: appliedAt → viewedAt → status transitions.
- *   - Footer (sticky bottom): nút rút đơn (chỉ khi canWithdraw) + đóng.
- *
- * Best-effort realtime:
- *   - Listen socket `application:match-ready` cho id này → re-fetch detail.
- */
 import { computed, ref, watch, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import {
@@ -327,6 +297,8 @@ interface TimelineStep {
   at: string | null;
   done: boolean;
   icon: typeof CheckCircle2;
+  /** Sub-stage HR đặt (vd 'english_test') — chỉ hiển thị ở step hiện tại. */
+  note?: string;
 }
 
 const timeline = computed<TimelineStep[]>(() => {
@@ -334,6 +306,9 @@ const timeline = computed<TimelineStep[]>(() => {
   const status = currentStatus.value;
   const appliedAt = detail_?.appliedAt ?? props.application?.appliedAt ?? null;
   const viewedAt = detail_?.viewedAt ?? props.application?.viewedAt ?? null;
+  // Stage — sub-stage tự do HR đặt trong 1 status (socket status-changed
+  // đã patch detail.stage realtime).
+  const stage = detail_?.stage ?? props.application?.stage ?? null;
 
   return [
     { label: 'Nộp đơn', at: appliedAt, done: true, icon: CheckCircle2 },
@@ -348,6 +323,7 @@ const timeline = computed<TimelineStep[]>(() => {
       at: null,
       done: false,
       icon: AlertCircle,
+      note: stage ? `Giai đoạn: ${stage}` : undefined,
     },
   ];
 });
@@ -869,6 +845,9 @@ const formatDateTime = (iso: string | null): string => {
                 <div class="min-w-0 flex-1">
                   <p class="text-sm font-medium" :class="step.done ? 'text-gray-900' : 'text-gray-500'">
                     {{ step.label }}
+                  </p>
+                  <p v-if="step.note" class="text-xs font-medium text-[#1769e8] mt-0.5">
+                    {{ step.note }}
                   </p>
                   <p v-if="step.at" class="text-xs text-gray-500 mt-0.5">
                     {{ formatDateTime(step.at) }}
