@@ -23,6 +23,9 @@ const routes: RouteRecordRaw[] = [
   // có tài khoản). Token 64 hex trong URL là proof-of-access duy nhất.
   // Link đến từ email n8n `reference_verify` (xem referenceVerify service).
   { path: '/verify/reference/:token', name: 'reference-verify', component: () => import('@views/public/RefereeVerifyView.vue') },
+  // AI test — trang PUBLIC cho candidate làm bài qua link email (n8n
+  // `ai_test_assign`). Token = proof-of-access, không login.
+  { path: '/test/:token', name: 'take-test', component: () => import('@views/public/TakeTestView.vue') },
   { path: '/auth/callback/:provider', name: 'oauth-callback', component: () => import('@views/auth/OAuthCallbackView.vue'),
     // Validate ngay tại route guard — invalid provider (vd user gõ /auth/callback/resumes
     // do typo hay stale tab) → redirect thẳng về /login TRƯỚC khi component mount.
@@ -143,7 +146,6 @@ const routes: RouteRecordRaw[] = [
       { path: 'billing/cancel', name: 'employer-billing-cancel', component: () => import('@views/BillingCancelView.vue') },
 
       // Mockup test route — xem nhanh UI mockup candidate list/detail, không gọi API.
-      { path: 'test', name: 'employer-test', component: () => import('@views/employer/ApplicationMockupView.vue') },
       // Mockup Upgrade Plan page (static, không gọi API).
       { path: 'test2', name: 'employer-test-plan', component: () => import('@views/employer/PlanMockupView.vue') },
       // Mockup TechNova landing page (static, không gọi API).

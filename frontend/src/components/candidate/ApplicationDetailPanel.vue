@@ -1,34 +1,4 @@
 <script setup lang="ts">
-/**
- * ApplicationDetailPanel — inline detail panel 1 application của candidate.
- *
- * Render inline trong master-detail 2 cột cùng list (không overlay/drawer).
- * Parent dùng flex/grid 2-cột:
- *   - Cột trái: list các application.
- *   - Cột phải: <ApplicationDetailPanel> (cố định 1 cột khi có selection).
- *
- * Props:
- *   - `application`: row từ listMine — dùng cho instant header render trước
- *     khi fetch detail xong (jobTitle, companyName, status…). Null = đóng.
- *   - `open`: v-model:open để parent show/hide. Khi đóng → parent nên
- *     un-render hoặc hiển thị placeholder.
- *
- * Emits:
- *   - `update:open`: parent bắt để set detailRow = null (reset selection).
- *   - `withdrawn(id)`: parent flip row.status='withdrawn' trong list optimistic.
- *
- * Sections (vertical scroll nếu tràn):
- *   - Header (sticky top): logo + jobTitle + company + status badge + close.
- *   - Job context: location (jobs.location jsonb), deadline countdown.
- *   - AI match card: score + reasoning (strengths / missing / concerns / rationale).
- *   - CV snapshot: title + file download (nếu có cv.url).
- *   - Cover letter: full text (nếu có).
- *   - Timeline: appliedAt → viewedAt → status transitions.
- *   - Footer (sticky bottom): nút rút đơn (chỉ khi canWithdraw) + đóng.
- *
- * Best-effort realtime:
- *   - Listen socket `application:match-ready` cho id này → re-fetch detail.
- */
 import { computed, ref, watch, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import {
@@ -52,6 +22,7 @@ import {
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
 import { applicationApi } from '@services/application.api';
+import { aiTestApi, type MyAssignmentRow } from '@services/aiTest.api';
 import { useToastStore } from '@stores/toast';
 import { useChatStore } from '@stores/chat';
 import { getSocket } from '@services/socket';
@@ -327,13 +298,52 @@ interface TimelineStep {
   at: string | null;
   done: boolean;
   icon: typeof CheckCircle2;
+  /** Sub-stage HR đặt (vd 'english_test') — chỉ hiển thị ở step hiện tại. */
+  note?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Test assignments của candidate — fetch khi detail load, ghép vào timeline:
+// mỗi assignment 1 step ("Bài test IQ — Kết quả: 85% — Đạt" hoặc "Chờ làm bài").
+// ---------------------------------------------------------------------------
+const testAssignments = ref<MyAssignmentRow[]>([]);
+
+const fetchTestAssignments = async (applicationId: string): Promise<void> => {
+  testAssignments.value = [];
+  try {
+    const { data } = await aiTestApi.listMyAssignments(applicationId);
+    testAssignments.value = [...data.data].reverse(); // cũ nhất trước cho timeline
+  } catch {
+    // best-effort — timeline vẫn render phần status
+  }
+};
 
 const timeline = computed<TimelineStep[]>(() => {
   const detail_ = detail.value;
   const status = currentStatus.value;
   const appliedAt = detail_?.appliedAt ?? props.application?.appliedAt ?? null;
   const viewedAt = detail_?.viewedAt ?? props.application?.viewedAt ?? null;
+  // Stage — sub-stage tự do HR đặt trong 1 status (socket status-changed
+  // đã patch detail.stage realtime).
+  const stage = detail_?.stage ?? props.application?.stage ?? null;
+
+  // Test steps — giữa "NTD xem" và status hiện tại, sort theo sentAt tăng dần.
+  const testSteps: TimelineStep[] = testAssignments.value.map((a) => {
+    const typeLabel = a.testType === 'iq' ? 'Bài test IQ' : 'Bài test Tiếng Anh';
+    const submitted = a.status === 'submitted' && a.score != null;
+    const passed = submitted && Number(a.score) >= Number(a.passingScore ?? 60);
+    return {
+      label: typeLabel,
+      at: a.submittedAt ?? a.sentAt ?? null,
+      done: submitted,
+      icon: CheckCircle2,
+      note: submitted
+        ? `Kết quả: ${a.score}% — ${passed ? 'Đạt' : 'Chưa đạt'}`
+        : a.status === 'in_progress'
+          ? 'Đang làm bài'
+          : 'Chờ làm bài',
+    };
+  });
 
   return [
     { label: 'Nộp đơn', at: appliedAt, done: true, icon: CheckCircle2 },
@@ -343,11 +353,13 @@ const timeline = computed<TimelineStep[]>(() => {
       done: viewedAt != null,
       icon: Eye,
     },
+    ...testSteps,
     {
       label: STATUS_LABEL[status],
       at: null,
       done: false,
       icon: AlertCircle,
+      note: stage ? `Giai đoạn: ${stage}` : undefined,
     },
   ];
 });
@@ -361,6 +373,7 @@ const fetchDetail = async (id: string): Promise<void> => {
   try {
     const { data } = await applicationApi.getById(id);
     detail.value = data.data;
+    void fetchTestAssignments(id);
   } catch {
     errorMsg.value = 'Không tải được chi tiết đơn ứng tuyển.';
   } finally {
@@ -869,6 +882,9 @@ const formatDateTime = (iso: string | null): string => {
                 <div class="min-w-0 flex-1">
                   <p class="text-sm font-medium" :class="step.done ? 'text-gray-900' : 'text-gray-500'">
                     {{ step.label }}
+                  </p>
+                  <p v-if="step.note" class="text-xs font-medium text-[#1769e8] mt-0.5">
+                    {{ step.note }}
                   </p>
                   <p v-if="step.at" class="text-xs text-gray-500 mt-0.5">
                     {{ formatDateTime(step.at) }}

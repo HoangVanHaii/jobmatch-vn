@@ -1,24 +1,4 @@
 <script setup lang="ts">
-/**
- * AppliedJobsView — trang "Việc đã ứng tuyển" của candidate tại
- * `/candidate/applications`.
- *
- * Hiển thị list applications của candidate hiện tại (GET /applications/me).
- * Mỗi row gồm:
- *   - Logo + tên công ty + tiêu đề job
- *   - Status badge (pending/viewed/screening/interview/offered/hired/rejected/withdrawn)
- *   - AI match score (nếu có) hoặc loading indicator (nếu worker chưa xong)
- *   - Ngày apply + ngày employer xem (viewedAt)
- *
- * Realtime:
- *   - Listen socket `application:match-ready` / `application:match-skipped` →
- *     update row tương ứng (không cần refetch).
- *   - Listen `notification:new` filter type=application_match_ready → bell + toast.
- *
- * Filter:
- *   - Dropdown status: pending / viewed / ... / withdrawn + "Tất cả".
- *   - Pagination page/limit=20.
- */
 import { computed, onBeforeUnmount, onMounted, ref, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
@@ -34,6 +14,7 @@ import {
   FileText,
   Download,
   Eye,
+  Flag,
   ChevronDown,
   Check,
   MessageCircle,
@@ -788,16 +769,28 @@ const confirmWithdraw = async (): Promise<void> => {
                       {{ row.companyName ?? 'Công ty ẩn danh' }}
                     </p>
                   </div>
-                  <span
-                    class="shrink-0 inline-flex items-center gap-1.5 rounded-md  px-2.5 py-0.5 text-[11.5px] font-semibold whitespace-nowrap"
-                    :class="[
-                      STATUS_COLOR[row.status],
-                      isProcessing(row.status) ? 'animate-[badge-pulse_1.4s_infinite_ease-in-out]' : '',
-                    ]"
-                  >
-                    <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
-                    {{ STATUS_LABEL[row.status] }}
-                  </span>
+                  <!-- Status + stage — stage là sub-stage do HR đặt (text tự
+                       do, vd 'english_test'), chỉ hiện khi có. -->
+                  <div class="shrink-0 flex flex-col items-end gap-1">
+                    <span
+                      class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-0.5 text-[11.5px] font-semibold whitespace-nowrap"
+                      :class="[
+                        STATUS_COLOR[row.status],
+                        isProcessing(row.status) ? 'animate-[badge-pulse_1.4s_infinite_ease-in-out]' : '',
+                      ]"
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
+                      {{ STATUS_LABEL[row.status] }}
+                    </span>
+                    <span
+                      v-if="row.stage"
+                      class="inline-flex max-w-[170px] items-center gap-1 rounded-md bg-gray-100 px-2 py-0.5 text-[10.5px] font-medium text-gray-600 whitespace-nowrap"
+                      :title="`Giai đoạn: ${row.stage}`"
+                    >
+                      <Flag class="w-3 h-3 shrink-0" />
+                      <span class="truncate">{{ row.stage }}</span>
+                    </span>
+                  </div>
                 </div>
               </div>
 

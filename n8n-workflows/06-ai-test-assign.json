@@ -1,0 +1,46 @@
+{
+  "name": "AI Test Assign",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai_test_assign",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-ai-test",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "no-reply@jobmatch.vn",
+        "toEmail": "={{$json.candidateEmail || $json.body?.candidateEmail}}",
+        "subject": "Thư mời làm bài test - JobMatch VN",
+        "text": "=Xin chào {{$json.candidateName || $json.body?.candidateName || 'bạn'}},\n\nChúc mừng bạn đã vượt qua vòng hồ sơ. Để tiếp tục quy trình ứng tuyển, vui lòng hoàn thành bài test dưới đây:\n\n- Loại bài test: {{$json.testType === 'iq' ? 'IQ — tư duy logic' : 'Tiếng Anh'}}\n- Thời gian làm bài: {{$json.durationMin || 30}} phút (tính từ khi bạn mở link)\n- Hạn nộp: {{$json.expiresAt ? $json.expiresAt.slice(0, 10) : ''}}\n\nLink làm bài (riêng tư — KHÔNG chia sẻ):\n{{$json.testUrl || $json.body?.testUrl}}\n\nLưu ý: đồng hồ bắt đầu chạy khi bạn mở link và không thể tạm dừng. Hãy chuẩn bị thời gian đầy đủ trước khi bắt đầu.\n\nTrân trọng,\nĐội ngũ JobMatch VN",
+        "options": {
+          "host": "mailhog",
+          "port": 1025
+        }
+      },
+      "id": "send-ai-test-email",
+      "name": "Send Test Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{"node": "Send Test Email", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1"
+}
