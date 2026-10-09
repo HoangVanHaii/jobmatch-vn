@@ -9,6 +9,9 @@
  *
  * Apply/Save/Share/Quick-chat/Feedback → move vào dropdown "More" (trừ Apply
  * vẫn là CTA chính trên header) + section Feedbacks xuống cuối left col.
+ *
+ * Mockup data (chart series, region, key responsibilities, scope criteria
+ * breakdown) — hard-code ở `frontend/src/utils/jobMockup.ts` theo plan đã duyệt.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -59,8 +62,11 @@ import { useToastStore } from '@stores/toast';
 import { useSavedJobStore } from '@stores/savedJob';
 import { useAuthStore } from '@stores/auth';
 import { uploadApi, formatFileSize } from '@services/upload.api';
-import { extractErrorCode, HttpError } from '@services/http';
 import { fileIconInfo } from '@utils/fileIcon';
+import {
+  APPLICANTS_CHART_DATA,
+  MOCK_KEY_RESPONSIBILITIES,
+} from '@utils/jobMockup';
 import type { ApplicantsOverTimePoint } from '@/types/job';
 import type { Company } from '@/types/company';
 import type { Socket } from 'socket.io-client';
@@ -241,7 +247,10 @@ const sendChat = async (): Promise<void> => {
     chatAttachments.value = [];
     chatOpen.value = false;
   } catch (err: unknown) {
-    const code = extractErrorCode(err);
+    const code =
+      err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { data?: { error?: { code?: string } } } }).response?.data?.error?.code
+        : undefined;
     const body =
       code === 'FORBIDDEN' || code === 'NOT_AUTHENTICATED'
         ? 'Vui lòng đăng nhập lại.'
@@ -380,13 +389,13 @@ const canExpandDescription = computed(() =>
 const responsibilitiesExpanded = ref(false);
 const RESPONSIBILITIES_COLLAPSED_COUNT = 4;
 
-/** Toàn bộ responsibilities đã parse từ job.requirements. */
+/** Toàn bộ responsibilities đã parse từ job.requirements hoặc mockup fallback. */
 const allResponsibilities = computed<string[]>(() => {
   const reqs = job.value?.requirements;
   if (reqs) {
     return reqs.split('\n').map((s) => s.trim()).filter(Boolean);
   }
-  return [];
+  return MOCK_KEY_RESPONSIBILITIES;
 });
 
 /** Subset hiển thị — collapse về 4 item đầu khi chưa expand. */
@@ -412,38 +421,13 @@ const goBack = (): void => {
 };
 
 const onApply = (): void => {
-  if (!job.value || !canApply.value) return;
+  if (!job.value) return;
   applyModalOpen.value = true;
 };
 
-/**
- * Guard apply (TASK 1 step 8): chỉ cho apply khi job đang live và chưa quá
- * deadline. BE vẫn enforce lại (JOB_NOT_APPLYABLE / JOB_EXPIRED) — đây là
- * UX layer để không click hụt.
- */
-const deadlinePassed = computed((): boolean => {
-  const d = job.value?.deadline;
-  if (!d) return false;
-  const t = new Date(d).getTime();
-  return !Number.isNaN(t) && t < Date.now();
-});
-const isExpiredJob = computed((): boolean =>
-  job.value?.isExpired === true || job.value?.status === 'expired',
-);
-const canApply = computed((): boolean =>
-  job.value?.status === 'live' && !deadlinePassed.value,
-);
-
-const isNotFound = ref(false);
-
 const onApplied = (_applicationId: string): void => {
-  // m-01 fix: KHÔNG gọi lại fetchDetail() vì backend sẽ tăng views_count +1.
-  // Cập nhật state cục bộ: appliesCount + 1, làm mới chart applicants-over-time và fetch lại application status.
-  if (job.value) {
-    job.value.appliesCount = (job.value.appliesCount ?? 0) + 1;
-    void fetchApplicantsOverTime(job.value.id, fetchDetailSeq);
-  }
-  void fetchMyApplicationStatus(fetchDetailSeq);
+  void fetchDetail();
+  void fetchMyApplicationStatus();
 };
 
 const onSave = async (): Promise<void> => {
@@ -493,42 +477,29 @@ const scrollToFeedback = (): void => {
 // ============================================================================
 // Fetch detail + my feedback + my application status
 // ============================================================================
-let fetchDetailSeq = 0;
 const fetchDetail = async () => {
   if (!jobSlug.value) return;
-  const seq = ++fetchDetailSeq;
   loading.value = true;
   error.value = null;
-  isNotFound.value = false;
   try {
     const { data } = await jobApi.bySlug(jobSlug.value);
-    if (seq !== fetchDetailSeq) return;
     job.value = data.data;
-    void fetchApplicantsOverTime(data.data.id, seq);
-    void fetchMyFeedback(seq);
-    void fetchMyApplicationStatus(seq);
-  } catch (e: unknown) {
-    if (seq !== fetchDetailSeq) return;
-    const code = extractErrorCode(e);
-    const statusCode = e instanceof HttpError ? e.statusCode : undefined;
-    if (code === 'JOB_NOT_FOUND' || statusCode === 404) {
-      isNotFound.value = true;
-      error.value = 'Tin tuyển dụng không tồn tại hoặc đã bị gỡ.';
-    } else {
-      isNotFound.value = false;
-      error.value = 'Không thể tải tin tuyển dụng. Vui lòng thử lại.';
-    }
+    void fetchApplicantsOverTime(data.data.id);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Không tải được chi tiết job';
     job.value = null;
   } finally {
-    if (seq === fetchDetailSeq) {
-      loading.value = false;
-    }
+    loading.value = false;
   }
 };
 
 onMounted(async () => {
+  // fetchDetail phải xong trước (job.value có id) rồi mới fetch myFeedback —
+  // nếu chạy song song, fetchMyFeedback early-return do job.value = null.
   await fetchDetail();
   void savedJobStore.fetchIds();
+  void fetchMyFeedback();
+  void fetchMyApplicationStatus();
 
   if (auth.isAuthenticated) {
     socket = getSocket();
@@ -550,12 +521,9 @@ watch(jobSlug, async () => {
   responsibilitiesExpanded.value = false;
   chatOpen.value = false;
   moreMenuOpen.value = false;
-  // M-06: Reset state về rỗng TRƯỚC khi fetch
-  job.value = null;
-  applicantsChartData.value = { series: [], peak: null };
-  applicationList.value = [];
-  myFeedback.value = null;
   await fetchDetail();
+  await fetchMyFeedback();
+  await fetchMyApplicationStatus();
 });
 
 // Fetch company detail (cho CompanyMap/social/address trong Overview tab) khi job load xong.
@@ -580,17 +548,12 @@ const loadingApplicationStatus = ref(false);
 // ============================================================================
 // Applicants-over-time chart (JobDetailView)
 // ============================================================================
-// Initial state rỗng — khi job load xong sẽ fetch API `/applicants-over-time`.
-// API lỗi hoặc series rỗng/toàn 0 -> hiện empty state.
+// Initial fallback = mockup data (APPLICANTS_CHART_DATA) — tránh flash rỗng
+// khi API chưa về. Khi job load xong sẽ fetch API `/applicants-over-time` và
+// replace nếu thành công; fail → giữ mockup.
 const applicantsChartData = ref<{ series: ApplicantsOverTimePoint[]; peak: ApplicantsOverTimePoint | null }>({
-  series: [],
-  peak: null,
-});
-
-/** Kiểm tra xem chart có dữ liệu thực sự không (ít nhất 1 điểm có count > 0). */
-const hasChartData = computed(() => {
-  const series = applicantsChartData.value.series;
-  return series.length > 0 && series.some((p) => p.count > 0);
+  series: APPLICANTS_CHART_DATA.series,
+  peak: APPLICANTS_CHART_DATA.peak,
 });
 
 /** viewBox constants — dùng cho cả path generator và template. */
@@ -652,22 +615,17 @@ const chartPeakIndex = computed(() => {
   return applicantsChartData.value.series.findIndex((p) => p.date === peak.date && p.count === peak.count);
 });
 
-const fetchApplicantsOverTime = async (jobId: string, seq?: number): Promise<void> => {
+const fetchApplicantsOverTime = async (jobId: string): Promise<void> => {
   try {
     const { data } = await jobApi.applicantsOverTime(jobId, 10);
-    if (seq !== undefined && seq !== fetchDetailSeq) return;
-    if (data.data?.series) {
+    if (data.data.series.length) {
       applicantsChartData.value = {
         series: data.data.series,
-        peak: data.data.peak ?? null,
+        peak: data.data.peak,
       };
-      // Đồng bộ số tổng lượt ứng tuyển nếu backend trả về totalApplicants
-      if (typeof data.data.totalApplicants === 'number' && job.value) {
-        job.value.appliesCount = data.data.totalApplicants;
-      }
     }
   } catch {
-    // Khi gọi lỗi: giữ nguyên dữ liệu hiện tại, không xoá chart
+    // Giữ mockup fallback — chart vẫn render được.
   }
 };
 
@@ -812,7 +770,7 @@ const appliedCvIds = computed(() =>
   applicationList.value.map((a) => a.cvId).filter((id): id is string => Boolean(id)),
 );
 
-const fetchMyApplicationStatus = async (seq?: number): Promise<void> => {
+const fetchMyApplicationStatus = async (): Promise<void> => {
   if (!isCandidateLoggedIn.value || !jobSlug.value) {
     applicationList.value = [];
     return;
@@ -820,15 +778,11 @@ const fetchMyApplicationStatus = async (seq?: number): Promise<void> => {
   loadingApplicationStatus.value = true;
   try {
     const { data } = await jobApi.myApplicationStatus(jobSlug.value);
-    if (seq !== undefined && seq !== fetchDetailSeq) return;
     applicationList.value = data.data;
   } catch {
-    if (seq !== undefined && seq !== fetchDetailSeq) return;
     applicationList.value = [];
   } finally {
-    if (seq === undefined || seq === fetchDetailSeq) {
-      loadingApplicationStatus.value = false;
-    }
+    loadingApplicationStatus.value = false;
   }
 };
 
@@ -931,14 +885,13 @@ const canRateFeedback = computed(
   () => isCandidateLoggedIn.value && applicationList.value.length > 0,
 );
 
-const fetchMyFeedback = async (seq?: number): Promise<void> => {
+const fetchMyFeedback = async (): Promise<void> => {
   if (!isCandidateLoggedIn.value || !job.value) {
     myFeedback.value = null;
     return;
   }
   try {
     const { data } = await jobApi.myFeedback(job.value.id);
-    if (seq !== undefined && seq !== fetchDetailSeq) return;
     myFeedback.value = data.data;
     if (myFeedback.value) {
       feedbackRating.value = myFeedback.value.rating;
@@ -948,7 +901,6 @@ const fetchMyFeedback = async (seq?: number): Promise<void> => {
       feedbackComment.value = '';
     }
   } catch {
-    if (seq !== undefined && seq !== fetchDetailSeq) return;
     myFeedback.value = null;
   }
 };
@@ -974,25 +926,22 @@ const submitFeedback = async (): Promise<void> => {
       comment: feedbackComment.value.trim() || null,
     });
     myFeedback.value = data.data;
-    // m-01 fix: Thay vì gọi lại fetchDetail() (làm tăng views_count), gọi listFeedbacks để cập nhật danh sách và stats
-    try {
-      const fbRes = await jobApi.listFeedbacks(job.value.id);
-      if (job.value) {
-        job.value.feedbacks = fbRes.data.data;
-        job.value.feedbackStats = fbRes.data.stats;
-      }
-    } catch {
-      // ignore
-    }
+    await fetchDetail();
     toast.push({
       variant: 'success',
       title: isEditingFeedback.value ? 'Đã cập nhật đánh giá' : 'Cảm ơn bạn đã đánh giá',
     });
   } catch (err: unknown) {
-    const code = extractErrorCode(err);
-    const status = err instanceof HttpError ? err.statusCode : undefined;
+    const status =
+      err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { status?: number; data?: { code?: string } } }).response?.status
+        : undefined;
+    const code =
+      err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { data?: { code?: string } } }).response?.data?.code
+        : undefined;
 
-    if (code === 'NOT_APPLIED' || (status === 403 && code === 'NOT_APPLIED')) {
+    if (status === 403 && code === 'NOT_APPLIED') {
       toast.push({
         variant: 'info',
         title: 'Bạn cần ứng tuyển trước',
@@ -1034,27 +983,15 @@ const cancelEditFeedback = (): void => {
       <div class="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mb-3">
         <AlertCircle class="w-6 h-6 text-red-500" />
       </div>
-      <h3 class="text-sm font-semibold text-[#0F172A]">
-        {{ isNotFound ? 'Tin tuyển dụng không tồn tại' : 'Không tải được tin tuyển dụng' }}
-      </h3>
-      <p class="text-xs text-[#64748B] mt-1">{{ error ?? 'Vui lòng thử lại sau.' }}</p>
-      <div class="mt-4 flex items-center gap-2">
-        <button
-          v-if="!isNotFound"
-          type="button"
-          class="px-3 py-1.5 text-xs rounded-md bg-[#1677FF] text-white hover:bg-[#1565D8] transition font-medium"
-          @click="fetchDetail"
-        >
-          Thử lại
-        </button>
-        <button
-          type="button"
-          class="px-3 py-1.5 text-xs rounded-md border border-[#EEF1F5] bg-white text-[#334155] hover:bg-[#F8FAFB] transition"
-          @click="goBack"
-        >
-          Quay lại
-        </button>
-      </div>
+      <h3 class="text-sm font-semibold text-[#0F172A]">Không tải được chi tiết job</h3>
+      <p class="text-xs text-[#64748B] mt-1">{{ error ?? 'Job không tồn tại hoặc đã bị đóng.' }}</p>
+      <button
+        type="button"
+        class="mt-4 px-3 py-1.5 text-xs rounded-md border border-[#EEF1F5] bg-white text-[#334155] hover:bg-[#F8FAFB] transition"
+        @click="goBack"
+      >
+        Quay lại
+      </button>
     </div>
 
     <!-- ============ Main content ============ -->
@@ -1083,9 +1020,7 @@ const cancelEditFeedback = (): void => {
           <div class="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#1677FF]"
-              :disabled="!canApply"
-              :title="!canApply ? 'Job này hiện không nhận hồ sơ' : undefined"
+              class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition inline-flex items-center gap-1.5"
               @click="onApply"
             >
               <Send class="w-3.5 h-3.5" />
@@ -1145,22 +1080,6 @@ const cancelEditFeedback = (): void => {
               </Transition>
             </div>
           </div>
-        </div>
-
-        <!-- Banner job hết hạn / không nhận hồ sơ (TASK 1 step 8) -->
-        <div
-          v-if="isExpiredJob || !canApply"
-          class="mb-3 flex items-start gap-2 p-3 rounded-lg border text-xs"
-          :class="isExpiredJob
-            ? 'bg-amber-50 border-amber-200 text-amber-900'
-            : 'bg-slate-50 border-[#EEF1F5] text-slate-700'"
-        >
-          <AlertCircle class="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>
-            {{ isExpiredJob
-              ? 'Tin tuyển dụng đã hết hạn.'
-              : 'Tin tuyển dụng này hiện không nhận hồ sơ mới.' }}
-          </span>
         </div>
 
         <!-- Tabs -->
@@ -1293,9 +1212,9 @@ const cancelEditFeedback = (): void => {
                   Đăng vào: {{ publishedLabel }}
                 </div>
               </div>
-              <!-- Chart SVG — render dynamic từ `applicantsChartData` nếu có data, hoặc hiện empty state -->
+              <!-- Chart SVG — render dynamic từ `applicantsChartData` (API hoặc mockup fallback) -->
               <div class="h-[210px] w-full mt-1">
-                <svg v-if="hasChartData" viewBox="0 0 720 210" class="w-full h-full" preserveAspectRatio="none">
+                <svg viewBox="0 0 720 210" class="w-full h-full" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stop-color="#1677FF" stop-opacity="0.28" />
@@ -1348,21 +1267,13 @@ const cancelEditFeedback = (): void => {
                       y="204">{{ p.date }}</text>
                   </g>
                 </svg>
-                <div
-                  v-else
-                  class="h-full flex flex-col items-center justify-center text-center rounded-lg border border-dashed border-[#EEF1F5] bg-[#F8FAFB]"
-                >
-                  <BarChart3 class="w-8 h-8 text-[#94A3B8] mb-1.5" />
-                  <p class="text-xs font-medium text-[#64748B]">Chưa có dữ liệu ứng tuyển</p>
-                  <p class="text-[11px] text-[#94A3B8] mt-0.5">Biểu đồ sẽ hiển thị khi có ứng viên nộp hồ sơ</p>
-                </div>
               </div>
             </section>
 
             <!-- Key Responsibilities -->
             <section class="mb-5">
               <h3 class="text-[13.5px] font-semibold text-[#0F172A] mb-2">Yêu cầu công việc</h3>
-              <ul v-if="visibleResponsibilities.length" class="space-y-1.5 text-[12.5px] leading-[1.55] text-[#334155]">
+              <ul class="space-y-1.5 text-[12.5px] leading-[1.55] text-[#334155]">
                 <li
                   v-for="r in visibleResponsibilities"
                   :key="r"
@@ -1372,7 +1283,6 @@ const cancelEditFeedback = (): void => {
                   <span>{{ r }}</span>
                 </li>
               </ul>
-              <p v-else class="text-[12.5px] text-[#94A3B8] italic">Chưa cập nhật</p>
               <button
                 v-if="canExpandResponsibilities"
                 class="mt-2 text-[12px] text-[#334155] hover:text-[#0F172A] hover:underline transition"
@@ -1587,8 +1497,7 @@ const cancelEditFeedback = (): void => {
                 <p class="text-[12px] mb-3">Apply để xem điểm phù hợp của bạn với job này.</p>
                 <button
                   type="button"
-                  class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  :disabled="!canApply"
+                  class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition"
                   @click="onApply"
                 >Ứng tuyển</button>
               </div>

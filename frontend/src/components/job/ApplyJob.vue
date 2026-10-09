@@ -23,13 +23,12 @@
  * apply cùng job bằng nhiều CV. Modal chỉ cho phép chọn CV (radio), không có
  * option "nộp không kèm CV" như trước. Submit disabled khi chưa pick CV.
  */
-import { ref, watch, computed, nextTick, onBeforeUnmount } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { Loader2, FileText, X, Sparkles, AlertCircle } from 'lucide-vue-next';
 import { applicationApi } from '@services/application.api';
 import { cvApi } from '@services/cv.api';
 import { aiApi } from '@services/ai.api';
 import { useToastStore } from '@stores/toast';
-import { extractErrorCode } from '@services/http';
 import type { Cv } from '@/types/cv';
 
 const props = defineProps<{
@@ -68,18 +67,6 @@ const letterLanguage = ref<'vi' | 'en'>('vi');
 // CV list
 const cvList = ref<Cv[]>([]);
 const loadingCvs = ref(false);
-const dialogRef = ref<HTMLElement | null>(null);
-let previouslyFocusedElement: HTMLElement | null = null;
-
-const onKeyDown = (e: KeyboardEvent): void => {
-  if (e.key === 'Escape' && props.open && !submitting.value) {
-    close();
-  }
-};
-
-onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onKeyDown);
-});
 
 const selectedCv = computed(() => cvList.value.find((c) => c.id === cvId.value) ?? null);
 const canSubmit = computed(() => !submitting.value && cvId.value !== '');
@@ -105,27 +92,18 @@ watch(
 );
 
 // -----------------------------------------------------------------------
-// Fetch CV & Reset form khi mở modal
+// Fetch CV khi mở modal
 // -----------------------------------------------------------------------
 watch(
   () => props.open,
   async (isOpen) => {
-    if (isOpen) {
-      previouslyFocusedElement = document.activeElement as HTMLElement | null;
-      window.addEventListener('keydown', onKeyDown);
+    if (!isOpen) return;
+    // Reset form khi đóng
+    if (!isOpen) {
       cvId.value = '';
       coverLetter.value = '';
-      submitting.value = false;
-      await fetchCvs();
-      await nextTick();
-      dialogRef.value?.focus();
-    } else {
-      window.removeEventListener('keydown', onKeyDown);
-      if (previouslyFocusedElement) {
-        previouslyFocusedElement.focus();
-        previouslyFocusedElement = null;
-      }
     }
+    await fetchCvs();
   },
 );
 
@@ -204,7 +182,8 @@ const submit = async (): Promise<void> => {
     emit('applied', data.data.id);
     emit('update:open', false);
   } catch (err) {
-    const code = extractErrorCode(err);
+    // Error đã được http interceptor format sẵn → response.data.error.code
+    const code = (err as { response?: { data?: { error?: { code?: string } } } })?.response?.data?.error?.code;
     const messageMap: Record<string, string> = {
       ALREADY_APPLIED: 'Bạn đã ứng tuyển job này rồi.',
       JOB_NOT_FOUND: 'Job không còn tồn tại.',
@@ -244,18 +223,11 @@ const close = (): void => {
         class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
         @click.self="close"
       >
-        <div
-          ref="dialogRef"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="apply-job-dialog-title"
-          tabindex="-1"
-          class="bg-white rounded-md shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col focus:outline-none"
-        >
+        <div class="bg-white rounded-md shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
       <!-- Header -->
       <div class="flex items-center justify-between p-5 border-b border-gray-200">
         <div class="min-w-0">
-          <h3 id="apply-job-dialog-title" class="text-base font-semibold text-gray-900 truncate">Ứng tuyển công việc</h3>
+          <h3 class="text-base font-semibold text-gray-900 truncate">Ứng tuyển công việc</h3>
           <p class="text-xs text-gray-500 mt-0.5 truncate">{{ job.title }}</p>
         </div>
         <button

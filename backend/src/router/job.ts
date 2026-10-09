@@ -36,10 +36,7 @@ jobRouter.get('/job-types', optionalAuth, jobController.listJobTypes);
 jobRouter.get('/job-levels', optionalAuth, jobController.listJobLevels);
 /** GET /jobs/salary-range — min/max salary bounds (VND) cho slider filter. */
 jobRouter.get('/salary-range', optionalAuth, jobController.listSalaryRange);
-// C-01/C-02 fix: list + detail job yêu cầu đăng nhập — visibility theo role
-// được enforce trong jobService (candidate: live/expired; employer: + công ty
-// mình; admin: tất cả). Không còn anonymous access.
-jobRouter.get('/', auth, validate(jobListQuerySchema, 'query'), jobController.list);
+jobRouter.get('/', optionalAuth, validate(jobListQuerySchema, 'query'), jobController.list);
 // SEO-friendly: lấy job theo slug. Đặt TRƯỚC `/:id` để Express match `by-slug`
 // là literal segment thay vì nhầm làm giá trị của `:id`.
 jobRouter.get(
@@ -51,11 +48,11 @@ jobRouter.get(
 );
 jobRouter.get(
   '/by-slug/:slug',
-  auth,
+  optionalAuth,
   validate(jobSlugParamsSchema, 'params'),
   jobController.getBySlug,
 );
-jobRouter.get('/:id', auth, validate(jobIdParamsSchema, 'params'), jobController.getById);
+jobRouter.get('/:id', optionalAuth, validate(jobIdParamsSchema, 'params'), jobController.getById);
 
 
 jobRouter.post(
@@ -116,14 +113,13 @@ jobRouter.get(
 );
 
 /**
- * Applicants-over-time chart data — candidate JobDetailView dùng để render SVG
- * chart. C-02 fix: yêu cầu đăng nhập + job phải đọc được theo detailVisibility
- * (service check, 404 nếu không đủ quyền). Mount TRƯỚC `/:id`/matches để tránh
- * route conflicts (cả 2 đều bắt đầu `/:id/`).
+ * Public applicants-over-time chart data — candidate JobDetailView dùng để
+ * render SVG chart. Optional auth (chỉ aggregate count, không lộ PII).
+ * Mount TRƯỚC `/:id`/matches để tránh route conflicts (cả 2 đều bắt đầu `/:id/`).
  */
 jobRouter.get(
   '/:id/applicants-over-time',
-  auth,
+  optionalAuth,
   validate(jobIdParamsSchema, 'params'),
   validate(jobApplicantsOverTimeQuerySchema, 'query'),
   jobController.getApplicantsOverTime,

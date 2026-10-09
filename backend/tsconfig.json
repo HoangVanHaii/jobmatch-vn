@@ -46,7 +46,7 @@
       "@types/*": ["src/types/*"]
     },
     "typeRoots": ["./node_modules/@types", "src/types"],
-    "types": ["node", "jest"]
+    "types": ["node"]
   },
   "include": ["server.ts", "drizzle.config.ts", "src/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist", "tests"]

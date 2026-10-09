@@ -36,8 +36,7 @@ export const adminJobController = {
 
   getById: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      // Route đã adminOnly — viewer admin thấy mọi status (detailVisibility).
-      const data = await jobService.getById(req.params.id as string, { role: 'admin' });
+      const data = await jobService.getById(req.params.id as string);
       res.json({ success: true, data });
     } catch (err) { next(err); }
   },

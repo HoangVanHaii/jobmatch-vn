@@ -147,13 +147,7 @@ export interface JobDetailResponse {
  *     hơn list. Tách interface giúp caller biết rõ cost.
  *   - FE có thể check optional `feedbacks` để biết response từ endpoint nào.
  */
-export interface JobDetailPayload extends Omit<Job, 'searchTsv' | 'extraData'> {
-  /**
-   * True khi job đã hết hạn theo status ('expired') — FE dùng để hiển thị
-   * banner "Tin tuyển dụng đã hết hạn". Job live nhưng quá `deadline` không
-   * set flag này (BE chưa có cron chuyển status).
-   */
-  isExpired: boolean;
+export interface JobDetailPayload extends Job {
   /** Danh sách feedback mới nhất trước, cap 200. Empty array nếu chưa có. */
   feedbacks: JobFeedback[];
   /** Aggregate rating — count + average. */

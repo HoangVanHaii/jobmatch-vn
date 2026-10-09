@@ -24,7 +24,6 @@ import {
 } from '../db/schema';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
-import { getPgErrorCode } from '../utils/pgError';
 import { logger } from '../config/logger';
 import { notificationService } from './notification.service';
 import { notificationGateway } from '../socket/notificationGateway';
@@ -291,38 +290,24 @@ export const create = async (
   const cvSnapshot = await snapshotCv(input.cvId, candidateId);
 
   try {
-    // INSERT application + tăng jobs.applies_count trong CÙNG transaction
-    // (M-02 fix: trước đây applies_count không bao giờ được tăng → counter trên
-    // header job lệch với totalApplicants của chart applicants-over-time).
-    // Ngữ nghĩa applies_count: TỔNG lượt ứng tuyển — KHÔNG giảm khi
-    // withdraw/reject (đếm lịch sử nộp hồ sơ, không phải số đơn đang mở).
-    const created = await db.transaction(async (tx) => {
-      const [row] = await tx
-        .insert(applications)
-        .values({
-          candidateId,
-          jobId: input.jobId,
-          cvId: input.cvId,
-          cv: cvSnapshot,
-          coverLetter: input.coverLetter ?? null,
-          status: 'pending',
-          stage: 'new',
-          // aiMatchScore + aiMatchReasoning: NULL ban đầu, AI worker sẽ fill sau.
-          isAnonymous: false,
-        })
-        .returning({ id: applications.id, status: applications.status });
+    const [created] = await db
+      .insert(applications)
+      .values({
+        candidateId,
+        jobId: input.jobId,
+        cvId: input.cvId,
+        cv: cvSnapshot,
+        coverLetter: input.coverLetter ?? null,
+        status: 'pending',
+        stage: 'new',
+        // aiMatchScore + aiMatchReasoning: NULL ban đầu, AI worker sẽ fill sau.
+        isAnonymous: false,
+      })
+      .returning({ id: applications.id, status: applications.status });
 
-      if (!row) {
-        throw new AppError(500, 'INSERT_FAILED', 'Không tạo được application');
-      }
-
-      await tx
-        .update(jobs)
-        .set({ appliesCount: sql`${jobs.appliesCount} + 1` })
-        .where(eq(jobs.id, input.jobId));
-
-      return row;
-    });
+    if (!created) {
+      throw new AppError(500, 'INSERT_FAILED', 'Không tạo được application');
+    }
 
     void notifyEmployerOfNewApplication({
       employerId: postedBy,
@@ -377,10 +362,7 @@ export const create = async (
     return created;
   } catch (err) {
     // PostgreSQL unique violation (23505) — trùng (cv_id, job_id).
-    // M-01 fix: drizzle-orm 0.45 bọc driver error trong DrizzleQueryError
-    // (mã thật ở .cause) — đọc err.code trực tiếp không bắt được → 500 thay
-    // vì 409. Dùng getPgErrorCode duyệt chain .cause.
-    if (getPgErrorCode(err) === '23505') {
+    if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
       throw new AppError(
         409,
         'ALREADY_APPLIED',

@@ -4,21 +4,12 @@
  * destructure req.user, gọi service, trả JSON shape `{success, data?, message?}`.
  */
 import { Request, Response, NextFunction } from 'express';
-import { jobService, PUBLIC_VIEWER, JobViewer } from '../service/job.service';
+import { jobService } from '../service/job.service';
 import { jobFeedbackService } from '../service/jobFeedback.service';
 import { applicationService } from '../service/application.service';
 import { companyMemberService } from '../service/companyMember.service';
-import { JwtPayload } from '../middleware/auth';
 import { JobListQuery, JobSemanticSearchQuery } from '../middleware/job';
 import { AppError } from '../middleware/errorHandler';
-
-/**
- * Map req.user (từ auth middleware) → JobViewer cho service. Controller KHÔNG
- * tự xử lý role logic — chỉ truyền identity xuống, service resolve visibility
- * (kể cả companyIds từ DB theo viewer.id).
- */
-const toViewer = (user?: JwtPayload): JobViewer =>
-  user ? { id: user.userId, role: user.role } : PUBLIC_VIEWER;
 
 export const jobController = {
   listIndustries: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -86,7 +77,7 @@ export const jobController = {
   list: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const filters = req.query as unknown as JobListQuery;
-      const { data, total } = await jobService.list(filters, toViewer(req.user));
+      const { data, total } = await jobService.list(filters);
       res.json({
         success: true,
         data,
@@ -142,7 +133,7 @@ export const jobController = {
         });
         return;
       }
-      const { data, total } = await jobService.list(filters, toViewer(req.user), membership.companyId);
+      const { data, total } = await jobService.list(filters, membership.companyId);
       res.json({
         success: true,
         data,
@@ -191,7 +182,7 @@ export const jobController = {
 
   getById: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const data = await jobService.getById(req.params.id as string, toViewer(req.user));
+      const data = await jobService.getById(req.params.id as string);
       res.json({ success: true, data });
     } catch (err) { next(err); }
   },
@@ -202,7 +193,7 @@ export const jobController = {
    */
   getBySlug: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const data = await jobService.getBySlug(req.params.slug as string, toViewer(req.user));
+      const data = await jobService.getBySlug(req.params.slug as string);
       res.json({ success: true, data });
     } catch (err) { next(err); }
   },
@@ -315,7 +306,7 @@ export const jobController = {
     try {
       const jobId = req.params.id as string;
       const days = Number(req.query.days ?? 10);
-      const data = await jobService.getApplicantsOverTime(jobId, days, toViewer(req.user));
+      const data = await jobService.getApplicantsOverTime(jobId, days);
       res.json({ success: true, data });
     } catch (err) { next(err); }
   },
