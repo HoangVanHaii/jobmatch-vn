@@ -146,7 +146,6 @@ const routes: RouteRecordRaw[] = [
       { path: 'billing/cancel', name: 'employer-billing-cancel', component: () => import('@views/BillingCancelView.vue') },
 
       // Mockup test route — xem nhanh UI mockup candidate list/detail, không gọi API.
-      { path: 'test', name: 'employer-test', component: () => import('@views/employer/ApplicationMockupView.vue') },
       // Mockup Upgrade Plan page (static, không gọi API).
       { path: 'test2', name: 'employer-test-plan', component: () => import('@views/employer/PlanMockupView.vue') },
       // Mockup TechNova landing page (static, không gọi API).
