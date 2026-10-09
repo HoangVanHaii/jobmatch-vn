@@ -3,7 +3,7 @@ import { db } from '../config/database';
 import { aiChatSessions } from '../db/schema';
 import { and, eq, desc } from 'drizzle-orm';
 import { cvService } from './cv.service';
-import { jobService } from './job.service';
+import { jobService, PUBLIC_VIEWER } from './job.service';
 import { billingService } from './billing.service';
 import { applicationService } from './application.service';
 import { savedJobs as savedJobsTable } from '../db/schema/applications';
@@ -665,7 +665,8 @@ resolveContextData: async (userId: string, ctx: { jobIds: string[]; cvIds: strin
         page: 1,
         limit: capped,
       } as any,
-      undefined,
+      // Viewer hệ thống semantic public (chỉ job live) — không bỏ qua visibility.
+      PUBLIC_VIEWER,
     );
     return data.map((j) => ({
       id: j.id,

@@ -100,7 +100,11 @@ export interface JobDetail extends JobListItem {
   featuredUntil: Date | null;
   createdAt: Date;
   updatedAt: Date;
-  extraData: Record<string, unknown> | null;
+  /**
+   * True khi job status = 'expired' (BE set) — FE hiện banner "Tin tuyển dụng
+   * đã hết hạn". Job live nhưng quá `deadline` không set flag này.
+   */
+  isExpired?: boolean;
   /** Danh sách feedback của candidate cho job này (mới nhất trước). */
   feedbacks: JobFeedback[];
   /** Aggregate rating. */

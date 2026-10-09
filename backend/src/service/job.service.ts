@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { db } from '../config/database';
 import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
-import { eq, desc, asc, and, ilike, sql, inArray, type SQL } from 'drizzle-orm';
+import { eq, desc, asc, and, or, ilike, sql, inArray, type SQL } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { Job, JobListItem, ExportApplicationsJobData, JobStatus, JobDetailPayload } from '@/interface/job';
 import {
@@ -16,7 +16,7 @@ import { JOB_GENERATION_SYSTEM_PROMPT, buildJobGenerationUserPrompt } from '../p
 import { searchSimilarJobs, SemanticSearchResult } from '../lib/llm/jobEmbedding';
 import { usageLogService } from './usageLog.service';
 import { jobFeedbackService } from './jobFeedback.service';
-import { tryCatch } from 'bullmq';
+import { companyMemberService } from './companyMember.service';
 
 /**
  * Build prefix-matching `to_tsquery` từ keyword người dùng nhập.
@@ -97,6 +97,97 @@ const generateUniqueSlug = async (title: string): Promise<string> => {
   throw new AppError(500, 'SLUG_GENERATION_FAILED', 'Không sinh được slug unique');
 };
 
+// ============================================================================
+// Job visibility (C-01/C-02 fix) — mọi read path đều phải đi qua viewer check.
+//
+//   - candidate : list/detail chỉ thấy job 'live' (detail thấy thêm 'expired'
+//                 kèm isExpired=true để FE hiển thị banner).
+//   - employer  : list thấy live (mọi công ty) + mọi status của công ty mình;
+//                 detail như candidate + mọi status của job công ty mình.
+//   - admin     : thấy mọi status.
+//
+// companyIds LUÔN resolve từ DB theo viewer.id (companyMembers status='active'),
+// tuyệt đối không nhận từ query/body. Job không đủ quyền xem → caller trả 404
+// (không dùng 403) để không lộ sự tồn tại.
+// ============================================================================
+
+export type JobViewerRole = 'candidate' | 'employer' | 'admin';
+
+export interface JobViewer {
+  id?: string;
+  role: JobViewerRole;
+}
+
+/** Viewer hệ thống cho lời gọi nội bộ KHÔNG có user context (vd chatbot picker)
+ *  — semantic public read-only: chỉ job 'live', không bao giờ bỏ qua kiểm tra. */
+export const PUBLIC_VIEWER: JobViewer = { role: 'candidate' };
+
+/** Resolve companyIds của employer từ DB (membership active). Role khác → []. */
+const loadCompanyIds = async (viewer: JobViewer): Promise<string[]> => {
+  if (viewer.role !== 'employer' || !viewer.id) return [];
+  const membership = await companyMemberService.findMembershipByUserId(viewer.id);
+  return membership ? [membership.companyId] : [];
+};
+
+/** Chi tiết job: candidate/employer thấy live + expired; employer thêm mọi
+ *  status của công ty mình; admin thấy tất cả. */
+const detailVisibility = (viewer: JobViewer, companyIds: string[]): SQL => {
+  if (viewer.role === 'admin') return sql`true`;
+  const statusCond = inArray(jobs.status, ['live', 'expired']);
+  if (viewer.role === 'employer' && companyIds.length > 0) {
+    return or(statusCond, inArray(jobs.companyId, companyIds)) as SQL;
+  }
+  return statusCond as SQL;
+};
+
+/** Danh sách job: candidate chỉ live; employer live + mọi status công ty mình;
+ *  admin tất cả. Filter status từ client chỉ được AND thêm (thu hẹp), không
+ *  được thay thế điều kiện này. */
+const listVisibility = (viewer: JobViewer, companyIds: string[]): SQL => {
+  if (viewer.role === 'admin') return sql`true`;
+  if (viewer.role === 'employer' && companyIds.length > 0) {
+    return or(eq(jobs.status, 'live'), inArray(jobs.companyId, companyIds)) as SQL;
+  }
+  return eq(jobs.status, 'live');
+};
+
+/** Cột public của job cho detail endpoint — LOẠI searchTsv (tsvector nội bộ)
+ *  và extraData (không có gì trên FE đọc). Dùng cho .returning() tường minh
+ *  thay vì trả toàn bộ cột. */
+const JOB_PUBLIC_COLUMNS = {
+  id: jobs.id,
+  companyId: jobs.companyId,
+  postedBy: jobs.postedBy,
+  title: jobs.title,
+  slug: jobs.slug,
+  description: jobs.description,
+  requirements: jobs.requirements,
+  benefits: jobs.benefits,
+  jobLevel: jobs.jobLevel,
+  jobType: jobs.jobType,
+  industry: jobs.industry,
+  salaryMin: jobs.salaryMin,
+  salaryMax: jobs.salaryMax,
+  salaryCurrency: jobs.salaryCurrency,
+  salaryVisible: jobs.salaryVisible,
+  location: jobs.location,
+  remoteOk: jobs.remoteOk,
+  experienceYearsMin: jobs.experienceYearsMin,
+  experienceYearsMax: jobs.experienceYearsMax,
+  requiredSkills: jobs.requiredSkills,
+  niceToHaveSkills: jobs.niceToHaveSkills,
+  deadline: jobs.deadline,
+  status: jobs.status,
+  hiringStatus: jobs.hiringStatus,
+  featured: jobs.featured,
+  featuredUntil: jobs.featuredUntil,
+  viewsCount: jobs.viewsCount,
+  appliesCount: jobs.appliesCount,
+  createdAt: jobs.createdAt,
+  updatedAt: jobs.updatedAt,
+  publishedAt: jobs.publishedAt,
+};
+
 export const jobService = {
   /**
    * Slim list id + title của job thuộc 1 company — cho dropdown filter
@@ -123,21 +214,21 @@ export const jobService = {
       .orderBy(desc(jobs.createdAt));
   },
 
-  list: async (filters: JobListQuery, companyId?: string): Promise<{ data: JobListItem[]; total: number }> => {
-    const conditions = [];
-    // Logic filter status tuỳ ngữ cảnh:
-    //  - Public `/jobs` (candidate, no companyId) mặc định chỉ trả status='live'
-    //    để ứng viên không thấy job draft/ai_flagged/closed. Nếu caller truyền
-    //    `filters.status` thì ghi đè bằng `inArray(...)` (multi-status).
-    //  - Employer `/jobs/company` (có companyId) KHÔNG filter status mặc định —
-    //    employer cần thấy mọi trạng thái trong pipeline moderation. Nếu
-    //    caller truyền `filters.status` thì AND thêm (xem block dưới).
+  list: async (
+    filters: JobListQuery,
+    viewer: JobViewer,
+    companyId?: string,
+  ): Promise<{ data: JobListItem[]; total: number }> => {
+    // Visibility là điều kiện CỐ ĐỊNH đầu tiên — filter status từ client chỉ
+    // AND thêm để thu hẹp, không bao giờ thay thế (fix C-01: trước đây
+    // `?status=draft` ghi đè default live → lộ job chưa publish mọi công ty).
+    const companyIds = await loadCompanyIds(viewer);
+    const conditions: SQL[] = [listVisibility(viewer, companyIds)];
     if (companyId) {
       conditions.push(eq(jobs.companyId, companyId));
-    } else if (filters.status && filters.status.length > 0) {
+    }
+    if (filters.status && filters.status.length > 0) {
       conditions.push(inArray(jobs.status, filters.status));
-    } else {
-      conditions.push(eq(jobs.status, 'live'));
     }
     if (filters.search) {
       // Dùng buildPrefixTsquery thay vì `plainto_tsquery` — hỗ trợ prefix match
@@ -155,12 +246,8 @@ export const jobService = {
       conditions.push(inArray(jobs.jobType, filters.jobType));
     }
 
-    // Nếu employer truyền cả `companyId` lẫn `filters.status` (filter thêm trong
-    // trang "Job đã đăng") → AND thêm điều kiện status. Nhánh `if (companyId)`
-    // ở trên không push status, nên phải push riêng ở đây.
-    if (companyId && filters.status && filters.status.length > 0) {
-      conditions.push(inArray(jobs.status, filters.status));
-    }
+    // Filter status đã được AND thống nhất ở trên (áp cho cả public lẫn
+    // employer theo companyId) — không push trùng ở đây nữa.
 
     if (filters.locationCity) {
       // Match cả 2 dạng: data cũ có thể lưu "Thành phố Hà Nội" (nguyên từ API)
@@ -354,39 +441,45 @@ export const jobService = {
     };
   },
 
-  getById: async (id: string): Promise<JobDetailPayload> => {
+  getById: async (id: string, viewer: JobViewer): Promise<JobDetailPayload> => {
+    // Visibility đặt ngay trong WHERE của UPDATE views_count → job không đủ
+    // quyền thì KHÔNG bị tăng view và không đọc ra (fix C-02).
+    const companyIds = await loadCompanyIds(viewer);
     const [row] = await db
       .update(jobs)
       .set({ viewsCount: sql`${jobs.viewsCount} + 1` })
-      .where(eq(jobs.id, id))
-      .returning();
-    if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
+      .where(and(eq(jobs.id, id), detailVisibility(viewer, companyIds)))
+      .returning(JOB_PUBLIC_COLUMNS);
+    if (!row) throw new AppError(404, 'JOB_NOT_FOUND', 'Job không tồn tại hoặc đã bị gỡ');
 
-    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(id);
+    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(id, viewer.id);
 
-    return { ...row, feedbacks, feedbackStats: stats };
+    return { ...row, isExpired: row.status === 'expired', feedbacks, feedbackStats: stats };
   },
 
   /**
    * Lấy job theo slug (URL SEO-friendly). Mirror `getById`:
    *   - Tăng viewsCount +1 (side-effect như getById).
    *   - Nhúng feedbacks + feedbackStats vào response.
-   *   - 404 nếu slug không tồn tại.
+   *   - 404 nếu slug không tồn tại HOẶC viewer không đủ quyền xem status hiện
+   *     tại của job (draft/ai_flagged/closed không đọc được — trả 404 thay vì
+   *     403 để không lộ sự tồn tại, fix C-02).
    *
    * Slug được generate unique lúc create (xem migration 0032), nên query theo
    * slug chỉ trả tối đa 1 row.
    */
-  getBySlug: async (slug: string): Promise<JobDetailPayload> => {
+  getBySlug: async (slug: string, viewer: JobViewer): Promise<JobDetailPayload> => {
+    const companyIds = await loadCompanyIds(viewer);
     const [row] = await db
       .update(jobs)
       .set({ viewsCount: sql`${jobs.viewsCount} + 1` })
-      .where(eq(jobs.slug, slug))
-      .returning();
-    if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
+      .where(and(eq(jobs.slug, slug), detailVisibility(viewer, companyIds)))
+      .returning(JOB_PUBLIC_COLUMNS);
+    if (!row) throw new AppError(404, 'JOB_NOT_FOUND', 'Job không tồn tại hoặc đã bị gỡ');
 
-    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(row.id);
+    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(row.id, viewer.id);
 
-    return { ...row, feedbacks, feedbackStats: stats };
+    return { ...row, isExpired: row.status === 'expired', feedbacks, feedbackStats: stats };
   },
 
   /**
@@ -738,17 +831,22 @@ generateDraft: async (
   getApplicantsOverTime: async (
     jobId: string,
     days: number,
+    viewer: JobViewer,
   ): Promise<{
     series: { date: string; count: number }[];
     peak: { date: string; count: number } | null;
     totalApplicants: number;
   }> => {
-    // Verify job tồn tại — 404 thay vì trả series rỗng (FE có thể hiểu nhầm).
-    const job = await db.query.jobs.findFirst({
-      where: eq(jobs.id, jobId),
-      columns: { id: true },
-    });
-    if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
+    // Verify job tồn tại + viewer được xem job này (detailVisibility) — 404
+    // thay vì trả series rỗng (FE có thể hiểu nhầm). Fix C-02: job draft/closed
+    // không lộ timeseries qua id.
+    const companyIds = await loadCompanyIds(viewer);
+    const [job] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.id, jobId), detailVisibility(viewer, companyIds)))
+      .limit(1);
+    if (!job) throw new AppError(404, 'JOB_NOT_FOUND', 'Job not found');
 
     const seriesResult = await db.execute<{ date: string; count: string }>(sql`
       WITH days AS (
