@@ -22,6 +22,7 @@ import {
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
 import { applicationApi } from '@services/application.api';
+import { aiTestApi, type MyAssignmentRow } from '@services/aiTest.api';
 import { useToastStore } from '@stores/toast';
 import { useChatStore } from '@stores/chat';
 import { getSocket } from '@services/socket';
@@ -301,6 +302,22 @@ interface TimelineStep {
   note?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Test assignments của candidate — fetch khi detail load, ghép vào timeline:
+// mỗi assignment 1 step ("Bài test IQ — Kết quả: 85% — Đạt" hoặc "Chờ làm bài").
+// ---------------------------------------------------------------------------
+const testAssignments = ref<MyAssignmentRow[]>([]);
+
+const fetchTestAssignments = async (applicationId: string): Promise<void> => {
+  testAssignments.value = [];
+  try {
+    const { data } = await aiTestApi.listMyAssignments(applicationId);
+    testAssignments.value = [...data.data].reverse(); // cũ nhất trước cho timeline
+  } catch {
+    // best-effort — timeline vẫn render phần status
+  }
+};
+
 const timeline = computed<TimelineStep[]>(() => {
   const detail_ = detail.value;
   const status = currentStatus.value;
@@ -310,6 +327,24 @@ const timeline = computed<TimelineStep[]>(() => {
   // đã patch detail.stage realtime).
   const stage = detail_?.stage ?? props.application?.stage ?? null;
 
+  // Test steps — giữa "NTD xem" và status hiện tại, sort theo sentAt tăng dần.
+  const testSteps: TimelineStep[] = testAssignments.value.map((a) => {
+    const typeLabel = a.testType === 'iq' ? 'Bài test IQ' : 'Bài test Tiếng Anh';
+    const submitted = a.status === 'submitted' && a.score != null;
+    const passed = submitted && Number(a.score) >= Number(a.passingScore ?? 60);
+    return {
+      label: typeLabel,
+      at: a.submittedAt ?? a.sentAt ?? null,
+      done: submitted,
+      icon: CheckCircle2,
+      note: submitted
+        ? `Kết quả: ${a.score}% — ${passed ? 'Đạt' : 'Chưa đạt'}`
+        : a.status === 'in_progress'
+          ? 'Đang làm bài'
+          : 'Chờ làm bài',
+    };
+  });
+
   return [
     { label: 'Nộp đơn', at: appliedAt, done: true, icon: CheckCircle2 },
     {
@@ -318,6 +353,7 @@ const timeline = computed<TimelineStep[]>(() => {
       done: viewedAt != null,
       icon: Eye,
     },
+    ...testSteps,
     {
       label: STATUS_LABEL[status],
       at: null,
@@ -337,6 +373,7 @@ const fetchDetail = async (id: string): Promise<void> => {
   try {
     const { data } = await applicationApi.getById(id);
     detail.value = data.data;
+    void fetchTestAssignments(id);
   } catch {
     errorMsg.value = 'Không tải được chi tiết đơn ứng tuyển.';
   } finally {

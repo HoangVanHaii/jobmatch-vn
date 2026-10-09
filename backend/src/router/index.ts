@@ -29,6 +29,7 @@ import { uploadRouter } from './upload';
 import { chatbotRouter } from './chatbot';
 import { interviewRouter } from './interview';
 import { referenceVerifyRouter } from './referenceVerify';
+import { aiTestRouter } from './aiTest';
 
 export const apiRouter = Router();
 
@@ -61,3 +62,5 @@ apiRouter.use('/chatbot', chatbotRouter);
 apiRouter.use('/interviews', interviewRouter);
 // Reference verification (employer + public referee endpoints)
 apiRouter.use('/references', referenceVerifyRouter);
+// AI test (employer generate/assign + public candidate làm bài)
+apiRouter.use('/ai-tests', aiTestRouter);

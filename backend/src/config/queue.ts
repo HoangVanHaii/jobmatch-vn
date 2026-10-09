@@ -20,6 +20,7 @@ export const jobEmbeddingQueue = new Queue('jobEmbedding', queueOptions);
 export const cvParsingQueue = new Queue('cvParsing', queueOptions);
 export const cvAnalysisQueue = new Queue('cvAnalysis', queueOptions);
 export const cvMatchQueue = new Queue('cvMatch', queueOptions);
+export const aiTestGenerateQueue = new Queue('aiTestGenerate', queueOptions);
 // Reconciliation payment PayOS — fix HIGH #1 (mỗi 10 phút, xem paymentReconciliation.worker)
 export const paymentReconcileQueue = new Queue('payment-reconcile', queueOptions);
 

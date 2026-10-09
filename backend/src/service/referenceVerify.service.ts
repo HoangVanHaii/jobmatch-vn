@@ -46,8 +46,9 @@ const generateToken = (): string => crypto.randomBytes(32).toString('hex');
 /**
  * Employer chỉ thao tác trên application của job mình post (hoặc member
  * của company post job). Mirror pattern ownership của listByJob.
+ * Export cho aiTest.service tái dùng (assign test cùng ownership rule).
  */
-const assertEmployerOwnsApplication = async (
+export const assertEmployerOwnsApplication = async (
   applicationId: string,
   employerId: string,
   employerRole: string,

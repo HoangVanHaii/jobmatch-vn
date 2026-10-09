@@ -13,6 +13,7 @@ import { Queue } from 'bullmq';
 import { redis } from '../config/redis';
 import { cvAnalysisWorker } from './cvAnalysis.worker';
 import { cvMatchWorker } from './cvMatch.worker';
+import { aiTestGenerateWorker } from './aiTestGenerate.worker';
 import { exportWorker } from './export.worker';
 import { paymentReconciliationWorker } from './paymentReconciliation.worker';
 import { paymentReconcileQueue } from '../config/queue';
@@ -23,6 +24,7 @@ export const startWorkers = (): void => {
   // void emailWorker;
   // void matchingWorker;
   void cvMatchWorker;
+  void aiTestGenerateWorker;
   void interviewReminderWorker;
   void jobModerationWorker;
   void jobEmbeddingWorker;
