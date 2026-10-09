@@ -603,15 +603,15 @@ const osmEmbedUrl = computed(() => {
                     📍 {{ jobLocation(job.location) }}
                   </p>
 
-                  <a
+                  <router-link
                     v-if="job.slug"
-                    :href="`/jobs/${job.slug}`"
+                    :to="{ name: 'candidate-job-detail', params: { slug: job.slug } }"
                     class="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
                   >
                     Xem chi tiết
 
                     <ArrowRight :size="12" />
-                  </a>
+                  </router-link>
                 </div>
               </article>
             </div>
