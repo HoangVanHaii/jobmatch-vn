@@ -24,6 +24,7 @@ import type {
   InviteMemberResponse,
   LeaveCompanyResponse,
   ListCompanyMembersResponse,
+  ListPublicCompanyMembersResponse,
   MyInvitationsResponse,
   RemoveMemberResponse,
   TransferCompanyOwnerBody,
@@ -232,6 +233,22 @@ export const companyMemberController = {
       res.json({ success: true, data: response });
     } catch (err) {
       console.error('[companyMember.list] error:', err);
+      next(err);
+    }
+  },
+
+  /** GET /:companyId/members/public — member active rút gọn cho profile công khai
+   *  (candidate Job Detail tab "Công ty"). Chỉ tên + avatar, không cần là member. */
+  listPublic: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { companyId } = req.params as unknown as CompanyIdParams;
+
+      const members = await companyMemberService.listPublicMembers(companyId);
+
+      const response: ListPublicCompanyMembersResponse = members;
+      res.json({ success: true, data: response });
+    } catch (err) {
+      console.error('[companyMember.listPublic] error:', err);
       next(err);
     }
   },

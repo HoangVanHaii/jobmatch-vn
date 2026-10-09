@@ -1246,10 +1246,13 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
                       px-7
                       bg-[#1E4A8A]
                       hover:bg-[#173B70]
+                      active:bg-[#122E5C]
+                      active:scale-[0.97]
                       text-white
                       text-[14px]
                       font-medium
                       transition
+                      select-none
                       rounded-r-[10px]"
                 @click="onSearchSubmit"
               >
