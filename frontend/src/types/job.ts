@@ -95,6 +95,22 @@ export interface AdjacentJob {
   title: string;
 }
 
+export type PaymentCycleType = 'weekly' | 'monthly' | 'contract';
+
+/**
+ * Cấu trúc JSONB linh hoạt lưu trong cột `jobs.extra_data` ở cơ sở dữ liệu.
+ * Dùng cho các trường mở rộng không có cột SQL riêng như Chu kỳ trả lương,
+ * chuyên môn giáo trình, danh sách hội đồng tuyển dụng và kênh đăng tin.
+ */
+export interface JobExtraData {
+  paymentType?: PaymentCycleType;
+  paymentTypeLabel?: string;
+  curriculumSpecialists?: string[];
+  teamMembers?: Array<{ id: string; name: string; email: string; role: string; selected?: boolean }>;
+  shareChannels?: Record<string, boolean>;
+  [key: string]: unknown;
+}
+
 export interface JobDetail extends JobListItem {
   description: string;
   requirements: string | null;
@@ -107,7 +123,7 @@ export interface JobDetail extends JobListItem {
   featuredUntil: Date | null;
   createdAt: Date;
   updatedAt: Date;
-  extraData: Record<string, unknown> | null;
+  extraData: JobExtraData | null;
   /** Danh sách feedback của candidate cho job này (mới nhất trước). */
   feedbacks: JobFeedback[];
   /** Aggregate rating. */
