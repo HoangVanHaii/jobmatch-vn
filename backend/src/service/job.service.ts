@@ -236,8 +236,8 @@ export const jobService = {
     } else if (filters.salaryMax != null) {
       conditions.push(sql`${jobs.salaryMin} <= ${String(filters.salaryMax)}`);
     }
-    if (filters.remoteOk != null) {
-      conditions.push(eq(jobs.remoteOk, filters.remoteOk));
+    if (filters.workType) {
+      conditions.push(eq(jobs.workType, filters.workType));
     }
     if (filters.industry) {
       conditions.push(eq(jobs.industry, filters.industry));
@@ -262,7 +262,7 @@ export const jobService = {
         salaryCurrency: jobs.salaryCurrency,
         salaryVisible: jobs.salaryVisible,
         location: jobs.location,
-        remoteOk: jobs.remoteOk,
+        workType: jobs.workType,
         deadline: jobs.deadline,
         status: jobs.status,
         hiringStatus: jobs.hiringStatus,
@@ -493,7 +493,7 @@ export const jobService = {
           salaryCurrency: jobs.salaryCurrency,
           salaryVisible: jobs.salaryVisible,
           location: jobs.location,
-          remoteOk: jobs.remoteOk,
+          workType: jobs.workType,
           deadline: jobs.deadline,
           status: jobs.status,
           viewsCount: jobs.viewsCount,
@@ -941,8 +941,8 @@ generateDraft: async (
     if (filters.locationCity) {
       conditions.push(sql`${jobs.location}->>'city' = ${filters.locationCity}`);
     }
-    if (filters.remoteOk !== undefined) {
-      conditions.push(eq(jobs.remoteOk, filters.remoteOk));
+    if (filters.workType) {
+      conditions.push(eq(jobs.workType, filters.workType));
     }
     // Salary range filter (admin) — same overlap semantics as list() public.
     if (filters.salaryMin != null && filters.salaryMax != null) {
@@ -978,7 +978,7 @@ generateDraft: async (
         salaryCurrency: jobs.salaryCurrency,
         salaryVisible: jobs.salaryVisible,
         location: jobs.location,
-        remoteOk: jobs.remoteOk,
+        workType: jobs.workType,
         deadline: jobs.deadline,
         status: jobs.status,
         viewsCount: jobs.viewsCount,

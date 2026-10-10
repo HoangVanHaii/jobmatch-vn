@@ -31,10 +31,9 @@ export interface JobLocation {
   lng?: number;
 }
 
+export type WorkType = 'remote' | 'onsite' | 'hybrid';
+
 /** Một job record — DB row đầy đủ (Drizzle inferred).
- *  Lưu ý: salaryCurrency/salaryVisible/remoteOk/featured lý thuyết nullable
- *  vì schema dùng `.default(...)` không `.notNull()`. Mặc dù DB luôn có giá trị
- *  (nhờ default), TS khoan dung null để khớp với Drizzle inferred type.
  *  searchTsv: tsvector GENERATED — không nên lộ ra API (TODO: loại bằng select). */
 export interface Job {
   id: string;
@@ -53,7 +52,7 @@ export interface Job {
   salaryCurrency: string | null;
   salaryVisible: boolean | null;
   location: JobLocation | null;
-  remoteOk: boolean | null;
+  workType: WorkType;
   experienceYearsMin: number | null;
   experienceYearsMax: number | null;
   requiredSkills: string[];
@@ -96,7 +95,7 @@ export interface JobListItem {
   salaryCurrency: string | null;
   salaryVisible: boolean | null;
   location: JobLocation | null;
-  remoteOk: boolean | null;
+  workType: WorkType;
   deadline: Date | null;
   status: JobStatus;
   /** Badge status cho FE — mirror cột `jobs.hiring_status` ở DB. Default

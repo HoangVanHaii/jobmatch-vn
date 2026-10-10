@@ -219,25 +219,12 @@ const toggleSection = (key: string): void => {
 };
 
 
-/** Job Type checkboxes — UI giữ nguyên từ mockup, key ánh xạ sang enum backend.
- *  Multi-select: nhiều checkbox có thể checked cùng lúc, BE nhận CSV
- *  `?jobType=a,b` và lọc IN. Click checkbox đang checked → bỏ tick.
- *
- *  Lưu ý: `remote` và `student` không phải enum JobType thật của BE — map:
- *    - `remote`      → toggle `remoteOk=true` (xem watcher bên dưới)
- *    - `student`     → không map (mockup-only), giữ như dummy
- *    - các key còn lại map trực tiếp vào `ListJobQuery.jobType`.
- */
+
 /**
  * JobType enum values load từ `GET /jobs/job-types` — sync với BE enum
  * `job_type`. Mapping `key → label` ở client để hiển thị tiếng Việt thân thiện
  * (vd "full-time" → "Toàn thời gian"). Mỗi option có `checked` để UI dùng
  * multi-select (xem `onJobTypeToggle`).
- *
- * Cũ từng hardcode 5 option (full-time/part-time/remote/student/contract) —
- * 'remote' map sang `remoteOk=true` (khác field), 'student' là mockup-only.
- * Sau khi sync API, chỉ giữ các giá trị đúng enum `job_type`. Remote vẫn
- * có thể toggle qua checkbox riêng (chưa làm — TODO).
  */
 interface JobTypeOption {
   key: JobType;
@@ -734,10 +721,10 @@ const toJobCard = (j: JobListItem): JobCard => {
   if (j.jobType) {
     badges.push({ label: formatJobType(j.jobType), variant: 'responsive' });
   }
-  const workType = j.remoteOk
+  const workType = j.workType === 'remote'
     ? 'Remote'
-    : j.jobType === 'part-time'
-      ? 'Part-time'
+    : j.workType === 'hybrid'
+      ? 'Hybrid'
       : (j.location?.city ?? 'Onsite');
   return {
     id: j.id,

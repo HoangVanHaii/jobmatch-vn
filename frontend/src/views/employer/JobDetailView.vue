@@ -313,7 +313,7 @@ const jobDetailsList = computed(() => [
   },
   {
     label: 'Cách thức',
-    value: job.value?.remoteOk ? 'On-Site / Hybrid' : 'On-Site',
+    value: job.value?.workType === 'remote' ? 'Remote' : job.value?.workType === 'hybrid' ? 'Hybrid' : 'On-Site',
     icon: Building2,
   },
   {

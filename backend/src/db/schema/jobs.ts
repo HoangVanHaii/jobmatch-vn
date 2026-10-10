@@ -1,7 +1,7 @@
 import { pgTable, uuid, text, integer, numeric, boolean, timestamp, jsonb, index, customType } from 'drizzle-orm/pg-core';
 import { companies } from './companies';
 import { users } from './users';
-import { jobStatusEnum, jobLevelEnum, jobTypeEnum, hiringStatusEnum } from './enums';
+import { jobStatusEnum, jobLevelEnum, jobTypeEnum, hiringStatusEnum, workTypeEnum } from './enums';
 
 const tsvector = customType<{ data: string }>({ dataType() { return 'tsvector'; } });
 
@@ -22,7 +22,7 @@ export const jobs = pgTable('jobs', {
   salaryCurrency: text('salary_currency').default('VND'),
   salaryVisible: boolean('salary_visible').default(true),
   location: jsonb('location').$type<{ city?: string; district?: string; address?: string; lat?: number; lng?: number }>(),
-  remoteOk: boolean('remote_ok').default(false),
+  workType: workTypeEnum('work_type').default('onsite').notNull(),
   experienceYearsMin: integer('experience_years_min'),
   experienceYearsMax: integer('experience_years_max'),
   requiredSkills: jsonb('required_skills').$type<string[]>().default([]).notNull(),

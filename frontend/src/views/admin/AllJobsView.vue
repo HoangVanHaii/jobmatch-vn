@@ -31,7 +31,7 @@ import {
   AlertTriangle, Play, XCircle, XSquare,
 } from 'lucide-vue-next';
 import { formatDate, relativeTime } from '@/utils/format';
-import type { JobDetail, JobStatus, JobLevel, JobType } from '@/types/job';
+import type { JobDetail, JobStatus, JobLevel, JobType, WorkType } from '@/types/job';
 
 /** Shape action item — mirror với AdminActionMenu.vue (component này không export type). */
 type ActionItem = {
@@ -156,10 +156,11 @@ function formatSalary(min: string | null, max: string | null, currency: string |
   if (min) return `Từ ${fmt(min)} ${cur}`;
   return `Đến ${fmt(max!)} ${cur}`;
 }
-function formatLocation(loc: { city?: string; district?: string } | null, remote: boolean | null): string {
+function formatLocation(loc: { city?: string; district?: string } | null, workType?: WorkType | null): string {
   const parts: string[] = [];
   if (loc?.city) parts.push(loc.city);
-  if (remote) parts.push('Remote');
+  if (workType === 'remote') parts.push('Remote');
+  else if (workType === 'hybrid') parts.push('Hybrid');
   return parts.join(' · ') || '—';
 }
 
@@ -724,7 +725,7 @@ const isEmpty = computed(() => !loading.value && paged.value.length === 0);
           <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs" style="color: var(--admin-text-muted);">
             <div class="flex items-center gap-1">
               <MapPin class="h-3.5 w-3.5" style="color: var(--admin-text-subtle);" />
-              <span>{{ formatLocation(j.location, j.remoteOk) }}</span>
+              <span>{{ formatLocation(j.location, j.workType) }}</span>
             </div>
             <div v-if="j.jobType" class="flex items-center gap-1">
               <Briefcase class="h-3.5 w-3.5" style="color: var(--admin-text-subtle);" />
@@ -844,7 +845,7 @@ const isEmpty = computed(() => !loading.value && paged.value.length === 0);
           </div>
           <div>
             <p class="text-xs font-semibold uppercase tracking-wider" style="color: var(--admin-text-muted);">Địa điểm</p>
-            <p class="mt-1" style="color: var(--admin-text);">{{ formatLocation(viewJob.location, viewJob.remoteOk) }}</p>
+            <p class="mt-1" style="color: var(--admin-text);">{{ formatLocation(viewJob.location, viewJob.workType) }}</p>
           </div>
           <div>
             <p class="text-xs font-semibold uppercase tracking-wider" style="color: var(--admin-text-muted);">Lương</p>

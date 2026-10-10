@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const jobLevelEnum = z.enum(['intern', 'fresher', 'junior', 'mid', 'senior', 'lead', 'manager']);
 const jobTypeEnum  = z.enum(['full-time', 'part-time', 'contract', 'internship', 'freelance']);
+const workTypeEnum = z.enum(['remote', 'onsite', 'hybrid']);
 const jobStatusEnum = z.enum(['draft', 'pending', 'ai_scanning', 'ai_flagged', 'live', 'expired', 'closed']);
 /** Mirror `hiring_status` enum ở DB (migration 0038). Dùng cho badge UI
  *  JobSearchView — employer set lúc tạo/sửa job, không auto compute. */
@@ -103,13 +104,7 @@ export const jobListQuerySchema = z.object({
    *  2, backend dùng overlap semantics (job.salary_max >= user.salary_min
    *  AND job.salary_min <= user.salary_max) — chuẩn LinkedIn/Indeed UX. */
   salaryMax: z.coerce.number().int().nonnegative().optional(),
-  // Lưu ý: KHÔNG dùng z.coerce.boolean() — nó dùng Boolean(value) của JS,
-  // mọi string non-empty (kể cả "false") đều trả về true. Phải preprocess
-  // thủ công để parse "false" thành boolean false.
-  remoteOk: z.preprocess(
-    (v) => (v === 'true' ? true : v === 'false' ? false : v),
-    z.boolean().optional(),
-  ),
+  workType: workTypeEnum.optional(),
   industry: z.string().min(1).max(100).optional(),
 
   page: z.coerce.number().int().positive().default(1),
@@ -140,6 +135,7 @@ export const jobSemanticSearchQuerySchema = z.object({
   locationCity: z.string().min(1).max(100).optional(),
   jobLevel: jobLevelEnum.optional(),
   jobType: jobTypeEnum.optional(),
+  workType: workTypeEnum.optional(),
   limit: z.coerce.number().int().positive().max(100).default(20),
 });
 
@@ -158,7 +154,7 @@ export const jobCreateSchema = z
     salaryCurrency: z.string().length(3).default('VND'),
     salaryVisible: z.boolean().default(true),
     location: locationSchema,
-    remoteOk: z.boolean().default(false),
+    workType: workTypeEnum.default('onsite'),
     experienceYearsMin: z.coerce.number().int().nonnegative().optional(),
     experienceYearsMax: z.coerce.number().int().nonnegative().optional(),
     requiredSkills: skillsSchema.optional().default([]),
@@ -192,7 +188,7 @@ export const jobUpdateSchema = z
     salaryCurrency: z.string().length(3).optional(),
     salaryVisible: z.boolean().optional(),
     location: locationSchema,
-    remoteOk: z.boolean().optional(),
+    workType: workTypeEnum.optional(),
     experienceYearsMin: z.coerce.number().int().nonnegative().optional(),
     experienceYearsMax: z.coerce.number().int().nonnegative().optional(),
     requiredSkills: skillsSchema.optional().default([]),

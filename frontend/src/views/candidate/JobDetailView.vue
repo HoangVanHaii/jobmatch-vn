@@ -353,7 +353,8 @@ const LOCATION_META = {
 const workApproachLabel = computed((): string => {
   const j = job.value;
   if (!j) return '—';
-  if (j.remoteOk) return 'Remote OK';
+  if (j.workType === 'remote') return 'Remote';
+  if (j.workType === 'hybrid') return j.location?.city ? `Hybrid · ${j.location.city}` : 'Hybrid';
   return j.location?.city ? `Onsite · ${j.location.city}` : 'Onsite';
 });
 

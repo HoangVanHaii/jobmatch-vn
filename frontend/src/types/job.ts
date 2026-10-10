@@ -10,6 +10,8 @@ export type JobLevel =
 export type JobType =
   | 'full-time' | 'part-time' | 'contract' | 'internship' | 'freelance';
 
+export type WorkType = 'remote' | 'onsite' | 'hybrid';
+
 export type JobStatus =
   | 'draft' | 'pending' | 'ai_scanning' | 'ai_flagged'
   | 'live' | 'expired' | 'closed';
@@ -51,7 +53,7 @@ export interface JobListItem {
   salaryCurrency: string | null;
   salaryVisible: boolean | null;
   location: JobLocation | null;
-  remoteOk: boolean | null;
+  workType: WorkType;
   deadline: Date | null;
   status: JobStatus;
   /** Badge status cho JobSearchView — mirror DB cột `hiring_status`. */
@@ -312,7 +314,7 @@ export interface ListJobQuery {
    */
   status?: JobStatus;
   locationCity?: string;
-  remoteOk?: boolean;
+  workType?: WorkType | WorkType[];
   industry?: string;
   /**
    * Salary range filter (VND). Cả 2 optional; backend dùng overlap semantics
