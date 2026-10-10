@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { db } from '../config/database';
 import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
-import { eq, desc, asc, and, ilike, sql, inArray, type SQL } from 'drizzle-orm';
+import { eq, desc, asc, and, ilike, sql, inArray, gt, lt, type SQL } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { Job, JobListItem, ExportApplicationsJobData, JobStatus, JobDetailPayload } from '@/interface/job';
 import {
@@ -95,6 +95,58 @@ const generateUniqueSlug = async (title: string): Promise<string> => {
   }
   // 5 lần trượt → quay lại insert để DB tự reject, hoặc trả lỗi.
   throw new AppError(500, 'SLUG_GENERATION_FAILED', 'Không sinh được slug unique');
+};
+
+/**
+ * Lấy Job liền trước (mới hơn) và liền sau (cũ hơn) của cùng 1 company
+ * dựa trên createdAt để phục vụ nút Next/Previous Job.
+ * Sử dụng SQL subquery trực tiếp để tránh mất độ chính xác microsecond khi map qua JS Date
+ * và loại bỏ hoàn toàn khả năng trùng với job hiện tại.
+ */
+const getAdjacentJobs = async (
+  companyId: string,
+  currentJobId: string,
+): Promise<{
+  prevJob: { id: string; title: string } | null;
+  nextJob: { id: string; title: string } | null;
+}> => {
+  const [prevRes, nextRes] = await Promise.all([
+    // Prev job: mới hơn trong danh sách (createdAt lớn hơn hoặc id lớn hơn nếu trùng createdAt)
+    db.execute<{ id: string; title: string }>(sql`
+      SELECT id, title FROM jobs
+      WHERE company_id = ${companyId}::uuid
+        AND id != ${currentJobId}::uuid
+        AND (
+          created_at > (SELECT created_at FROM jobs WHERE id = ${currentJobId}::uuid)
+          OR (
+            created_at = (SELECT created_at FROM jobs WHERE id = ${currentJobId}::uuid)
+            AND id > ${currentJobId}::uuid
+          )
+        )
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `),
+    // Next job: cũ hơn trong danh sách (createdAt nhỏ hơn hoặc id nhỏ hơn nếu trùng createdAt)
+    db.execute<{ id: string; title: string }>(sql`
+      SELECT id, title FROM jobs
+      WHERE company_id = ${companyId}::uuid
+        AND id != ${currentJobId}::uuid
+        AND (
+          created_at < (SELECT created_at FROM jobs WHERE id = ${currentJobId}::uuid)
+          OR (
+            created_at = (SELECT created_at FROM jobs WHERE id = ${currentJobId}::uuid)
+            AND id < ${currentJobId}::uuid
+          )
+        )
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `),
+  ]);
+
+  return {
+    prevJob: prevRes.rows[0] ?? null,
+    nextJob: nextRes.rows[0] ?? null,
+  };
 };
 
 export const jobService = {
@@ -362,9 +414,12 @@ export const jobService = {
       .returning();
     if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
 
-    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(id);
+    const [{ data: feedbacks, stats }, { prevJob, nextJob }] = await Promise.all([
+      jobFeedbackService.listForJob(id),
+      getAdjacentJobs(row.companyId, row.id),
+    ]);
 
-    return { ...row, feedbacks, feedbackStats: stats };
+    return { ...row, feedbacks, feedbackStats: stats, prevJob, nextJob };
   },
 
   /**
@@ -384,9 +439,12 @@ export const jobService = {
       .returning();
     if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
 
-    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(row.id);
+    const [{ data: feedbacks, stats }, { prevJob, nextJob }] = await Promise.all([
+      jobFeedbackService.listForJob(row.id),
+      getAdjacentJobs(row.companyId, row.id),
+    ]);
 
-    return { ...row, feedbacks, feedbackStats: stats };
+    return { ...row, feedbacks, feedbackStats: stats, prevJob, nextJob };
   },
 
   /**

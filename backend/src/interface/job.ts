@@ -147,11 +147,20 @@ export interface JobDetailResponse {
  *     hơn list. Tách interface giúp caller biết rõ cost.
  *   - FE có thể check optional `feedbacks` để biết response từ endpoint nào.
  */
+export interface AdjacentJob {
+  id: string;
+  title: string;
+}
+
 export interface JobDetailPayload extends Job {
   /** Danh sách feedback mới nhất trước, cap 200. Empty array nếu chưa có. */
   feedbacks: JobFeedback[];
   /** Aggregate rating — count + average. */
   feedbackStats: JobRatingStats;
+  /** Job liền trước (mới hơn) của cùng công ty. */
+  prevJob?: AdjacentJob | null;
+  /** Job liền sau (cũ hơn) của cùng công ty. */
+  nextJob?: AdjacentJob | null;
 }
 
 /**

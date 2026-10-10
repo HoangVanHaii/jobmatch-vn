@@ -290,24 +290,34 @@ export const create = async (
   const cvSnapshot = await snapshotCv(input.cvId, candidateId);
 
   try {
-    const [created] = await db
-      .insert(applications)
-      .values({
-        candidateId,
-        jobId: input.jobId,
-        cvId: input.cvId,
-        cv: cvSnapshot,
-        coverLetter: input.coverLetter ?? null,
-        status: 'pending',
-        stage: 'new',
-        // aiMatchScore + aiMatchReasoning: NULL ban đầu, AI worker sẽ fill sau.
-        isAnonymous: false,
-      })
-      .returning({ id: applications.id, status: applications.status });
+    const created = await db.transaction(async (tx) => {
+      const [app] = await tx
+        .insert(applications)
+        .values({
+          candidateId,
+          jobId: input.jobId,
+          cvId: input.cvId,
+          cv: cvSnapshot,
+          coverLetter: input.coverLetter ?? null,
+          status: 'pending',
+          stage: 'new',
+          // aiMatchScore + aiMatchReasoning: NULL ban đầu, AI worker sẽ fill sau.
+          isAnonymous: false,
+        })
+        .returning({ id: applications.id, status: applications.status });
 
-    if (!created) {
-      throw new AppError(500, 'INSERT_FAILED', 'Không tạo được application');
-    }
+      if (!app) {
+        throw new AppError(500, 'INSERT_FAILED', 'Không tạo được application');
+      }
+
+      // Cập nhật nguyên tử: tăng số lượt nộp hồ sơ của job (+1)
+      await tx
+        .update(jobs)
+        .set({ appliesCount: sql`${jobs.appliesCount} + 1` })
+        .where(eq(jobs.id, input.jobId));
+
+      return app;
+    });
 
     void notifyEmployerOfNewApplication({
       employerId: postedBy,

@@ -88,6 +88,11 @@ export interface JobListItem {
  * Mở rộng thêm `feedbacks` + `feedbackStats` từ `job_feedbacks` — BE nhúng luôn
  * vào detail để FE không phải gọi thêm API. `feedbacks` mới nhất trước, cap 200.
  */
+export interface AdjacentJob {
+  id: string;
+  title: string;
+}
+
 export interface JobDetail extends JobListItem {
   description: string;
   requirements: string | null;
@@ -105,6 +110,10 @@ export interface JobDetail extends JobListItem {
   feedbacks: JobFeedback[];
   /** Aggregate rating. */
   feedbackStats: JobRatingStats;
+  /** Job liền kề mới hơn (cùng công ty). */
+  prevJob?: AdjacentJob | null;
+  /** Job liền kề cũ hơn (cùng công ty). */
+  nextJob?: AdjacentJob | null;
 }
 
 /**

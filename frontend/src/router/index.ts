@@ -59,6 +59,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/test6', name: 'test6', component: () => import('@views/candidate/Test6View.vue') },
   // Test route cho Template 7
   { path: '/test7', name: 'test7', component: () => import('@views/candidate/Test7View.vue') },
+  // Mockup Job Detail (API-connected UI with optional :id param)
+  { path: '/mockup-job-detail/:id?', name: 'mockup-job-detail', component: () => import('@views/employer/JobDetailView.vue') },
 
   // Candidate — bao gồm cả /pricing để có sidebar
   {
@@ -150,6 +152,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'test2', name: 'employer-test-plan', component: () => import('@views/employer/PlanMockupView.vue') },
       // Mockup TechNova landing page (static, không gọi API).
       { path: 'test3', name: 'employer-test-technova', component: () => import('@views/employer/TechNovaMockupView.vue') },
+      // Mockup Job Detail page (API-connected UI).
+      { path: 'mockup-job-detail/:id?', name: 'employer-mockup-job-detail', component: () => import('@views/employer/JobDetailView.vue') },
       // Mockup Facebook-style profile page (static, không gọi API).
     ],
   },
