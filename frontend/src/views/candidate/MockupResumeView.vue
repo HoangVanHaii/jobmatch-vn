@@ -184,11 +184,20 @@ onBeforeUnmount(() => {
  * Lưu ý: cv:quota-warning đăng ký ở App.vue (global) để SURVIVE navigation —
  * xem comment trong App.vue. Banner ở view này đọc từ store.
  * ==========================================================================*/
+useSocket('cv:uploaded', () => {
+  void cvStore.fetchList(undefined, undefined, undefined, true);
+});
+
 useSocket(
   'cv:status-changed',
   async (payload: { cvId: string; status: CvStatus; failureReason?: CvFailureReason | null }) => {
-      const { cvId, status, failureReason } = payload;
+    const { cvId, status, failureReason } = payload;
     if (!cvId || !status) return;
+    const exists = cvStore.items.some((c) => c.id === cvId);
+    if (!exists) {
+      void cvStore.fetchList(undefined, undefined, undefined, true);
+      return;
+    }
     // Update status trong store ngay để UI hiện "Đang phân tích" / "Sẵn sàng"
     // mà không cần fetch lại.
     cvStore.updateStatus(cvId, status, failureReason ?? null);

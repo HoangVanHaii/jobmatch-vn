@@ -850,10 +850,12 @@ generateDraft: async (
       .insert(jobs)
       .values({
         ...data,
+        deadline: data.deadline ? new Date(data.deadline) : null,
+        status: 'draft', // Luôn ép status là 'draft' khi tạo mới, bắt buộc qua /submit để AI kiểm duyệt
+        publishedAt: null, // Chỉ được set publishedAt khi hệ thống AI duyệt thành 'live'
         slug: await generateUniqueSlug(data.title),
         postedBy: userId,
         assignedTo,
-        publishedAt: data.status === 'live' ? new Date() : null,
         salaryMin: data.salaryMin != null ? String(data.salaryMin) : undefined,
         salaryMax: data.salaryMax != null ? String(data.salaryMax) : undefined,
         requiredSkills: data.requiredSkills ?? [],
@@ -1014,6 +1016,9 @@ generateDraft: async (
     }
 
     const patch: Record<string, unknown> = { ...data, updatedAt: new Date() };
+    if (data.deadline !== undefined) {
+      patch.deadline = data.deadline ? new Date(data.deadline) : null;
+    }
     // Chuyển draft/pending/expired/closed -> live lần đầu → set publishedAt
     if (data.status === 'live' && existing.status !== 'live') {
       patch.publishedAt = new Date();

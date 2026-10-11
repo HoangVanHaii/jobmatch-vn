@@ -40,7 +40,7 @@ import { companyApi } from '@services/company.api';
 import { companyMemberApi } from '@services/companyMember.api';
 import { useAuthStore } from '@stores/auth';
 import { useToastStore } from '@stores/toast';
-import type { JobLevel, JobType, WorkType, JobExtraData, PaymentCycleType } from '@/types/job';
+import type { JobLevel, JobType, WorkType, JobExtraData, PaymentCycleType, HiringStatus, JobDetail } from '@/types/job';
 import type { MyCompany } from '@/types/company';
 import type { CompanyMember } from '@/types/companyMember';
 
@@ -50,16 +50,23 @@ import type { CompanyMember } from '@/types/companyMember';
 const props = withDefaults(
   defineProps<{
     open: boolean;
+    jobId?: string;
   }>(),
   {
     open: false,
+    jobId: '',
   },
 );
 
 const emit = defineEmits<{
   (e: 'update:open', value: boolean): void;
   (e: 'created', jobId: string): void;
+  (e: 'saved', jobId: string): void;
 }>();
+
+const isEditMode = computed(() => Boolean(props.jobId));
+const jobDetailLoading = ref(false);
+const originalAssignedTo = ref<string>('');
 
 const toast = useToastStore();
 const authStore = useAuthStore();
@@ -124,13 +131,14 @@ const form = reactive({
   // Phần A: Chi tiết công việc
   jobTitle: '',
   department: '',
-  closingDate: '',
+  deadline: null as Date | null,
   employmentType: 'Toàn thời gian (Full-time)',
   availablePosition: '',
   jobLevel: 'mid' as JobLevel | '',
   experienceYearsMin: '',
   experienceYearsMax: '',
   workplaceType: 'onsite' as 'onsite' | 'hybrid' | 'remote',
+  hiringStatus: 'normal' as HiringStatus,
 
   // Phần B: Địa điểm làm việc
   country: 'Việt Nam',
@@ -158,8 +166,29 @@ const form = reactive({
   // Bước 3: Kênh phân phối tin tuyển dụng
   shareChannels: {
     jobMatch: true,
-    linkedIn: true,
-    website: true,
+    linkedIn: false,
+    website: false,
+  },
+});
+
+/** Đồng bộ Date object form.deadline với string YYYY-MM-DD trên thẻ input date */
+const deadlineInput = computed({
+  get: (): string => {
+    if (!form.deadline) return '';
+    const d = form.deadline instanceof Date ? form.deadline : new Date(form.deadline);
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  },
+  set: (val: string) => {
+    if (!val) {
+      form.deadline = null;
+      return;
+    }
+    const [year, month, day] = val.split('-').map(Number);
+    form.deadline = new Date(year, month - 1, day, 23, 59, 59);
   },
 });
 
@@ -246,6 +275,75 @@ const fetchMembers = async (): Promise<void> => {
   }
 };
 
+/** Điền dữ liệu từ JobDetail vào form khi mở modal ở chế độ chỉnh sửa */
+function populateFormFromJob(detail: JobDetail): void {
+  form.jobTitle = detail.title || '';
+  form.availablePosition = detail.title || '';
+  form.department = detail.industry || '';
+  form.deadline = detail.deadline ? new Date(detail.deadline) : null;
+
+  const empMap: Record<string, string> = {
+    'full-time': 'Toàn thời gian (Full-time)',
+    'part-time': 'Bán thời gian (Part-time)',
+    'contract': 'Hợp đồng dự án (Contract)',
+    'internship': 'Thực tập sinh (Internship)',
+    'freelance': 'Làm việc tự do (Freelance)',
+  };
+  form.employmentType = (detail.jobType && empMap[detail.jobType]) ? empMap[detail.jobType] : (detail.jobType || 'Toàn thời gian (Full-time)');
+
+  form.jobLevel = detail.jobLevel || 'mid';
+  form.experienceYearsMin = detail.experienceYearsMin != null ? String(detail.experienceYearsMin) : '';
+  form.experienceYearsMax = detail.experienceYearsMax != null ? String(detail.experienceYearsMax) : '';
+  form.workplaceType = detail.workType || 'onsite';
+  form.hiringStatus = detail.hiringStatus || 'normal';
+
+  form.country = 'Việt Nam';
+  form.city = detail.location?.city || 'Hồ Chí Minh';
+
+  form.preferNotToSay = detail.salaryVisible === false;
+  form.minSalary = detail.salaryMin ? Number(detail.salaryMin).toLocaleString('vi-VN') : '';
+  form.maxSalary = detail.salaryMax ? Number(detail.salaryMax).toLocaleString('vi-VN') : '';
+  form.currency = detail.salaryCurrency || 'VND';
+
+  const extra = detail.extraData || {};
+  form.paymentType = (extra.paymentType as PaymentCycleType) || 'monthly';
+  if (Array.isArray(extra.curriculumSpecialists) && extra.curriculumSpecialists.length > 0) {
+    form.curriculumSpecialists = [...extra.curriculumSpecialists];
+  }
+  if (extra.shareChannels) {
+    form.shareChannels = {
+      jobMatch: Boolean(extra.shareChannels.jobMatch ?? true),
+      linkedIn: Boolean(extra.shareChannels.linkedIn),
+      website: Boolean(extra.shareChannels.website),
+    };
+  }
+
+  form.description = detail.description || '';
+  form.requirements = detail.requirements || '';
+  form.benefits = detail.benefits || '';
+  form.requiredSkills = Array.isArray(detail.requiredSkills) ? [...detail.requiredSkills] : [];
+  form.niceToHaveSkills = Array.isArray(detail.niceToHaveSkills) ? [...detail.niceToHaveSkills] : [];
+
+  form.assignedTo = detail.assignedTo || '';
+  originalAssignedTo.value = detail.assignedTo || '';
+}
+
+/** Tải dữ liệu Job chi tiết cho Edit mode */
+async function fetchJobDetail(id: string): Promise<void> {
+  jobDetailLoading.value = true;
+  try {
+    const { data } = await jobApi.detail(id);
+    if (data.data) {
+      populateFormFromJob(data.data);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Không tải được thông tin tin tuyển dụng';
+    showToast(msg, 'error');
+  } finally {
+    jobDetailLoading.value = false;
+  }
+}
+
 /** Chọn người phụ trách tin tuyển dụng (Assign) */
 function selectAssignee(targetMember: AssigneeMemberItem) {
   // Nếu là Member thường: Không cho click / tích các member khác
@@ -307,7 +405,6 @@ const jobLevelOptions: Array<{ value: JobLevel; label: string }> = [
   { value: 'manager', label: 'Quản lý (Manager)' },
 ];
 
-const countryOptions = ['Việt Nam', 'Singapore', 'Nhật Bản', 'Hoa Kỳ', 'Úc'];
 
 const cityOptions = [
   'Hồ Chí Minh',
@@ -383,6 +480,41 @@ const paymentTypeOptions = [
     value: 'contract' as const,
     title: 'Theo hợp đồng / dự án',
     description: 'Thanh toán một lần khi hoàn thành gói công việc hoặc theo từng giai đoạn.',
+  },
+];
+
+// Trạng thái tuyển dụng (Hiring Status - 3 options theo schema enum: normal, active, urgent)
+const hiringStatusOptions: Array<{
+  value: HiringStatus;
+  title: string;
+  badgeLabel: string;
+  badgeClass: string;
+  badgeDotClass: string;
+  description: string;
+}> = [
+  {
+    value: 'normal',
+    title: 'Tiêu chuẩn',
+    badgeLabel: 'Mặc định',
+    badgeClass: 'bg-slate-100 text-slate-700 border-slate-200',
+    badgeDotClass: 'bg-slate-400',
+    description: 'Tin đăng tiêu chuẩn, hiển thị thông thường và không gắn huy hiệu ưu tiên.',
+  },
+  {
+    value: 'active',
+    title: 'Đang tuyển tích cực',
+    badgeLabel: 'Actively Hiring',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    badgeDotClass: 'bg-emerald-500',
+    description: 'Công ty đang tích cực duyệt hồ sơ, gắn huy hiệu xanh lá thu hút ứng viên.',
+  },
+  {
+    value: 'urgent',
+    title: 'Tuyển gấp',
+    badgeLabel: 'Urgently Hiring',
+    badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
+    badgeDotClass: 'bg-rose-500',
+    description: 'Cần tuyển nhân sự khẩn cấp, gắn huy hiệu đỏ nổi bật ở đầu danh sách tìm việc.',
   },
 ];
 
@@ -578,8 +710,8 @@ function validateStep1(): boolean {
     errors.department = 'Vui lòng chọn Ngành nghề';
     isValid = false;
   }
-  if (!form.closingDate) {
-    errors.closingDate = 'Vui lòng chọn hạn nộp hồ sơ';
+  if (!form.deadline) {
+    errors.deadline = 'Vui lòng chọn hạn nộp hồ sơ';
     isValid = false;
   }
   if (!form.availablePosition.trim()) {
@@ -612,6 +744,10 @@ function handleNext() {
   } else if (currentStep.value === 2) {
     currentStep.value = 3;
   } else {
+    if (!form.shareChannels.jobMatch) {
+      showToast('Vui lòng chọn kênh JobMatch VN để hoàn tất đăng tin!', 'error');
+      return;
+    }
     handlePublish();
   }
 }
@@ -706,8 +842,10 @@ function buildPayload(): Record<string, unknown> {
     experienceYearsMax: form.experienceYearsMax ? Number(form.experienceYearsMax) : undefined,
     requiredSkills: form.requiredSkills,
     niceToHaveSkills: form.niceToHaveSkills,
-    deadline: form.closingDate ? new Date(form.closingDate).toISOString() : undefined,
+    deadline: form.deadline ? form.deadline.toISOString() : undefined,
     status: 'draft',
+    // Trạng thái tuyển dụng (Badge status JobSearchView: normal / active / urgent)
+    hiringStatus: form.hiringStatus || 'normal',
     // Gán người phụ trách (assignedTo)
     assignedTo: form.assignedTo || undefined,
     // Cột JSONB extra_data chính thức:
@@ -734,15 +872,41 @@ async function handleSaveDraft() {
 
   submitting.value = true;
   try {
-    const { data } = await jobApi.create(payload);
-    const newJobId = (data.data as { id: string }).id;
-    toast.push({
-      variant: 'success',
-      title: 'Đã lưu bản nháp',
-      body: 'Tin tuyển dụng đã được lưu thành công vào danh sách nháp.',
-    });
-    emit('created', newJobId);
-    emit('update:open', false);
+    if (isEditMode.value && props.jobId) {
+      // Edit mode: cập nhật tin
+      const { companyId: _, ...updatePayload } = payload;
+      await jobApi.update(props.jobId, updatePayload);
+
+      // Nếu Owner thay đổi assignedTo thì gọi API assign
+      if (form.assignedTo && form.assignedTo !== originalAssignedTo.value && isOwner.value) {
+        try {
+          await jobApi.assign(props.jobId, form.assignedTo);
+        } catch (assignErr) {
+          console.warn('Gán job thất bại:', assignErr);
+        }
+      }
+
+      toast.push({
+        variant: 'success',
+        title: 'Đã lưu thay đổi',
+        body: 'Thông tin tin tuyển dụng đã được cập nhật thành công.',
+      });
+      emit('saved', props.jobId);
+      emit('created', props.jobId);
+      emit('update:open', false);
+    } else {
+      // Create mode: tạo mới
+      const { data } = await jobApi.create(payload);
+      const newJobId = (data.data as { id: string }).id;
+      toast.push({
+        variant: 'success',
+        title: 'Đã lưu bản nháp',
+        body: 'Tin tuyển dụng đã được lưu thành công vào danh sách nháp.',
+      });
+      emit('created', newJobId);
+      emit('saved', newJobId);
+      emit('update:open', false);
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Lưu bản nháp thất bại. Vui lòng thử lại';
     showToast(msg, 'error');
@@ -765,22 +929,60 @@ async function handlePublish() {
     return;
   }
 
+  if (!form.shareChannels.jobMatch) {
+    showToast('Vui lòng chọn kênh JobMatch VN để lưu và kiểm duyệt tin!', 'error');
+    return;
+  }
+
   const payload = buildPayload();
-  payload.status = 'live';
+  payload.status = 'draft';
 
   submitting.value = true;
   try {
-    const { data } = await jobApi.create(payload);
-    const newJobId = (data.data as { id: string }).id;
-    toast.push({
-      variant: 'success',
-      title: 'Đã tạo job thành công',
-      body: 'Tin tuyển dụng đã được gửi duyệt AI và kích hoạt.',
-    });
-    emit('created', newJobId);
-    emit('update:open', false);
+    if (isEditMode.value && props.jobId) {
+      // Edit mode: cập nhật và gửi duyệt AI
+      const { companyId: _, ...updatePayload } = payload;
+      await jobApi.update(props.jobId, updatePayload);
+
+      if (form.assignedTo && form.assignedTo !== originalAssignedTo.value && isOwner.value) {
+        try {
+          await jobApi.assign(props.jobId, form.assignedTo);
+        } catch (assignErr) {
+          console.warn('Gán job thất bại:', assignErr);
+        }
+      }
+
+      await jobApi.submit(props.jobId);
+
+      toast.push({
+        variant: 'success',
+        title: 'Đã cập nhật và gửi kiểm duyệt AI thành công',
+        body: 'Tin tuyển dụng đang được hệ thống AI quét và kiểm duyệt lại nội dung.',
+      });
+      emit('saved', props.jobId);
+      emit('created', props.jobId);
+      emit('update:open', false);
+    } else {
+      // Create mode
+      // API 1: Tạo tin tuyển dụng (status draft)
+      const { data } = await jobApi.create(payload);
+      const newJobId = (data.data as { id: string }).id;
+
+      // API 2: Gửi kiểm duyệt AI (status ai_scanning + enqueue BullMQ)
+      await jobApi.submit(newJobId);
+
+      toast.push({
+        variant: 'success',
+        title: 'Đã gửi kiểm duyệt AI thành công',
+        body: 'Tin tuyển dụng đang được hệ thống AI quét và kiểm duyệt nội dung.',
+      });
+      resetForm();
+      emit('created', newJobId);
+      emit('saved', newJobId);
+      emit('update:open', false);
+    }
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'Đăng tin thất bại. Vui lòng thử lại';
+    const msg = e instanceof Error ? e.message : 'Lưu và gửi kiểm duyệt thất bại. Vui lòng thử lại';
     showToast(msg, 'error');
   } finally {
     submitting.value = false;
@@ -814,13 +1016,14 @@ function resetForm() {
   linkCopied.value = false;
   form.jobTitle = '';
   form.department = '';
-  form.closingDate = '';
+  form.deadline = null;
   form.employmentType = 'Toàn thời gian (Full-time)';
   form.availablePosition = '';
   form.jobLevel = 'mid';
   form.experienceYearsMin = '';
   form.experienceYearsMax = '';
   form.workplaceType = 'onsite';
+  form.hiringStatus = 'normal';
   form.country = 'Việt Nam';
   form.city = 'Hồ Chí Minh';
   form.preferNotToSay = false;
@@ -836,6 +1039,11 @@ function resetForm() {
   form.niceToHaveSkills = ['Node.js', 'Docker'];
   form.assignedTo = '';
   form.teamMembers = [];
+  form.shareChannels = {
+    jobMatch: true,
+    linkedIn: false,
+    website: false,
+  };
   membersError.value = null;
   membersLoading.value = false;
   Object.keys(errors).forEach((key) => delete errors[key]);
@@ -881,8 +1089,14 @@ watch(
     if (isOpen) {
       lockScroll();
       window.addEventListener('keydown', onKeydown);
-      resetForm();
-      await fetchCompany();
+      if (!company.value) {
+        await fetchCompany();
+      }
+      if (props.jobId) {
+        await fetchJobDetail(props.jobId);
+      } else {
+        resetForm();
+      }
       await fetchMembers();
       await nextTick();
       const firstInput = dialogEl.value?.querySelector<HTMLElement>('input, select');
@@ -893,6 +1107,16 @@ watch(
     }
   },
   { immediate: true },
+);
+
+watch(
+  () => props.jobId,
+  async (newJobId) => {
+    if (props.open && newJobId) {
+      await fetchJobDetail(newJobId);
+      await fetchMembers();
+    }
+  },
 );
 
 onBeforeUnmount(() => {
@@ -957,10 +1181,10 @@ onBeforeUnmount(() => {
               </button>
               <div>
                 <h1 class="text-[15px] text-white font-semibold tracking-tight leading-tight">
-                  Tạo tin tuyển dụng mới
+                  {{ isEditMode ? 'Chỉnh sửa tin tuyển dụng' : 'Tạo tin tuyển dụng mới' }}
                 </h1>
                 <p v-if="company" class="text-[12px] text-white/70 leading-none mt-0.5">
-                  Đăng tuyển cho <span class="font-medium text-[#7C22E8]">{{ company.name }}</span>
+                  {{ isEditMode ? 'Chỉnh sửa tin cho' : 'Đăng tuyển cho' }} <span class="font-medium text-[#7C22E8]">{{ company.name }}</span>
                 </p>
               </div>
             </div>
@@ -973,7 +1197,7 @@ onBeforeUnmount(() => {
                 type="button"
                 @click="handleBack"
                 :disabled="submitting"
-                class="h-7 px-3 text-[11.5px] font-medium text-[#777482] hover:text-[#24212D] hover:bg-[#F8F7FA] rounded-[6px] border border-transparent hover:border-[#E5E3E9] transition-all flex items-center gap-1 cursor-pointer"
+                class="h-7 px-3 text-[11.5px] font-medium text-[#777482] hover:text-[#24212D] hover:bg-[#F8F7FA] rounded-[6px] border border-transparent hover:border-[#E5E3E9] transition-all flex items-center gap-1 cursor-pointer bg-white"
               >
                 <ArrowLeft class="w-3 h-3" />
                 <span>Quay lại</span>
@@ -989,28 +1213,31 @@ onBeforeUnmount(() => {
                 <span>Xem trước</span>
               </button>
 
-              <!-- Nút Lưu nháp (Save as Draft) -->
+              <!-- Nút Lưu nháp / Lưu thay đổi -->
               <button
                 type="button"
                 @click="handleSaveDraft"
-                :disabled="submitting || companyLoading || !company"
+                :disabled="submitting || companyLoading || jobDetailLoading || !company"
                 class="h-7 px-3 text-[11.5px] font-medium text-[#24212D] bg-white border border-[#E5E3E9] rounded-[6px] hover:bg-[#F9F8FB] hover:border-[#D8D6DF] disabled:opacity-50 transition-all focus:outline-none flex items-center gap-1 cursor-pointer"
               >
                 <Loader2 v-if="submitting" class="w-3 h-3 animate-spin text-[#7C22E8]" />
                 <Bookmark v-else class="w-3 h-3 text-[#777482]" />
-                <span>Lưu nháp</span>
+                <span>{{ isEditMode ? 'Lưu thay đổi' : 'Lưu nháp' }}</span>
               </button>
 
               <!-- Nút Tiếp tục / Hoàn tất đăng tin (Next / Submit) -->
               <button
                 type="button"
                 @click="handleNext"
-                :disabled="submitting || companyLoading || !company"
-                class="h-7 px-3.5 text-[11.5px] font-medium text-white bg-[#5b4eea] rounded-[6px] hover:bg-[#6C1BD0] active:bg-[#5D14B8] disabled:opacity-50 transition-all focus:outline-none flex items-center gap-1 shadow-xs cursor-pointer"
+                :disabled="submitting || companyLoading || jobDetailLoading || !company || (currentStep === 3 && !form.shareChannels.jobMatch)"
+                class="h-7 px-3.5 text-[11.5px] font-medium text-white bg-[#5b4eea] rounded-[6px] hover:bg-[#6C1BD0] active:bg-[#5D14B8] disabled:opacity-40 disabled:cursor-not-allowed transition-all focus:outline-none flex items-center gap-1 shadow-xs cursor-pointer"
+                :class="{
+                  'opacity-40 cursor-not-allowed': currentStep === 3 && !form.shareChannels.jobMatch
+                }"
               >
                 <Loader2 v-if="submitting" class="w-3 h-3 animate-spin" />
                 <template v-else>
-                  <span>{{ currentStep === 3 ? 'Hoàn tất đăng tin' : 'Tiếp tục' }}</span>
+                  <span>{{ currentStep === 3 ? (isEditMode ? 'Cập nhật và kiểm duyệt' : 'Lưu và kiểm duyệt') : 'Tiếp tục' }}</span>
                   <ArrowRight class="w-3 h-3" />
                 </template>
               </button>
@@ -1024,7 +1251,7 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- Cảnh báo khi chưa có công ty -->
-          <div v-else-if="!company" class="flex-1 flex flex-col items-center justify-center p-8 text-center">
+          <div v-else-if="!company" class="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white">
             <div class="w-12 h-12 rounded-full bg-purple-50 text-[#7C22E8] flex items-center justify-center mx-auto mb-3">
               <Building2 class="w-6 h-6" />
             </div>
@@ -1052,6 +1279,12 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
+          <!-- Loading chi tiết Job khi Edit -->
+          <div v-else-if="jobDetailLoading" class="flex-1 flex flex-col items-center justify-center py-20 bg-white">
+            <Loader2 class="w-8 h-8 text-[#7C22E8] animate-spin mb-3" />
+            <p class="text-xs text-[#777482]">Đang tải dữ liệu tin tuyển dụng...</p>
+          </div>
+
           <!-- ================================================================== -->
           <!-- Nội dung Modal: Layout 2 cột (Sidebar ~175px + Form ~520px)        -->
           <!-- ================================================================== -->
@@ -1072,7 +1305,7 @@ onBeforeUnmount(() => {
                     :class="[
                       currentStep === 1
                         ? 'step-card-active p-3 border border-[#E4DCF9] shadow-xs'
-                        : 'p-2 md:py-2.5 md:px-2 hover:bg-[#FAF9FC]'
+                        : 'p-2 md:py-2.5 md:px-2 hover:bg-slate-900/20'
                     ]"
                   >
                     <div class="flex items-start gap-2.5">
@@ -1093,12 +1326,14 @@ onBeforeUnmount(() => {
                       <div class="min-w-0">
                         <span
                           class="block text-[9.5px] font-bold tracking-wider uppercase leading-none"
-                          :class="currentStep === 1 ? 'text-[#7C22E8]' : 'text-[#8F8C98]'"
+                          :class="currentStep === 1 ? 'text-[#7C22E8]' : 'text-white'"
                         >
                           BƯỚC 1
                         </span>
-                        <h3 class="text-[12px] font-semibold text-[#24212D] leading-tight mt-1 truncate">
-                          Thông tin việc làm
+                        <h3 class="text-[12px] font-semibold text-white/70 leading-tight mt-1 truncate"
+                            :class="currentStep === 1 ? 'text-black' : 'text-white'"
+                        >
+                          Thông tin
                         </h3>
                       </div>
                     </div>
@@ -1143,8 +1378,10 @@ onBeforeUnmount(() => {
                         >
                           BƯỚC 2
                         </span>
-                        <h3 class="text-[12px] font-semibold text-white/70 leading-tight mt-1 truncate">
-                          Hội đồng tuyển dụng
+                        <h3 class="text-[12px] font-semibol leading-tight mt-1 truncate"
+                            :class="currentStep === 2 ? 'text-black' : 'text-white/70'"
+                        >
+                          Phụ trách
                         </h3>
                       </div>
                     </div>
@@ -1186,8 +1423,10 @@ onBeforeUnmount(() => {
                         >
                           BƯỚC 3
                         </span>
-                        <h3 class="text-[12px] font-semibold text-white/70 leading-tight mt-1 truncate">
-                          Kênh đăng tuyển
+                        <h3 class="text-[12px] font-semibold leading-tight mt-1 truncate"
+                            :class="currentStep === 3 ? 'text-black' : 'text-white/70'"
+                        >
+                          Kênh đăng
                         </h3>
                       </div>
                     </div>
@@ -1286,7 +1525,7 @@ onBeforeUnmount(() => {
                       <p v-if="errors.department" class="text-[10px] text-rose-500 mt-0.5">{{ errors.department }}</p>
                     </div>
 
-                    <!-- Hạn nộp hồ sơ (Closing Date) -->
+                    <!-- Hạn nộp hồ sơ (Deadline) -->
                     <div class="space-y-1">
                       <label class="block text-[11.5px] font-semibold text-[#24212D]">
                         Hạn nộp hồ sơ <span class="text-rose-500">*</span>
@@ -1294,13 +1533,13 @@ onBeforeUnmount(() => {
                       <div class="relative">
                         <input
                           type="date"
-                          v-model="form.closingDate"
+                          v-model="deadlineInput"
                           class="w-full form-control-input pr-7 cursor-pointer"
-                          :class="{ 'border-rose-400 bg-rose-50/20': errors.closingDate }"
+                          :class="{ 'border-rose-400 bg-rose-50/20': errors.deadline }"
                         />
                         <Calendar class="w-3 h-3 text-[#777482] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
-                      <p v-if="errors.closingDate" class="text-[10px] text-rose-500 mt-0.5">{{ errors.closingDate }}</p>
+                      <p v-if="errors.deadline" class="text-[10px] text-rose-500 mt-0.5">{{ errors.deadline }}</p>
                     </div>
 
                     <!-- Loại hình làm việc (Employment Type) -->
@@ -1420,23 +1659,77 @@ onBeforeUnmount(() => {
 
                 <div class="border-t border-[#F0EEF4]"></div>
 
+                <!-- SECTION: TRẠNG THÁI TUYỂN DỤNG (HIRING STATUS) -->
+                <section class="space-y-2.5">
+                  <div>
+                    <h3 class="text-[12.5px] font-semibold text-[#24212D]">
+                      Trạng thái tuyển dụng
+                    </h3>
+                    <p class="text-[10px] text-[#777482] mt-0.5">
+                      Chọn mức độ ưu tiên để hiển thị huy hiệu (Badge) trên danh sách tìm kiếm việc làm cho ứng viên.
+                    </p>
+                  </div>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div
+                      v-for="item in hiringStatusOptions"
+                      :key="item.value"
+                      @click="form.hiringStatus = item.value"
+                      class="p-2 sm:p-2.5 rounded-[6px] border cursor-pointer transition-all flex items-start gap-2"
+                      :class="[
+                        form.hiringStatus === item.value
+                          ? 'radio-card-active border-[#7C22E8] bg-[#FAF8FE] shadow-xs'
+                          : 'border-[#E5E3E9] bg-white hover:border-[#D1CFD7]'
+                      ]"
+                    >
+                      <input
+                        type="radio"
+                        name="hiringStatus"
+                        :value="item.value"
+                        v-model="form.hiringStatus"
+                        class="mt-0.5 accent-[#7C22E8] w-3 h-3 cursor-pointer shrink-0"
+                      />
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                          <h4 class="text-[11.5px] font-semibold text-[#24212D] leading-tight">
+                            {{ item.title }}
+                          </h4>
+                          <span
+                            class="text-[9px] font-semibold px-1.5 py-0.5 rounded-full border inline-flex items-center gap-1"
+                            :class="item.badgeClass"
+                          >
+                            <span class="w-1.5 h-1.5 rounded-full" :class="item.badgeDotClass"></span>
+                            {{ item.badgeLabel }}
+                          </span>
+                        </div>
+                        <p class="text-[9.5px] text-[#777482] leading-[1.3] mt-1">
+                          {{ item.description }}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <div class="border-t border-[#F0EEF4]"></div>
+
                 <!-- SECTION B: ĐỊA ĐIỂM LÀM VIỆC -->
                 <section class="space-y-2.5">
                   <h3 class="text-[12.5px] font-semibold text-[#24212D]">
                     Địa điểm làm việc
                   </h3>
                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <!-- Quốc gia -->
+                    <!-- Quốc gia (Mặc định cố định Việt Nam, không cho chỉnh sửa) -->
                     <div class="space-y-1">
                       <label class="block text-[11px] font-medium text-[#777482]">
                         Quốc gia
                       </label>
-                      <div class="relative">
-                        <select v-model="form.country" class="w-full form-control-input pr-7">
-                          <option v-for="c in countryOptions" :key="c" :value="c">{{ c }}</option>
-                        </select>
-                        <ChevronDown class="w-3 h-3 text-[#777482] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      </div>
+                      <input
+                        type="text"
+                        :value="form.country"
+                        readonly
+                        disabled
+                        class="w-full form-control-input bg-[#F9F8FB] text-[#24212D] font-medium cursor-not-allowed select-none opacity-90"
+                      />
                     </div>
 
                     <!-- Tỉnh / Thành phố -->
@@ -1898,58 +2191,89 @@ onBeforeUnmount(() => {
 
                 <div class="space-y-2">
                   <!-- Kênh JobMatch VN -->
-                  <div class="p-3 rounded-xl border border-[#E5E3E9] flex items-center justify-between bg-white hover:border-[#7C22E8] transition-all">
+                  <div
+                    @click="form.shareChannels.jobMatch = !form.shareChannels.jobMatch"
+                    class="p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all"
+                    :class="[
+                      form.shareChannels.jobMatch
+                        ? 'border-[#7C22E8] bg-[#FAF8FE] shadow-xs'
+                        : 'border-[#E5E3E9] bg-white hover:border-[#D1CFD7]'
+                    ]"
+                  >
                     <div class="flex items-center gap-3">
-                      <div class="w-8 h-8 rounded-lg bg-[#5b4eea] text-white flex items-center justify-center font-bold text-xs">
+                      <div class="w-8 h-8 rounded-lg bg-[#5b4eea] text-white flex items-center justify-center font-bold text-xs shrink-0">
                         JM
                       </div>
                       <div>
-                        <h4 class="text-xs font-semibold text-[#24212D]">Nền tảng JobMatch VN</h4>
+                        <div class="flex items-center gap-1.5">
+                          <h4 class="text-xs font-semibold text-[#24212D]">Nền tảng JobMatch VN</h4>
+                          <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-100 text-[#7C22E8] font-medium">Bắt buộc</span>
+                        </div>
                         <p class="text-[10px] text-[#777482]">Hiển thị công khai tới hàng ngàn ứng viên đã xác thực kỹ năng qua AI</p>
                       </div>
                     </div>
                     <input
                       type="checkbox"
                       v-model="form.shareChannels.jobMatch"
+                      @click.stop
                       class="accent-[#7C22E8] w-4 h-4 cursor-pointer"
                     />
                   </div>
 
-                  <!-- Kênh LinkedIn -->
-                  <div class="p-3 rounded-xl border border-[#E5E3E9] flex items-center justify-between bg-white hover:border-[#0077B5] transition-all">
+                  <!-- Kênh LinkedIn (Làm mờ, không cho tick) -->
+                  <div class="p-3 rounded-xl border border-[#E5E3E9] flex items-center justify-between bg-gray-50/70 opacity-40 select-none cursor-not-allowed">
                     <div class="flex items-center gap-3">
-                      <div class="w-8 h-8 rounded-lg bg-[#0077B5] text-white flex items-center justify-center font-bold text-xs">
+                      <div class="w-8 h-8 rounded-lg bg-[#0077B5]/60 text-white flex items-center justify-center font-bold text-xs shrink-0">
                         in
                       </div>
                       <div>
-                        <h4 class="text-xs font-semibold text-[#24212D]">Mạng xã hội LinkedIn</h4>
+                        <div class="flex items-center gap-1.5">
+                          <h4 class="text-xs font-semibold text-[#24212D]">Mạng xã hội LinkedIn</h4>
+                          <span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-500 font-medium">Sắp ra mắt</span>
+                        </div>
                         <p class="text-[10px] text-[#777482]">Đồng bộ và chia sẻ liên kết trực tiếp lên trang doanh nghiệp LinkedIn</p>
                       </div>
                     </div>
                     <input
                       type="checkbox"
-                      v-model="form.shareChannels.linkedIn"
-                      class="accent-[#7C22E8] w-4 h-4 cursor-pointer"
+                      :checked="false"
+                      disabled
+                      class="accent-[#7C22E8] w-4 h-4 cursor-not-allowed opacity-50 pointer-events-none"
                     />
                   </div>
 
-                  <!-- Kênh Cổng nghề nghiệp Công ty -->
-                  <div class="p-3 rounded-xl border border-[#E5E3E9] flex items-center justify-between bg-white hover:border-emerald-500 transition-all">
+                  <!-- Kênh Cổng nghề nghiệp Công ty (Làm mờ, không cho tick) -->
+                  <div class="p-3 rounded-xl border border-[#E5E3E9] flex items-center justify-between bg-gray-50/70 opacity-40 select-none cursor-not-allowed">
                     <div class="flex items-center gap-3">
-                      <div class="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
+                      <div class="w-8 h-8 rounded-lg bg-emerald-600/60 text-white flex items-center justify-center font-bold text-xs shrink-0">
                         WEB
                       </div>
                       <div>
-                        <h4 class="text-xs font-semibold text-[#24212D]">Cổng tuyển dụng riêng (Careers Page)</h4>
+                        <div class="flex items-center gap-1.5">
+                          <h4 class="text-xs font-semibold text-[#24212D]">Cổng tuyển dụng riêng (Careers Page)</h4>
+                          <span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-500 font-medium">Sắp ra mắt</span>
+                        </div>
                         <p class="text-[10px] text-[#777482]">Tích hợp tự động vào danh sách tin tuyển dụng trên website công ty</p>
                       </div>
                     </div>
                     <input
                       type="checkbox"
-                      v-model="form.shareChannels.website"
-                      class="accent-[#7C22E8] w-4 h-4 cursor-pointer"
+                      :checked="false"
+                      disabled
+                      class="accent-[#7C22E8] w-4 h-4 cursor-not-allowed opacity-50 pointer-events-none"
                     />
                   </div>
+                </div>
+
+                <!-- Cảnh báo khi bỏ chọn JobMatch VN -->
+                <div
+                  v-if="!form.shareChannels.jobMatch"
+                  class="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 flex items-center gap-2 text-[11px]"
+                >
+                  <AlertCircle class="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>
+                    Vui lòng chọn kênh JobMatch VN để có thể lưu và kiểm duyệt tin tuyển dụng.
+                  </span>
                 </div>
 
                 <!-- Đường dẫn liên kết tuyển dụng trực tiếp -->
@@ -2010,7 +2334,21 @@ onBeforeUnmount(() => {
 
               <div class="p-5 overflow-y-auto space-y-4 text-xs custom-scrollbar">
                 <div>
-                  <span class="text-[10px] uppercase font-bold text-[#7C22E8] tracking-wider">{{ form.department || 'Ngành nghề' }}</span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] uppercase font-bold text-[#7C22E8] tracking-wider">{{ form.department || 'Ngành nghề' }}</span>
+                    <span
+                      v-if="form.hiringStatus === 'urgent'"
+                      class="text-[9.5px] font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200"
+                    >
+                      Urgently Hiring
+                    </span>
+                    <span
+                      v-else-if="form.hiringStatus === 'active'"
+                      class="text-[9.5px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+                    >
+                      Actively Hiring
+                    </span>
+                  </div>
                   <h2 class="text-base font-bold text-[#24212D] mt-0.5">
                     {{ form.availablePosition || form.jobTitle || 'Chưa đặt tiêu đề vị trí' }}
                   </h2>
@@ -2028,7 +2366,9 @@ onBeforeUnmount(() => {
                 <div class="grid grid-cols-2 gap-3 text-[11px] bg-[#FAF9FC] p-3 rounded-xl border border-[#EBE9F0]">
                   <div>
                     <span class="text-[10px] text-[#777482] block">Hạn nộp hồ sơ</span>
-                    <span class="font-medium text-[#24212D]">{{ form.closingDate || 'Chưa thiết lập' }}</span>
+                    <span class="font-medium text-[#24212D]">
+                      {{ form.deadline ? (form.deadline instanceof Date ? form.deadline : new Date(form.deadline)).toLocaleDateString('vi-VN') : 'Chưa thiết lập' }}
+                    </span>
                   </div>
                   <div>
                     <span class="text-[10px] text-[#777482] block">Mức lương</span>
@@ -2050,8 +2390,10 @@ onBeforeUnmount(() => {
                     </span>
                   </div>
                   <div>
-                    <span class="text-[10px] text-[#777482] block">Người phụ trách</span>
-                    <span class="font-medium text-[#24212D]">Nguyễn Văn An</span>
+                    <span class="text-[10px] text-[#777482] block">Trạng thái tuyển dụng</span>
+                    <span class="font-medium text-[#24212D]">
+                      {{ form.hiringStatus === 'urgent' ? 'Tuyển gấp (Urgently Hiring)' : form.hiringStatus === 'active' ? 'Đang tuyển tích cực (Actively Hiring)' : 'Tiêu chuẩn (Bình thường)' }}
+                    </span>
                   </div>
                 </div>
 

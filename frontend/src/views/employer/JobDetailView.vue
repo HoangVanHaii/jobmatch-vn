@@ -93,6 +93,16 @@ const auth = useAuthStore();
 // Job ID hoặc Slug từ route param (nếu có)
 const jobId = computed<string>(() => String(route.params.slug ?? route.params.id ?? ''));
 
+const isUuid = (str: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+/** ID chuẩn dạng UUID của Job dùng cho các API backend đòi hỏi UUID */
+const resolvedJobId = computed<string>(() => {
+  if (job.value?.id) return job.value.id;
+  if (isUuid(jobId.value)) return jobId.value;
+  return '';
+});
+
 // =========================================================================
 // STATE (KHÔNG DÙNG DỮ LIỆU MOCK - TOÀN BỘ FETCH TỪ API)
 // =========================================================================
@@ -593,7 +603,7 @@ const fetchDetail = async (): Promise<void> => {
 };
 
 const fetchScan = async (): Promise<void> => {
-  const targetId = job.value?.id || jobId.value;
+  const targetId = resolvedJobId.value;
   if (!targetId) return;
 
   scanLoading.value = true;
@@ -643,7 +653,7 @@ watch(jobId, () => {
 // Realtime socket: khi worker hoàn thành scan thì tự động refetch
 useSocket(
   'job_scan_complete', async (payload: { jobId: string, verdict: 'approved' | 'flagged', score: number, flaggedCount: number }) => {
-    const targetId = job.value?.id || jobId.value;
+    const targetId = resolvedJobId.value;
     if (payload.jobId === targetId) {
       if (job.value) {
         job.value = {
@@ -942,7 +952,7 @@ const mapEmployerAppRow = (row: EmployerApplicationRow, fallbackIdx: number): Jo
 };
 
 const fetchJobApplications = async (pageNum?: number): Promise<void> => {
-  const targetJobId = jobId.value || job.value?.id;
+  const targetJobId = resolvedJobId.value;
   if (!targetJobId) return;
   if (typeof pageNum === 'number') appPage.value = pageNum;
   appLoading.value = true;
@@ -1110,7 +1120,7 @@ const confirmRegenerateOpen = ref(false);
 const testToRegenerate = ref<AiTestSummary | null>(null);
 
 const fetchJobTests = async (): Promise<void> => {
-  const targetJobId = jobId.value || job.value?.id;
+  const targetJobId = resolvedJobId.value;
   if (!targetJobId) return;
   testLoading.value = true;
   testError.value = null;
@@ -1126,7 +1136,7 @@ const fetchJobTests = async (): Promise<void> => {
 };
 
 const handleGenerateTest = async (type: AiTestType): Promise<void> => {
-  const targetJobId = jobId.value || job.value?.id;
+  const targetJobId = resolvedJobId.value;
   if (!targetJobId || generatingTestType.value) return;
   generatingTestType.value = type;
   try {
@@ -1214,7 +1224,7 @@ const handleRegenerateTest = async (testItem: AiTestSummary): Promise<void> => {
 
 // Realtime socket: khi AI sinh đề xong thì tự động reload test list
 useSocket('ai-test:ready', (payload: any) => {
-  const targetJobId = jobId.value || job.value?.id;
+  const targetJobId = resolvedJobId.value;
   if (
     !payload?.jobId ||
     payload.jobId === targetJobId ||

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * CvThumbnailTemplate6 — bản mini của CVTemplate6.
+ * CvThumbnailTemplate1 — bản mini của CVTemplate1.
  *
  * Template 6 chưa có bản mini thuần như 1-5 → dùng kỹ thuật SCALE: render
  * template FULL ở design width 850px rồi `transform: scale(w/850)` xuống đúng
@@ -13,7 +13,7 @@
  * tính lại. SSR-safe: không có element → scale 0 → không render phần inside.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import CVTemplate6 from '../templates/CVTemplate1.vue';
+import CVTemplate1 from '../templates/CVTemplate1.vue';
 import type { CvRenderData } from '@/types/cv';
 
 defineProps<{ data: CvRenderData }>();
@@ -53,7 +53,7 @@ const scale = computed(() =>
       class="absolute left-0 top-0 origin-top-left bg-white"
       :style="{ width: DESIGN_WIDTH + 'px', transform: `scale(${scale})` }"
     >
-      <CVTemplate6 :data="data" />
+      <CVTemplate1 :data="data" />
     </div>
   </div>
 </template>

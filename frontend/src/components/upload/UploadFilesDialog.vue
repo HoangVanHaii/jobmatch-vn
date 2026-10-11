@@ -104,10 +104,10 @@ const hasInProgress = computed<boolean>(() => items.value.some((i) => i.status =
  */
 const timers = new Map<string, ReturnType<typeof setInterval>>()
 
-/** Estimate timeLeft theo tốc độ giả lập 200 kb/s — chỉ để hiển thị. */
+/** Estimate timeLeft theo tốc độ giả lập — chỉ để hiển thị ngắn gọn. */
 const estimateTimeLeft = (item: UploadItem): number => {
   const remaining = item.size * (1 - item.progress / 100)
-  const rate = 200 * 1024
+  const rate = 5000 * 1024
   return Math.max(1, Math.round(remaining / rate))
 }
 
@@ -123,7 +123,7 @@ const simulateUpload = (id: string): void => {
       return
     }
     if (item.status === 'queued') item.status = 'uploading'
-    item.progress = Math.min(100, item.progress + 12)
+    item.progress = Math.min(100, item.progress + 25)
     if (item.progress >= 100) {
       item.status = 'success' // staged — CHƯA upload thật
       item.timeLeft = null
@@ -136,7 +136,7 @@ const simulateUpload = (id: string): void => {
       item.timeLeft = estimateTimeLeft(item)
     }
   }
-  timers.set(id, setInterval(tick, 200))
+  timers.set(id, setInterval(tick, 70))
 }
 
 /**

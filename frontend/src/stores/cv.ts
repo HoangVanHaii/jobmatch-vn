@@ -426,7 +426,15 @@ export const useCvStore = defineStore('cv', () => {
     error.value = null;
     try {
       const { data } = await cvApi.upload(input);
-      return data.data;
+      const newCv = data.data;
+      if (newCv) {
+        const exists = items.value.some((c) => c.id === newCv.id);
+        if (!exists) {
+          items.value = [newCv, ...items.value];
+          total.value += 1;
+        }
+      }
+      return newCv;
     } catch (e) {
       // Hết lượt parse (402 QUOTA_EXCEEDED — BE reserveQuota 'ai_cv_parsed')
       // → mở modal UpgradePricing + message gọi đúng tên "upload CV" (fallback

@@ -20,7 +20,6 @@ import CVTemplate2 from './CVTemplate2.vue';
 import CVTemplate3 from './CVTemplate3.vue';
 import CVTemplate4 from './CVTemplate4.vue';
 import CVTemplate5 from './CVTemplate5.vue';
-import CVTemplate6 from './CVTemplate6.vue';
 import CVTemplate7 from './CVTemplate7.vue';
 import type { CvRenderData } from '@/types/cv';
 import type { CvLanguage } from '@/utils/cvLabels';
@@ -37,14 +36,14 @@ const props = withDefaults(
   { disableLinks: false, language: 'en' },
 );
 
-/** Map templateId → component. */
+/** Map templateId → component. Mẫu 6 trùng mẫu 1 nên map về CVTemplate1. */
 const templateMap = {
   1: CVTemplate1,
   2: CVTemplate2,
   3: CVTemplate3,
   4: CVTemplate4,
   5: CVTemplate5,
-  6: CVTemplate6,
+  6: CVTemplate1,
   7: CVTemplate7,
 } as const;
 
