@@ -11,6 +11,7 @@ import {
   Bookmark,
   Send,
   User,
+  Bell,
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
@@ -21,6 +22,7 @@ import {
   X,
     UserRound,
 } from 'lucide-vue-next';
+import { useNotificationStore } from '@stores/notification';
 
 interface MenuItem {
   label: string;
@@ -93,8 +95,19 @@ const toggleCollapsed = (): void => {
  * - Collapsed: chỉ avatar, click → popover (email + "Đăng xuất").
  * ==========================================================================*/
 const auth = useAuthStore();
+const notificationStore = useNotificationStore();
 const { user } = storeToRefs(auth);
 const router = useRouter();
+
+watch(
+  () => auth.isAuthenticated,
+  (isAuth) => {
+    if (isAuth && notificationStore.totalUnread === null) {
+      void notificationStore.fetchUnreadCount();
+    }
+  },
+  { immediate: true },
+);
 
 /** Tên hiển thị ở sidebar — ưu tiên fullName từ user_profiles, fallback email prefix.
  *
@@ -173,6 +186,12 @@ const groups: MenuGroup[] = [
         icon: Home,
         to: '/candidate',
         exact: true,
+      },
+      {
+        label: 'Thông báo',
+        icon: Bell,
+        to: '/candidate/notifications',
+        activeOn: ['/candidate/notifications'],
       },
     ],
   },
@@ -428,8 +447,20 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
               ]"
               :title="collapsed ? item.label : undefined"
             >
-              <component :is="item.icon" class="w-4 h-4 shrink-0" />
-              <span v-if="!collapsed">{{ item.label }}</span>
+              <div class="relative flex items-center justify-center shrink-0">
+                <component :is="item.icon" class="w-4 h-4 shrink-0" />
+                <span
+                  v-if="collapsed && item.to === '/candidate/notifications' && notificationStore.unreadCount > 0"
+                  class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500"
+                />
+              </div>
+              <span v-if="!collapsed" class="flex-1">{{ item.label }}</span>
+              <span
+                v-if="!collapsed && item.to === '/candidate/notifications' && notificationStore.unreadCount > 0"
+                class="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-red-100 text-red-600 shrink-0"
+              >
+                {{ notificationStore.unreadCount > 99 ? '99+' : notificationStore.unreadCount }}
+              </span>
             </router-link>
           </li>
         </ul>

@@ -207,7 +207,7 @@ const emitNotification = ({ notif, fallbackMsg }: NotifyArgs): void => {
 };
 
 /** Tạo notification 'company' (kind='company_invite_sent') cho user được mời. */
-const buildInviteNotification = async (
+export const buildInviteNotification = async (
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   invitedUserId: string,
   companyId: string,
@@ -218,7 +218,10 @@ const buildInviteNotification = async (
   return notificationService.createInTx(tx, {
     userId: invitedUserId,
     type: 'company',
-    title: `Lời mời tham gia ${companyName}`,
+    title: 'Lời mời tham gia công ty',
+    message: companyName
+      ? `Bạn nhận được lời mời tham gia quản lý tại công ty ${companyName}`
+      : 'Bạn nhận được lời mời tham gia quản lý tại công ty',
     payload: {
       kind: 'company_invite_sent',
       companyId,
@@ -241,7 +244,7 @@ const buildInviteNotification = async (
  * công ty khác → misleading. Hai tình huống khác nhau về ngữ nghĩa nên
  * tách kind để FE dispatch đúng.
  */
-const buildCompanyNotification = async (
+export const buildCompanyNotification = async (
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   recipientUserId: string,
   title: string,
@@ -256,11 +259,52 @@ const buildCompanyNotification = async (
     | 'company_owner_transferred_to_you'
     | 'company_owner_transferred_from_you',
   payload: Record<string, unknown>,
+  message?: string,
 ): Promise<NotificationRow> => {
+  let finalMessage = message;
+  if (!finalMessage) {
+    const companyName =
+      typeof payload.companyName === 'string' && payload.companyName.trim()
+        ? payload.companyName.trim()
+        : 'công ty';
+    switch (kind) {
+      case 'company_invite_accepted':
+        finalMessage = `Thành viên đã chấp nhận lời mời tham gia ${companyName}`;
+        break;
+      case 'company_invite_declined':
+        finalMessage = `Lời mời tham gia ${companyName} đã bị từ chối`;
+        break;
+      case 'company_invite_auto_cancelled':
+        finalMessage = `Lời mời tham gia ${companyName} đã tự động huỷ do người dùng tham gia công ty khác`;
+        break;
+      case 'removed_from_company':
+        finalMessage = `Bạn đã bị xoá khỏi danh sách thành viên của ${companyName}`;
+        break;
+      case 'invite_cancelled':
+        finalMessage = `Lời mời tham gia ${companyName} đã bị huỷ`;
+        break;
+      case 'company_member_left':
+        finalMessage = 'Một thành viên đã rời khỏi công ty của bạn';
+        break;
+      case 'company_owner_transferred_to_you':
+        finalMessage = `Bạn đã trở thành chủ sở hữu của ${companyName}`;
+        break;
+      case 'company_owner_transferred_from_you':
+        finalMessage = `Bạn đã chuyển quyền sở hữu ${companyName}`;
+        break;
+      case 'company_owner_transferred':
+        finalMessage = `Quyền sở hữu ${companyName} đã được chuyển giao`;
+        break;
+      default:
+        finalMessage = title;
+    }
+  }
+
   return notificationService.createInTx(tx, {
     userId: recipientUserId,
     type: 'company',
     title,
+    message: finalMessage,
     payload: { kind, ...payload },
   });
 };
@@ -550,9 +594,10 @@ export const companyMemberService = {
         emitAfterCommit = await buildCompanyNotification(
           tx,
           updated.invitedBy,
-          `${declinerName} đã từ chối lời mời vào ${companyName}`,
+          'Lời mời công ty bị từ chối',
           'company_invite_declined',
           { companyId: updated.companyId, companyName, declinedBy: userId },
+          `${declinerName} đã từ chối lời mời tham gia ${companyName}`,
         );
       }
 
@@ -665,13 +710,14 @@ export const companyMemberService = {
         ownerNotif = await buildCompanyNotification(
           tx,
           accepted.invitedBy,
-          `${inviter?.email ?? 'User'} đã chấp nhận lời mời vào công ty`,
+          'Lời mời công ty được chấp nhận',
           'company_invite_accepted',
           {
             companyId: accepted.companyId,
             companyName: '',
             acceptedBy: userId,
           },
+          'Thành viên đã chấp nhận lời mời tham gia công ty',
         );
       }
 
@@ -685,13 +731,14 @@ export const companyMemberService = {
               await buildCompanyNotification(
                 tx,
                 ac.invitedBy,
-                `Lời mời của bạn đã bị huỷ — user đã chấp nhận lời mời của công ty khác`,
+                'Lời mời công ty đã bị huỷ',
                 'company_invite_auto_cancelled',
                 {
                   companyId: ac.companyId,
                   reason: 'auto_cancelled',
                   acceptedElsewhereCompanyId: companyId,
                 },
+                'Lời mời của bạn đã tự động huỷ do người dùng đã chấp nhận lời mời của công ty khác',
               ),
             );
           }
@@ -806,7 +853,10 @@ export const companyMemberService = {
         ? 'removed_from_company'
         : 'invite_cancelled';
       const notifTitle = wasActive
-        ? `Bạn đã bị xoá khỏi ${company?.name ?? 'công ty'}`
+        ? 'Đã rời khỏi công ty'
+        : 'Lời mời công ty đã bị huỷ';
+      const notifMsg = wasActive
+        ? `Bạn đã bị xoá khỏi danh sách thành viên của ${company?.name ?? 'công ty'}`
         : `Lời mời tham gia ${company?.name ?? 'công ty'} đã bị huỷ`;
       emittedNotifs.push(
         await buildCompanyNotification(
@@ -820,6 +870,7 @@ export const companyMemberService = {
             removedBy,
             previousStatus: target.status,
           },
+          notifMsg,
         ),
       );
 
@@ -922,12 +973,13 @@ export const companyMemberService = {
           await buildCompanyNotification(
             tx,
             ownerRow.userId,
-            `Một thành viên đã rời công ty của bạn`,
+            'Thành viên đã rời công ty',
             'company_member_left',
             {
               companyId,
               leftUserId: userId,
             },
+            'Một thành viên đã rời khỏi công ty của bạn',
           ),
         );
       }
@@ -1080,13 +1132,14 @@ export const companyMemberService = {
         await buildCompanyNotification(
           tx,
           newOwnerUserId,
-          `Bạn đã trở thành owner của ${companyName}`,
+          'Chuyển quyền sở hữu công ty',
           'company_owner_transferred_to_you',
           {
             companyId,
             companyName,
             previousOwnerUserId: currentOwnerUserId,
           },
+          `Bạn đã trở thành chủ sở hữu của ${companyName}`,
         ),
       );
 
@@ -1095,7 +1148,7 @@ export const companyMemberService = {
         await buildCompanyNotification(
           tx,
           currentOwnerUserId,
-          `Bạn đã chuyển quyền sở hữu ${companyName} cho ${newOwnerName}`,
+          'Chuyển quyền sở hữu công ty',
           'company_owner_transferred_from_you',
           {
             companyId,
@@ -1103,6 +1156,7 @@ export const companyMemberService = {
             newOwnerUserId,
             newOwnerName,
           },
+          `Bạn đã chuyển quyền sở hữu ${companyName} cho ${newOwnerName}`,
         ),
       );
 
@@ -1115,7 +1169,7 @@ export const companyMemberService = {
           await buildCompanyNotification(
             tx,
             recipientId,
-            `Quyền sở hữu ${companyName} đã được chuyển`,
+            'Chuyển quyền sở hữu công ty',
             'company_owner_transferred',
             {
               companyId,
@@ -1124,6 +1178,7 @@ export const companyMemberService = {
               newOwnerName,
               previousOwnerUserId: currentOwnerUserId,
             },
+            `Quyền sở hữu ${companyName} đã được chuyển giao cho ${newOwnerName}`,
           ),
         );
       }

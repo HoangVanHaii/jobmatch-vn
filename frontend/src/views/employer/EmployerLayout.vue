@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { Menu } from 'lucide-vue-next';
-import EmployerSidebar from '@components/employer/EmployerSidebar.vue';
+import { ref } from "vue";
+import { Menu } from "lucide-vue-next";
+import EmployerSidebar from "@components/employer/EmployerSidebar.vue";
 
 const mobileSidebarOpen = ref(false);
 
@@ -28,7 +28,10 @@ const closeMobileSidebar = (): void => {
       />
     </Transition>
 
-    <EmployerSidebar :mobile-open="mobileSidebarOpen" @close-mobile="closeMobileSidebar" />
+    <EmployerSidebar
+      :mobile-open="mobileSidebarOpen"
+      @close-mobile="closeMobileSidebar"
+    />
 
     <!--
       Right column: mobile top bar (hamburger + brand) + main content.
@@ -53,7 +56,11 @@ const closeMobileSidebar = (): void => {
       </header>
 
       <main class="flex-1 min-w-0">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <transition name="page-fade" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
       </main>
     </div>
   </div>

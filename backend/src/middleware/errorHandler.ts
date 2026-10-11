@@ -148,7 +148,7 @@ export const errorHandler = (
 
   // JWT errors
   if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
-    res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Token không hợp lệ hoặc đã hết hạn' } });
+    res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Bạn cần đăng nhập để thực hiện thao tác này' } });
     return;
   }
 
@@ -176,5 +176,5 @@ export const errorHandler = (
 
   // Unknown error — log to sentry in prod
   logger.error({ err, path: req.path, method: req.method }, 'Unhandled error');
-  res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Lỗi máy chủ nội bộ' } });
+  res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Đã có lỗi xảy ra, vui lòng thử lại sau' } });
 };

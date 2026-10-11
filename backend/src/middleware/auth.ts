@@ -23,7 +23,7 @@ declare global {
 export const auth = (req: Request, _res: Response, next: NextFunction): void => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
-    return next(new AppError(401, 'UNAUTHORIZED', 'Missing or invalid Authorization header'));
+    return next(new AppError(401, 'UNAUTHORIZED', 'Bạn cần đăng nhập để thực hiện thao tác này'));
   }
   const token = header.slice(7);
   try {
@@ -31,7 +31,7 @@ export const auth = (req: Request, _res: Response, next: NextFunction): void => 
     req.user = payload;
     next();
   } catch (err) {
-    next(new AppError(401, 'UNAUTHORIZED', 'Invalid or expired token'));
+    next(new AppError(401, 'UNAUTHORIZED', 'Bạn cần đăng nhập để thực hiện thao tác này'));
   }
 };
 

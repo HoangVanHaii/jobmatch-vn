@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
 import { users } from './users';
 import { notificationTypeEnum } from './enums';
 
@@ -11,6 +11,7 @@ export const notifications = pgTable('notifications', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   type: notificationTypeEnum('type').notNull(),
   title: varchar('title', { length: 255 }).notNull(),
+  message: text('message'),
   payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
   readAt: timestamp('read_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

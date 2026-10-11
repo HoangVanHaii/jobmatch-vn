@@ -121,7 +121,8 @@ export const createApp = (): Application => {
 
   // 404
   app.use((req, res) => {
-    res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: `Route ${req.path} not found` } });
+    logger.warn({ path: req.path, method: req.method }, 'Route not found');
+    res.status(404).json({ success: false, error: { code: 'ROUTE_NOT_FOUND', message: 'Không tìm thấy đường dẫn yêu cầu' } });
   });
 
   // Global error handler
