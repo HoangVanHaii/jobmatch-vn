@@ -56,11 +56,7 @@ const closeMobileSidebar = (): void => {
       </header>
 
       <main class="flex-1 min-w-0">
-        <router-view v-slot="{ Component }">
-          <transition name="page-fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </router-view>
+        <router-view />
       </main>
     </div>
   </div>

@@ -58,52 +58,150 @@ async function loadUsage() {
     usageError.value = '';
     try {
         usage.value = await planApi.getMyUsage();
-    } catch (err: any) {
+    } catch (err: unknown) {
         usageError.value = extractErrorMessage(err, 'Không thể tải thông tin gói');
     } finally {
         usageLoading.value = false;
     }
 }
 
-// Sắp hết hạn: còn 1–3 ngày. Còn 0 = "hết hạn hôm nay" → tone xanh bình thường.
-const isExpiringSoon = computed(() => {
-    const d = usage.value?.remainingDays;
-    return d !== null && d !== undefined && d > 0 && d <= 3;
+/**
+ * Tính số ngày còn lại chuẩn hoá:
+ * - Nếu backend trả `remainingDays` là số hợp lệ: dùng `usage.remainingDays`.
+ * - Nếu `remainingDays == null` nhưng có `expiresAt`: tính từ `expiresAt`.
+ *   Nếu `expiresAt` đã qua thời điểm hiện tại (`diffMs < 0`): trả về số âm (`Math.floor(diffMs / ...)`),
+ *   đảm bảo `isExpired = true` ("Đã hết hạn"), không để ra 0 và bị hiện nhầm thành "Hết hạn hôm nay".
+ *   Chỉ trả về 0 khi `expiresAt` còn trong ngày hôm nay và chưa qua giờ (`diffMs >= 0`).
+ * - Nếu không có cả hai -> null (gói không thời hạn).
+ */
+const normalizedRemainingDays = computed<number | null>(() => {
+    const raw = usage.value?.remainingDays;
+    if (raw !== null && raw !== undefined) {
+        return raw;
+    }
+    const exp = usage.value?.expiresAt;
+    if (exp) {
+        const diffMs = new Date(exp).getTime() - Date.now();
+        if (diffMs < 0) {
+            return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        }
+        return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    }
+    return null;
+});
+
+/**
+ * Gói chỉ được coi là không thời hạn khi KHÔNG có expiresAt và KHÔNG có remainingDays hợp lệ.
+ * Nếu có một trong hai thì không phải không thời hạn.
+ */
+const isLifetime = computed<boolean>(() => {
+    return !usage.value?.expiresAt && normalizedRemainingDays.value === null;
+});
+
+/**
+ * Gói miễn phí: không thời hạn hoặc giá gói <= 0 / không có giá.
+ */
+const isFreePlan = computed<boolean>(() => {
+    if (isLifetime.value) return true;
+    const price = Number(usage.value?.plan?.priceVnd);
+    return isNaN(price) || price <= 0;
+});
+
+/**
+ * Ngày hết hạn hiển thị ở footer:
+ * - Nếu có `expiresAt`: format đầy đủ từ `expiresAt` qua `formatDate`.
+ * - Nếu `expiresAt` null nhưng có `normalizedRemainingDays`: ước tính ngày hết hạn
+ *   (cộng số ngày vào timestamp hiện tại: `new Date(Date.now() + days * 86400000)`),
+ *   chỉ hiển thị NGÀY (DD/MM/YYYY) kèm hậu tố " (ước tính)", không hiển thị giờ.
+ * - Nếu không tính được: trả về chuỗi rỗng để template fallback sang '—'.
+ */
+const formattedExpiryDate = computed<string>(() => {
+    if (usage.value?.expiresAt) {
+        return formatDate(usage.value.expiresAt);
+    }
+    if (normalizedRemainingDays.value !== null) {
+        const d = new Date(Date.now() + normalizedRemainingDays.value * 86400000);
+        if (Number.isNaN(d.getTime())) return '';
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        return `${day}/${month}/${year} (ước tính)`;
+    }
+    return '';
+});
+
+// Đã hết hạn: không phải không thời hạn và còn < 0 ngày (hoặc expiresAt đã qua)
+const isExpired = computed<boolean>(() => {
+    if (isLifetime.value) return false;
+    const exp = usage.value?.expiresAt;
+    if (exp && new Date(exp).getTime() < Date.now()) {
+        return true;
+    }
+    const d = normalizedRemainingDays.value;
+    return d !== null && d < 0;
+});
+
+// Sắp hết hạn: không phải không thời hạn, chưa hết hạn, và còn 1–3 ngày. Còn 0 = "hết hạn hôm nay"
+const isExpiringSoon = computed<boolean>(() => {
+    if (isLifetime.value || isExpired.value) return false;
+    const d = normalizedRemainingDays.value;
+    return d !== null && d > 0 && d <= 3;
+});
+
+// Trạng thái gói hiển thị text & màu sắc
+const planStatusLabel = computed<string>(() => {
+    if (isLifetime.value) return 'Không thời hạn';
+    if (isExpired.value) return 'Đã hết hạn';
+    if (isExpiringSoon.value) return 'Sắp hết hạn';
+    if (normalizedRemainingDays.value === 0) return 'Hết hạn hôm nay';
+    return 'Đang hoạt động';
+});
+
+const planStatusDotClass = computed<string>(() => {
+    if (isLifetime.value) return 'bg-green-500';
+    if (isExpired.value) return 'bg-red-500';
+    if (isExpiringSoon.value) return 'bg-amber-500';
+    return 'bg-green-500';
+});
+
+const planStatusTextClass = computed<string>(() => {
+    if (isLifetime.value) return 'text-slate-600';
+    if (isExpired.value) return 'text-red-700';
+    if (isExpiringSoon.value) return 'text-amber-700';
+    return 'text-slate-600';
 });
 
 /**
  * Phần trăm thời gian gói CÒN LẠI (remaining/total) — thanh trong panel gói
  * hiển thị phần remaining để khớp với con số "ngày còn lại": mới mua = bar đầy,
- * càng dùng = bar càng vơi.
+ * càng dùng = bar càng vơi. Khi hết hạn (remaining < 0) trả về 0.
  *
  * Tính an toàn với null / durationDays = 0 (không ra NaN).
  */
-const remainingPercent = computed(() => {
+const remainingPercent = computed<number>(() => {
+    if (isLifetime.value) return 0;
     const total = usage.value?.plan?.durationDays;
-    const left = usage.value?.remainingDays;
+    const left = normalizedRemainingDays.value;
     if (!total || total <= 0) return 0;
-    if (left === null || left === undefined) return 0;
+    if (left === null || left <= 0) return 0;
     const ratio = left / total;
     return Math.min(100, Math.max(0, Math.round(ratio * 100)));
 });
 
 const usedDays = computed(() => {
     const total = usage.value?.plan?.durationDays ?? 0;
-    const left = usage.value?.remainingDays ?? 0;
+    const left = normalizedRemainingDays.value ?? 0;
     return Math.max(0, total - left);
 });
 
-// Count-up "ngày còn lại" 0 → giá trị thật trong 500ms khi usage về (khớp
-// dải duration 150–500ms của CSS motion trên trang). Giá trị
-// hiển thị cuối giống hệt usage.remainingDays ?? 0; aria (progressbar) vẫn
-// dùng giá trị thật để screen reader không đọc số đang chạy.
+// Count-up "ngày còn lại" 0 → giá trị thật (không âm) trong 500ms khi usage về
 const shownDays = ref(0);
 let daysRafId = 0;
 
 function animateDays(target: number) {
     cancelAnimationFrame(daysRafId);
     if (target <= 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        shownDays.value = target;
+        shownDays.value = Math.max(0, target);
         return;
     }
     const start = performance.now();
@@ -115,7 +213,11 @@ function animateDays(target: number) {
     daysRafId = requestAnimationFrame(step);
 }
 
-watch(() => usage.value?.remainingDays, (d) => animateDays(d ?? 0), { immediate: true });
+watch(
+    () => Math.max(0, normalizedRemainingDays.value ?? 0),
+    (d) => animateDays(d),
+    { immediate: true },
+);
 
 onBeforeUnmount(() => cancelAnimationFrame(daysRafId));
 
@@ -210,6 +312,9 @@ const quotaRows = computed<QuotaRow[]>(() =>
         if (q.unlimited) {
             leftLabel = 'Không giới hạn';
             leftClass = 'text-slate-900';
+        } else if (q.limit <= 0) {
+            leftLabel = 'Chưa kích hoạt';
+            leftClass = 'text-slate-500';
         } else if (state === 'full') {
             leftLabel = 'Hết lượt';
             leftClass = 'text-red-600';
@@ -328,19 +433,33 @@ const subsTotalPages = ref(0);
 const subsTotal = ref(0);
 const SUBS_PAGE_SIZE = 5;
 
+// Request Sequence ID chặn race condition khi chuyển trang nhanh
+let subsReqId = 0;
+
 async function loadSubs(page = 1) {
+    const curReqId = ++subsReqId;
     subsLoading.value = true;
     subsError.value = '';
     try {
         const { data, pagination } = await subscriptionApi.listMine(page, SUBS_PAGE_SIZE);
+        if (curReqId !== subsReqId) return;
+
+        // Tự động lùi về trang cuối nếu dữ liệu bị giảm (chỉ lùi 1 lần, không lặp vô hạn)
+        if (pagination.totalPages > 0 && page > pagination.totalPages) {
+            return await loadSubs(pagination.totalPages);
+        }
+
         subs.value = data;
         subsTotal.value = pagination.total;
         subsTotalPages.value = pagination.totalPages;
         subsPage.value = pagination.page;
-    } catch (err: any) {
+    } catch (err: unknown) {
+        if (curReqId !== subsReqId) return;
         subsError.value = extractErrorMessage(err, 'Không thể tải lịch sử gói');
     } finally {
-        subsLoading.value = false;
+        if (curReqId === subsReqId) {
+            subsLoading.value = false;
+        }
     }
 }
 
@@ -361,19 +480,33 @@ const payTotalPages = ref(0);
 const payTotal = ref(0);
 const PAY_PAGE_SIZE = 5;
 
+// Request Sequence ID chặn race condition khi chuyển trang nhanh
+let payReqId = 0;
+
 async function loadPayments(page = 1) {
+    const curReqId = ++payReqId;
     paysLoading.value = true;
     paysError.value = '';
     try {
         const { data, pagination } = await paymentApi.listMine(page, PAY_PAGE_SIZE);
+        if (curReqId !== payReqId) return;
+
+        // Tự động lùi về trang cuối nếu dữ liệu bị giảm (ví dụ: hủy đơn làm mất trang cuối)
+        if (pagination.totalPages > 0 && page > pagination.totalPages) {
+            return await loadPayments(pagination.totalPages);
+        }
+
         payments.value = data;
         payTotal.value = pagination.total;
         payTotalPages.value = pagination.totalPages;
         payPage.value = pagination.page;
-    } catch (err: any) {
+    } catch (err: unknown) {
+        if (curReqId !== payReqId) return;
         paysError.value = extractErrorMessage(err, 'Không thể tải lịch sử thanh toán');
     } finally {
-        paysLoading.value = false;
+        if (curReqId === payReqId) {
+            paysLoading.value = false;
+        }
     }
 }
 
@@ -386,19 +519,21 @@ function goToPayPage(p: number) {
 // ============================================================
 // Helpers
 // ============================================================
-function formatPrice(v: string): string {
-    return Number(v).toLocaleString('vi-VN') + 'đ';
+/** Format số tiền thanh toán (VND) — xử lý null/NaN, không bao giờ hiển thị "Miễn phí" cho giao dịch */
+function formatCurrency(v: string | number | null | undefined): string {
+    if (v === null || v === undefined || v === '') return '0đ';
+    const num = Number(v);
+    if (isNaN(num)) return '0đ';
+    return num.toLocaleString('vi-VN') + 'đ';
 }
 
-
-function formatTime(iso: string): string {
-    if (!iso) return '';
-    return new Date(iso).toLocaleTimeString('vi-VN', {
-        hour: '2-digit',
-        minute: '2-digit',
-    });
+/** Format giá gói dịch vụ — 0đ hoặc không có giá hiển thị "Miễn phí" */
+function formatPlanPrice(v: string | number | null | undefined): string {
+    if (v === null || v === undefined || v === '') return 'Miễn phí';
+    const num = Number(v);
+    if (isNaN(num) || num <= 0) return 'Miễn phí';
+    return num.toLocaleString('vi-VN') + 'đ';
 }
-
 
 /**
  * Cờ đang tải trang MỚI trong khi đã có data trang hiện tại — dùng để áp
@@ -422,23 +557,13 @@ function closePaymentDetail() {
     detailOpen.value = false;
 }
 
-/**
- * Được gọi từ PaymentDetailModal sau khi user huỷ đơn thành công — refresh lại
- * trang hiện tại của danh sách để pill + updatedAt cập nhật theo status mới.
- */
-async function onPaymentCancelled(_paymentId: string) {
-    await loadPayments(payPage.value);
-}
-
-/**
- * Được gọi từ PaymentDetailModal khi đơn TỰ ĐỔI trạng thái qua socket realtime
- * (paid/failed sau khi user quét QR ở tab khác) — refresh danh sách + panel gói
- * để row/pill/usage không hiển thị stale sau khi user đóng modal.
- */
-async function onPaymentStatusChanged(_paymentId: string) {
-    // Paid tạo subscription mới (BE trả subscriptionId) → loadSubs để tab
-    // "Lịch sử gói" + badge subsTotal không stale.
-    await Promise.all([loadPayments(payPage.value), loadUsage(), loadSubs(subsPage.value)]);
+/** Hàm gộp refresh toàn bộ dữ liệu gói & thanh toán sau khi trạng thái đơn thay đổi */
+async function refreshBillingData() {
+    await Promise.all([
+        loadPayments(payPage.value),
+        loadUsage(),
+        loadSubs(subsPage.value),
+    ]);
 }
 
 // ============================================================
@@ -452,9 +577,9 @@ onMounted(() => {
 </script>
 
 <template>
-    <!-- KHÔNG đặt overflow-x-hidden ở root: biến div này thành scroll container
-        và vô hiệu xl:sticky của cột phải (card con đã có overflow-hidden riêng). -->
     <div class="font-poppins max-w-6xl mx-auto px-4 py-5 space-y-6 bg-slate-50 min-h-screen">
+        <!-- KHÔNG đặt overflow-x-hidden ở root: biến div này thành scroll container
+        và vô hiệu xl:sticky của cột phải (card con đã có overflow-hidden riêng). -->
         <!-- ============ HEADER ============ -->
         <!-- Header flat trên nền trang, KHÔNG card nền (user chối card nền/hero
             gradient) — kiểu banking: chỉ chip viền + title + mô tả. -->
@@ -514,6 +639,24 @@ onMounted(() => {
                 <tbody>/<ul> thay đổi theo state. Khi đang chuyển trang
                 (loading && có data), tbody/ul được opacity-60. -->
                 <template v-if="activeTab === 'pays'">
+                    <!-- Banner lỗi khi chuyển trang có dữ liệu cũ -->
+                    <div
+                        v-if="paysError && payments.length > 0"
+                        class="mx-5 sm:mx-6 mb-3 p-3 rounded-lg bg-red-50 border border-red-200 flex items-center justify-between gap-3 text-sm text-red-600"
+                    >
+                        <div class="flex items-center gap-2 min-w-0">
+                            <AlertCircle class="w-4 h-4 shrink-0" />
+                            <span class="truncate">{{ paysError }}</span>
+                        </div>
+                        <button
+                            type="button"
+                            class="shrink-0 font-medium text-slate-700 px-3 py-1 bg-white rounded-md border border-slate-200 hover:bg-slate-50 transition text-xs"
+                            @click="loadPayments(payPage)"
+                        >
+                            Thử lại
+                        </button>
+                    </div>
+
                     <!-- Desktop (sm+): table ổn định, chỉ tbody swap nội dung -->
                     <div class="hidden sm:block overflow-hidden bm-panel">
                         <table class="w-full table-fixed text-left text-sm">
@@ -605,10 +748,13 @@ onMounted(() => {
                                                 </span>
                                                 <div class="min-w-0">
                                                     <div class="font-medium text-slate-900 truncate">
-                                                        {{ displayPlanName(p.planName) || 'Thanh toán' }}
-                                                        <span v-if="p.planDurationDays" class="font-normal text-slate-500"> · {{ p.planDurationDays }} ngày</span>
+                                                        <span>{{ displayPlanName(p.planName) || 'Thanh toán' }}</span>
+                                                        <span v-if="p.planDurationDays" class="font-normal text-slate-500 whitespace-nowrap"> · {{ p.planDurationDays }} ngày</span>
                                                     </div>
-                                                    <div class="text-xs text-slate-500 mt-0.5 tabular-nums">#{{ p.orderCode }} · {{ formatTime(p.createdAt) }} {{ formatDate(p.createdAt) }}</div>
+                                                    <div class="text-xs text-slate-500 mt-0.5 truncate tabular-nums">
+                                                        <span>#{{ p.orderCode }}</span>
+                                                        <span class="xl:hidden"> · {{ formatDate(p.createdAt) }}</span>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </td>
@@ -622,13 +768,12 @@ onMounted(() => {
                                             </span>
                                         </td>
                                         <td class="py-3 px-3 align-middle hidden xl:table-cell">
-                                            <div class="text-sm text-slate-800" :title="p.updatedAt ? `Cập nhật ${formatDateTime(p.updatedAt)}` : undefined">
+                                            <div class="text-sm text-slate-800 whitespace-nowrap tabular-nums" :title="p.updatedAt ? `Cập nhật ${formatDateTime(p.updatedAt)}` : undefined">
                                                 {{ formatDate(p.createdAt) }}
                                             </div>
-                                            <div class="text-xs text-slate-500 mt-0.5">{{ formatTime(p.createdAt) }}</div>
                                         </td>
                                         <td class="py-3 pl-3 pr-5 sm:pr-6 font-semibold text-slate-900 whitespace-nowrap text-right tabular-nums align-middle">
-                                            {{ formatPrice(p.amountVnd) }}
+                                            {{ formatCurrency(p.amountVnd) }}
                                         </td>
                                     </tr>
                                 </template>
@@ -694,10 +839,10 @@ onMounted(() => {
                                     </span>
                                     <div class="flex-1 min-w-0">
                                         <div class="font-medium text-slate-900 truncate">
-                                            {{ displayPlanName(p.planName) || 'Thanh toán' }}
-                                            <span v-if="p.planDurationDays" class="font-normal text-slate-500"> · {{ p.planDurationDays }} ngày</span>
+                                            <span>{{ displayPlanName(p.planName) || 'Thanh toán' }}</span>
+                                            <span v-if="p.planDurationDays" class="font-normal text-slate-500 whitespace-nowrap"> · {{ p.planDurationDays }} ngày</span>
                                         </div>
-                                        <div class="text-xs text-slate-500 mt-0.5 tabular-nums">#{{ p.orderCode }} · {{ formatDate(p.createdAt) }}</div>
+                                        <div class="text-xs text-slate-500 mt-0.5 truncate tabular-nums">#{{ p.orderCode }} · {{ formatDate(p.createdAt) }}</div>
                                         <div class="mt-1">
                                             <span
                                                 class="inline-flex items-center px-1.5 py-0.5 rounded border text-[11px] font-medium"
@@ -708,7 +853,7 @@ onMounted(() => {
                                         </div>
                                     </div>
                                     <div class="text-right shrink-0">
-                                        <div class="font-semibold text-slate-900 tabular-nums">{{ formatPrice(p.amountVnd) }}</div>
+                                        <div class="font-semibold text-slate-900 tabular-nums">{{ formatCurrency(p.amountVnd) }}</div>
                                     </div>
                                     <ChevronRight class="w-4 h-4 text-slate-300 shrink-0 transition duration-150 motion-safe:group-hover:translate-x-0.5 group-hover:text-slate-400" aria-hidden="true" />
                                 </button>
@@ -719,6 +864,24 @@ onMounted(() => {
 
                 <!-- ===== Tab: Lịch sử gói ===== -->
                 <template v-else>
+                    <!-- Banner lỗi khi chuyển trang có dữ liệu cũ -->
+                    <div
+                        v-if="subsError && subs.length > 0"
+                        class="mx-5 sm:mx-6 mb-3 p-3 rounded-lg bg-red-50 border border-red-200 flex items-center justify-between gap-3 text-sm text-red-600"
+                    >
+                        <div class="flex items-center gap-2 min-w-0">
+                            <AlertCircle class="w-4 h-4 shrink-0" />
+                            <span class="truncate">{{ subsError }}</span>
+                        </div>
+                        <button
+                            type="button"
+                            class="shrink-0 font-medium text-slate-700 px-3 py-1 bg-white rounded-md border border-slate-200 hover:bg-slate-50 transition text-xs"
+                            @click="loadSubs(subsPage)"
+                        >
+                            Thử lại
+                        </button>
+                    </div>
+
                     <!-- Desktop (sm+): table ổn định -->
                     <div class="hidden sm:block overflow-hidden bm-panel">
                         <table class="w-full table-fixed text-left text-sm">
@@ -774,8 +937,14 @@ onMounted(() => {
                                 <tr v-else-if="subs.length === 0" class="hover:bg-transparent">
                                     <td colspan="4" class="text-center py-12 px-5 bm-row">
                                         <Receipt class="w-10 h-10 mx-auto mb-3 text-slate-300" aria-hidden="true" />
-                                        <p class="text-sm text-slate-600">Chưa có gói nào.</p>
-                                        <router-link to="/candidate/pricing" class="inline-block mt-3 text-sm font-medium text-blue-600 hover:text-blue-700">Xem các gói</router-link>
+                                        <p class="text-sm font-medium text-slate-700">Chưa có gói nào</p>
+                                        <p class="mt-1 text-xs text-slate-500">Mua gói để mở khóa lượt AI và tính năng premium.</p>
+                                        <router-link
+                                            to="/candidate/pricing"
+                                            class="mt-4 inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 motion-safe:active:scale-[0.97]"
+                                        >
+                                            Xem các gói
+                                        </router-link>
                                     </td>
                                 </tr>
 
@@ -799,7 +968,7 @@ onMounted(() => {
                                                 </span>
                                                 <div class="min-w-0">
                                                     <div class="font-medium text-slate-900 truncate">{{ displayPlanName(s.planName) }}</div>
-                                                    <div class="text-xs text-slate-500 mt-0.5 truncate tabular-nums">{{ formatPrice(s.priceVnd) }} · {{ s.planDurationDays }} ngày</div>
+                                                    <div class="text-xs text-slate-500 mt-0.5 truncate tabular-nums">{{ formatPlanPrice(s.priceVnd) }} · {{ s.planDurationDays }} ngày</div>
                                                 </div>
                                             </div>
                                         </td>
@@ -854,8 +1023,14 @@ onMounted(() => {
                         <!-- Empty -->
                         <li v-else-if="subs.length === 0" class="text-center py-12 px-5 bm-row-m">
                             <Receipt class="w-10 h-10 mx-auto mb-3 text-slate-300" aria-hidden="true" />
-                            <p class="text-sm text-slate-600">Chưa có gói nào.</p>
-                            <router-link to="/candidate/pricing" class="inline-block mt-3 text-sm font-medium text-blue-600 hover:text-blue-700">Xem các gói</router-link>
+                            <p class="text-sm font-medium text-slate-700">Chưa có gói nào</p>
+                            <p class="mt-1 text-xs text-slate-500">Mua gói để mở khóa lượt AI và tính năng premium.</p>
+                            <router-link
+                                to="/candidate/pricing"
+                                class="mt-4 inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                            >
+                                Xem các gói
+                            </router-link>
                         </li>
 
                         <!-- Data -->
@@ -886,7 +1061,7 @@ onMounted(() => {
                                         {{ subPill[s.status]?.label ?? s.status }}
                                     </span>
                                     <div class="text-xs text-slate-500 mt-1 tabular-nums">
-                                        {{ formatPrice(s.priceVnd) }}
+                                        {{ formatPlanPrice(s.priceVnd) }}
                                         <span> · {{ s.totalTokens > 0 ? `${s.totalTokens.toLocaleString('vi-VN')} tokens` : '—' }}</span>
                                     </div>
                                 </div>
@@ -1015,11 +1190,11 @@ onMounted(() => {
                             </p>
                         </div>
 
-                        <!-- Đang có gói — panel blue/amber -->
+                        <!-- Đang có gói — panel blue/amber/red -->
                         <div
                             v-else
                             class="rounded-lg border p-3.5"
-                            :class="isExpiringSoon ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'"
+                            :class="isExpired ? 'bg-red-50/50 border-red-200' : isExpiringSoon ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'"
                         >
                             <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0">
@@ -1029,15 +1204,11 @@ onMounted(() => {
                                     <div class="mt-1 flex items-center gap-1.5 text-xs">
                                         <span
                                             class="w-2 h-2 rounded-full"
-                                            :class="isExpiringSoon ? 'bg-amber-500' : (usage.remainingDays === 0 ? 'bg-green-500' : 'bg-green-500')"
+                                            :class="planStatusDotClass"
                                             aria-hidden="true"
                                         ></span>
-                                        <span
-                                            :class="isExpiringSoon ? 'text-amber-700' : 'text-slate-600'"
-                                        >
-                                            {{ isExpiringSoon
-                                                ? 'Sắp hết hạn'
-                                                : (usage.remainingDays === 0 ? 'Hết hạn hôm nay' : 'Đang hoạt động') }}
+                                        <span :class="planStatusTextClass">
+                                            {{ planStatusLabel }}
                                         </span>
                                     </div>
                                 </div>
@@ -1045,37 +1216,46 @@ onMounted(() => {
                                     to="/candidate/pricing"
                                     class="shrink-0 inline-flex items-center px-3.5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 motion-safe:active:scale-[0.97]"
                                 >
-                                    Gia hạn
+                                    {{ isFreePlan ? 'Nâng cấp gói' : (isExpired ? 'Gia hạn ngay' : 'Gia hạn') }}
                                 </router-link>
                             </div>
 
                             <!-- Số ngày còn lại + thanh tiến độ (REMAINING) -->
                             <div class="mt-3">
-                                <div class="flex items-baseline gap-2">
+                                <div v-if="!isLifetime" class="flex items-baseline gap-2">
                                     <span
                                         class="text-2xl font-bold tabular-nums leading-none"
-                                        :class="isExpiringSoon ? 'text-amber-700' : 'text-slate-900'"
+                                        :class="isExpired ? 'text-red-700' : isExpiringSoon ? 'text-amber-700' : 'text-slate-900'"
                                     >{{ shownDays }}</span>
                                     <span class="text-sm text-slate-600">ngày còn lại</span>
                                 </div>
+                                <div v-else class="flex items-baseline gap-2">
+                                    <span class="text-lg font-semibold text-slate-900">Không thời hạn</span>
+                                </div>
                                 <div
+                                    v-if="!isLifetime && usage.plan.durationDays && usage.plan.durationDays > 0"
                                     class="mt-2.5 h-2 w-full rounded-full overflow-hidden"
-                                    :class="isExpiringSoon ? 'bg-amber-100' : 'bg-blue-100'"
+                                    :class="isExpired ? 'bg-red-100' : isExpiringSoon ? 'bg-amber-100' : 'bg-blue-100'"
                                     role="progressbar"
                                     :aria-valuenow="remainingPercent"
                                     aria-valuemin="0"
                                     aria-valuemax="100"
-                                    :aria-label="`Còn ${usage.remainingDays ?? 0}/${usage.plan.durationDays ?? 0} ngày`"
+                                    :aria-label="`Còn ${shownDays}/${usage.plan.durationDays} ngày`"
                                 >
                                     <div
                                         class="h-full rounded-full transition-all duration-500 bm-bar"
-                                        :class="isExpiringSoon ? 'bg-amber-500' : 'bg-blue-600'"
+                                        :class="isExpired ? 'bg-red-500' : isExpiringSoon ? 'bg-amber-500' : 'bg-blue-600'"
                                         :style="{ width: `${remainingPercent}%` }"
                                     ></div>
                                 </div>
                                 <div class="mt-1.5 flex items-center justify-between gap-3 text-xs text-slate-600">
-                                    <span class="tabular-nums">Hết hạn {{ usage.expiresAt ? formatDate(usage.expiresAt) : '—' }}</span>
-                                    <span class="tabular-nums">{{ formatPrice(usage.plan.priceVnd) }} / {{ usage.plan.durationDays }} ngày</span>
+                                    <span class="tabular-nums">
+                                        <template v-if="isLifetime">Không thời hạn</template>
+                                        <template v-else>Hết hạn {{ formattedExpiryDate || '—' }}</template>
+                                    </span>
+                                    <span class="tabular-nums">
+                                        {{ formatPlanPrice(usage.plan.priceVnd) }}<template v-if="!isLifetime && usage.plan.durationDays && usage.plan.durationDays > 0"> / {{ usage.plan.durationDays }} ngày</template>
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -1139,9 +1319,9 @@ onMounted(() => {
                                     </div>
                                 </div>
 
-                                <!-- Tầng 2: thanh tiến độ (không vẽ nếu unlimited) -->
+                                <!-- Tầng 2: thanh tiến độ (không vẽ nếu unlimited hoặc limit <= 0) -->
                                 <div
-                                    v-if="!row.unlimited"
+                                    v-if="!row.unlimited && row.limit > 0"
                                     class="mt-1.5 h-1.5 w-full rounded-full bg-slate-100 overflow-hidden"
                                     role="progressbar"
                                     :aria-valuenow="row.percent"
@@ -1159,15 +1339,18 @@ onMounted(() => {
                                 <!-- Tầng 3: "Đã dùng X/Y" + "Mua thêm lượt" | tokens -->
                                 <div class="mt-1.5 flex items-center justify-between gap-3 text-xs text-slate-600">
                                     <div class="flex items-center gap-3 min-w-0">
-                                        <span v-if="!row.unlimited" class="tabular-nums">
+                                        <span v-if="!row.unlimited && row.limit > 0" class="tabular-nums">
                                             Đã dùng <span class="font-medium text-slate-800">{{ row.used }}</span> / {{ row.limit }}
                                         </span>
+                                        <span v-else-if="!row.unlimited && row.limit <= 0" class="text-slate-500">
+                                            Chưa kích hoạt gói
+                                        </span>
                                         <router-link
-                                            v-if="row.state === 'warn' || row.state === 'full'"
+                                            v-if="row.state === 'warn' || row.state === 'full' || (!row.unlimited && row.limit <= 0)"
                                             to="/candidate/pricing"
                                             class="font-medium text-blue-600 hover:text-blue-700 shrink-0"
                                         >
-                                            Mua thêm lượt
+                                            {{ row.limit <= 0 ? 'Nâng cấp ngay' : 'Mua thêm lượt' }}
                                         </router-link>
                                     </div>
                                     <span
@@ -1192,13 +1375,14 @@ onMounted(() => {
         </div>
 
         <!-- ===== Chi tiết giao dịch — PaymentDetailModal thật (fetch + QR + huỷ đơn) =====
-            Đặt NGOÀI layout 2 cột để modal không bị ảnh hưởng bởi grid. -->
+            ĐẶT BÊN TRONG thẻ div gốc để component chỉ có DUY NHẤT 1 root element,
+            tránh làm treo <transition mode="out-in"> khi chuyển trang! -->
         <PaymentDetailModal
             :open="detailOpen"
             :payment-id="detailPaymentId"
             @close="closePaymentDetail"
-            @cancelled="onPaymentCancelled"
-            @status-changed="onPaymentStatusChanged"
+            @cancelled="refreshBillingData"
+            @status-changed="refreshBillingData"
         />
     </div>
 </template>
