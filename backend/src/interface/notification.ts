@@ -10,7 +10,7 @@ export interface CreateNotificationInput {
     userId: string;
     type: NotificationType;
     title: string;
-    message: string;
+    message?: string;
     payload?: NotificationPayload;
 }
 
