@@ -87,9 +87,11 @@ const onUploadAttach = async (files: UploadItem[]): Promise<void> => {
   } finally {
     isAttaching.value = false
   }
+  if (ok > 0) {
+    await cvStore.fetchList(undefined, undefined, undefined, true)
+  }
   if (ok > 0 && ok === files.length) {
     toast.success(`Đã thêm ${ok} CV. Đang phân tích...`)
-    router.push('/candidate/resumes')
   } else if (ok > 0) {
     toast.warning(`Đã thêm ${ok}/${files.length} CV. ${lastError ?? 'Phần còn lại lỗi.'}`)
   } else {
@@ -101,16 +103,25 @@ onMounted(async () => {
   await cvStore.fetchList(undefined, undefined, undefined, true)
 })
 
-/* ===== Socket `cv:status-changed` — tắt spinner khi parse xong =====
- * Mirror MyResumesView: worker emit status mới → store updateStatus patch
- * local, card tự bỏ overlay "Đang phân tích" mà không cần refetch. Status
- * terminal ('ready'/'failed') re-fetch full row để lấy ai_analysis mới
- * (score badge + brain icon hiện đúng). */
+/* ===== Socket `cv:uploaded` — reload list khi có CV mới được upload ===== */
+useSocket('cv:uploaded', () => {
+  void cvStore.fetchList(undefined, undefined, undefined, true)
+})
+
+/* ===== Socket `cv:status-changed` — cập nhật trạng thái realtime =====
+ * Worker emit status mới → store updateStatus patch local.
+ * Nếu CV chưa có trong list (vừa upload), tự động fetchList để đồng bộ.
+ * Khi về terminal ('ready'/'failed'), re-fetch full row để lấy ai_analysis. */
 useSocket(
   'cv:status-changed',
   (payload: { cvId: string; status: CvStatus; failureReason?: CvFailureReason | null }) => {
     const { cvId, status, failureReason } = payload
     if (!cvId || !status) return
+    const exists = cvStore.items.some((c) => c.id === cvId)
+    if (!exists) {
+      void cvStore.fetchList(undefined, undefined, undefined, true)
+      return
+    }
     cvStore.updateStatus(cvId, status, failureReason ?? null)
     if (status === 'ready' || status === 'failed') void cvStore.refreshDetail(cvId)
   },
@@ -394,15 +405,13 @@ const aiParsedData: Record<string, unknown> = {
 }
 
 /** Tên hiển thị theo style của CVTemplate{1-5}. */
-/** Tên hiển thị theo style thật của CVTemplate{1-5}. */
 const aiTemplateMeta = [
-  { name: 'Cam Hiện Đại' },      // 1 — header cam full-width + 2 cột 35/65
-  { name: 'Teal Hình Học' },     // 2 — góc chữ L teal + avatar viền đen
-  { name: 'Serif Cổ Điển' },     // 3 — serif 1 cột, header căn giữa
-  { name: 'Navy Chuyên Nghiệp' },// 4 — thanh navy + header nền xanh nhạt
-  { name: 'Sidebar Cá Tính' },   // 5 — sidebar trái xanh + tam giác decor
-  { name: 'Mustard Editorial' }, // 6 — navy/yellow, tên dọc + ảnh chân dung
-  { name: 'Ocean Teal Executive' }, // 7 — serif xanh biển, thanh liên hệ ngang
+  { id: 1, name: 'Mustard Editorial' }, // 1 — navy/yellow, tên dọc + ảnh chân dung
+  { id: 2, name: 'Teal Hình Học' },     // 2 — góc chữ L teal + avatar viền đen
+  { id: 3, name: 'Serif Cổ Điển' },     // 3 — serif 1 cột, header căn giữa
+  { id: 4, name: 'Navy Chuyên Nghiệp' },// 4 — thanh navy + header nền xanh nhạt
+  { id: 5, name: 'Sidebar Cá Tính' },   // 5 — sidebar trái xanh + tam giác decor
+  { id: 7, name: 'Ocean Teal Executive' }, // 7 — serif xanh biển, thanh liên hệ ngang
 ] as const
 
 /** Dựng Cv giả cho CvThumbnail + lightbox — title = tên mẫu (lightbox header). */
@@ -424,8 +433,8 @@ const makeAiTemplateCv = (templateId: number, name: string): Cv => ({
   updatedAt: '',
 })
 
-const aiTemplateCvs = aiTemplateMeta.map((meta, i) => ({
-  cv: makeAiTemplateCv(i + 1, meta.name),
+const aiTemplateCvs = aiTemplateMeta.map((meta) => ({
+  cv: makeAiTemplateCv(meta.id, meta.name),
   name: meta.name,
 }))
 </script>

@@ -112,7 +112,11 @@ export const jobModerationWorker = new Worker('jobModeration', async (job) => {
         }
 
         const newStatus = result.data.verdict === 'approved' ? 'live' : 'ai_flagged';
-        await tx.update(jobs).set({ status: newStatus }).where(eq(jobs.id, jobId));
+        await tx.update(jobs).set({
+          status: newStatus,
+          publishedAt: newStatus === 'live' ? (dbJob.publishedAt ?? new Date()) : null,
+          updatedAt: new Date(),
+        }).where(eq(jobs.id, jobId));
       });
       await jobEmbeddingQueue.add('embed-job', { jobId });
 

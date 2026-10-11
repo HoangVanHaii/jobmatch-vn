@@ -105,7 +105,7 @@ onBeforeUnmount(cleanup);
   <button
     ref="triggerEl"
     type="button"
-    class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+    class="font-poppins inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
     :class="{ 'bg-gray-100 text-gray-700': open }"
     aria-label="Mở menu hành động"
     @click.stop="toggle"

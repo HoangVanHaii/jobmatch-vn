@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Template 6 — "Navy & Yellow Editorial" (chuẩn theo ảnh thiết kế).
+ * Template 1 — "Navy & Yellow Editorial" (Mustard Editorial - chuẩn theo ảnh thiết kế).
  *
  * Cấu trúc (1 trang A4 chuẩn):
  *   1. Header (~300px):

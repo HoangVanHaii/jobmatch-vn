@@ -64,7 +64,7 @@ const badgeCls: Record<string, string> = {
 
 <template>
   <span
-    class="inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset whitespace-nowrap"
+    class="font-poppins inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset whitespace-nowrap"
     :class="badgeCls[tone]"
   >
     <span

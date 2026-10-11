@@ -233,7 +233,7 @@ const payStatusBadge: Record<PaymentStatus, { label: string; cls: string }> = {
     <Teleport to="body">
         <div
             v-if="open"
-            class="fixed inset-0 z-50 bg-black/40 flex justify-center p-4 overflow-y-auto overscroll-contain"
+            class="font-poppins fixed inset-0 z-50 bg-black/40 flex justify-center p-4 overflow-y-auto overscroll-contain"
             @click.self="close"
         >
             <div

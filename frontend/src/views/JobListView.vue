@@ -15,7 +15,7 @@ const fetchJobs = async () => {
 onMounted(fetchJobs);
 </script>
 <template>
-  <div class="max-w-6xl mx-auto px-4 py-8 grid md:grid-cols-[280px_1fr] gap-6">
+  <div class="font-poppins max-w-6xl mx-auto px-4 py-8 grid md:grid-cols-[280px_1fr] gap-6">
     <JobFilter v-model="filters" @change="fetchJobs" />
     <div class="space-y-4">
       <JobCard v-for="job in jobs" :key="job.id" :job="job" />

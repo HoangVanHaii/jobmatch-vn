@@ -49,7 +49,7 @@ const onClose = (): void => emit('close');
 <template>
   <Teleport to="body">
     <Transition
-      enter-active-class="transition duration-150 ease-out"
+      enter-active-class="font-poppins transition duration-150 ease-out"
       enter-from-class="opacity-0"
       enter-to-class="opacity-100"
       leave-active-class="transition duration-100 ease-in"

@@ -31,7 +31,7 @@ const isExceeded = computed(() => props.totalTokens >= 50_000);
 
 <template>
   <header
-    class="flex items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-3 md:px-6"
+    class="font-poppins flex items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-3 md:px-6"
   >
     <div class="flex min-w-0 items-center gap-2 md:gap-3">
       <!--

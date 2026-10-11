@@ -71,7 +71,7 @@ const webDisplay = computed<string>(() => {
 </script>
 
 <template>
-  <div class="cv-t7-page">
+  <div class="font-poppins cv-t7-page">
     <!-- ==================== HEADER (FULL WIDTH) ==================== -->
     <header class="cv-t7-header">
       <h1 class="candidate-name">

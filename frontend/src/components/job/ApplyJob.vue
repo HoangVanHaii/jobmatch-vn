@@ -253,7 +253,7 @@ const close = (): void => {
           class="bg-white rounded-md shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col focus:outline-none"
         >
       <!-- Header -->
-      <div class="flex items-center justify-between p-5 border-b border-gray-200">
+      <div class="font-poppins flex items-center justify-between p-5 border-b border-gray-200">
         <div class="min-w-0">
           <h3 id="apply-job-dialog-title" class="text-base font-semibold text-gray-900 truncate">Ứng tuyển công việc</h3>
           <p class="text-xs text-gray-500 mt-0.5 truncate">{{ job.title }}</p>

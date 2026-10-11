@@ -154,7 +154,7 @@ onBeforeUnmount(() => {
         @mousedown.self="close"
       >
         <!-- Backdrop -->
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
+        <div class="font-poppins absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
 
         <!-- Dialog -->
         <div

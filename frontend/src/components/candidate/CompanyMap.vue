@@ -87,6 +87,6 @@ onBeforeUnmount(() => {
        wrapper set `h-48` để map nhỏ gọn trong sidebar phải. -->
   <div
     ref="mapContainer"
-    class="h-full w-full"
+    class="h-full w-full font-poppins"
   ></div>
 </template>

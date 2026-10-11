@@ -224,7 +224,7 @@ const handleNavigateDestination = (): void => {
         role="dialog"
         aria-modal="true"
         aria-labelledby="notification-modal-title"
-        class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
+        class="font-poppins fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
         @click.self="handleClose"
       >
         <!-- Overlay Backdrop mờ dần tự nhiên (pointer-events-none để click rơi vào container cha @click.self) -->

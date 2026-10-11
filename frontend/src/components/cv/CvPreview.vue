@@ -443,7 +443,7 @@ const onOpenOriginal = (): void => {
         >
           <div class="bg-white rounded-2xl shadow-2xl shadow-slate-900/20 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden ring-1 ring-slate-900/5">
             <!-- Header: title + source + actions -->
-            <header class="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
+            <header class="font-poppins px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
               <div class="min-w-0">
                 <h2 class="text-base font-semibold text-slate-900 truncate">
                   {{ cv?.title || 'Xem CV' }}

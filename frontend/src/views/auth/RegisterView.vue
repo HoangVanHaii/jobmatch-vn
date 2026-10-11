@@ -365,7 +365,7 @@ const onSubmit = async () => {
     Mọi phần tử hiển thị đều nằm trong container trung tâm — không còn 2 section
     full-viewport tự canh giữa độc lập.
   -->
-  <div class="fixed inset-0 overflow-hidden bg-slate-50" :class="{ compact: isCompact }">
+  <div class="font-poppins fixed inset-0 overflow-hidden bg-slate-50" :class="{ compact: isCompact }">
     <!-- Ambient background: gradient mềm chảy từ trái sang, fade về transparent ở giữa —
          KHÔNG có đường viền cứng, KHÔNG có 2 cell tách biệt. Tạo cảm giác liền mạch. -->
     <div class="pointer-events-none absolute inset-0" aria-hidden="true">

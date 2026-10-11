@@ -121,7 +121,7 @@ const onRemoveAttached = (id: string): void => {
 </script>
 
 <template>
-  <div class="flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+  <div class="font-poppins flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
     <!--
       CV đã gắn mà không có trong items.value hiện tại — pill thông báo + cho
       phép remove ngay (không phải switch tab để tìm rồi uncheck).

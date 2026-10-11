@@ -454,7 +454,7 @@ onMounted(() => {
 <template>
     <!-- KHÔNG đặt overflow-x-hidden ở root: biến div này thành scroll container
         và vô hiệu xl:sticky của cột phải (card con đã có overflow-hidden riêng). -->
-    <div class="max-w-6xl mx-auto px-4 py-5 space-y-6 bg-slate-50 min-h-screen">
+    <div class="font-poppins max-w-6xl mx-auto px-4 py-5 space-y-6 bg-slate-50 min-h-screen">
         <!-- ============ HEADER ============ -->
         <!-- Header flat trên nền trang, KHÔNG card nền (user chối card nền/hero
             gradient) — kiểu banking: chỉ chip viền + title + mô tả. -->

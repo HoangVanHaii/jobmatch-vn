@@ -78,7 +78,7 @@ const normalizeUrl = (url: string): string => {
 </script>
 
 <template>
-  <div class="w-full bg-white text-neutral-900 font-serif px-14 py-10">
+  <div class="font-poppins w-full bg-white text-neutral-900 font-serif px-14 py-10">
     <!-- ==================== HEADER CENTERED ==================== -->
     <header class="text-center">
       <h1

@@ -63,7 +63,6 @@ import CvThumbnailTemplate2 from './CvThumbnailTemplate2.vue';
 import CvThumbnailTemplate3 from './CvThumbnailTemplate3.vue';
 import CvThumbnailTemplate4 from './CvThumbnailTemplate4.vue';
 import CvThumbnailTemplate5 from './CvThumbnailTemplate5.vue';
-import CvThumbnailTemplate6 from './CvThumbnailTemplate6.vue';
 import CvThumbnailTemplate7 from './CvThumbnailTemplate7.vue';
 import { buildRenderData } from '@/composables/cvRenderData';
 import type { Cv } from '@/types/cv';
@@ -129,7 +128,7 @@ const templateMap = {
   3: CvThumbnailTemplate3,
   4: CvThumbnailTemplate4,
   5: CvThumbnailTemplate5,
-  6: CvThumbnailTemplate6,
+  6: CvThumbnailTemplate1,
   7: CvThumbnailTemplate7,
 } as const;
 
@@ -499,7 +498,7 @@ onBeforeUnmount(() => {
   -->
   <div
     ref="containerRef"
-    class="relative w-full h-full bg-white rounded-[3px] overflow-hidden"
+    class="font-poppins relative w-full h-full bg-white rounded-[3px] overflow-hidden"
     :class="fit === 'cover' ? '' : 'ring-1 ring-slate-900/[0.06]'"
   >
     <!-- ==================== Direct CV: switch theo templateId ==================== -->

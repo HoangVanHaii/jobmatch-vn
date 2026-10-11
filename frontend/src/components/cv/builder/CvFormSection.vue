@@ -31,7 +31,7 @@ withDefaults(
 <template>
   <section
     :id="id"
-    class="scroll-mt-6 transition-shadow duration-200"
+    class="font-poppins scroll-mt-6 transition-shadow duration-200"
     :class="flat
       ? (highlight ? 'rounded-[14px] ring-2 ring-[#5b4eea]/40' : '')
       : (highlight

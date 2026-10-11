@@ -289,10 +289,9 @@ const createModalOpen = ref(false);
 const openCreateModal = (): void => {
   createModalOpen.value = true;
 };
-const onJobCreated = async (newJobId: string): Promise<void> => {
-  // Modal đã tự đóng. Navigate tới trang detail để user thấy job vừa tạo +
-  // có thể gửi kiểm duyệt AI / sửa tiếp.
-  await router.push(`/employer/jobs/${newJobId}`);
+const onJobCreated = async (_newJobId: string): Promise<void> => {
+  // Modal đã tự đóng. Refetch danh sách để tin mới xuất hiện ngay với trạng thái "AI đang quét"
+  await store.fetchList();
 };
 
 /* ============================================================================

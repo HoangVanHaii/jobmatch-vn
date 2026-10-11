@@ -296,7 +296,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto px-4 py-8 space-y-6">
+  <div class="font-poppins max-w-6xl mx-auto px-4 py-8 space-y-6">
     <!-- ============ HEADER ============ -->
     <div>
       <h1 class="text-[26px] font-bold text-slate-900 leading-tight">

@@ -8,7 +8,7 @@
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 py-12 px-4">
+  <div class="font-poppins min-h-screen bg-slate-50 py-12 px-4">
     <div class="mx-auto max-w-3xl bg-white rounded-2xl shadow-sm p-8 sm:p-10">
       <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">Chính sách bảo mật</h1>
       <p class="text-sm text-slate-500 mb-8">Cập nhật lần cuối: 01/01/2026</p>

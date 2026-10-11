@@ -11,7 +11,7 @@ const update = (key: string, val: any) => {
 };
 </script>
 <template>
-  <aside class="card space-y-4">
+  <aside class="font-poppins card space-y-4">
     <h3 class="font-semibold">Bộ lọc</h3>
     <div>
       <label class="text-sm">Cấp bậc</label>

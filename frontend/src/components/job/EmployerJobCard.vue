@@ -114,7 +114,7 @@ const STATUS_MAP: Record<JobStatus, StatusBadge> = {
 const statusBadge = computed<StatusBadge>(() => STATUS_MAP[props.job.status] ?? STATUS_MAP.closed);
 
 const onCardClick = (): void => {
-  router.push(`/employer/jobs/${props.job.id}`);
+  router.push(`/employer/jobs/${props.job.slug || props.job.id}`);
 };
 
 const onEdit = (e: MouseEvent): void => {
@@ -132,7 +132,7 @@ const onApplicants = (e: MouseEvent): void => {
 
 <template>
   <div
-    class="group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md"
+    class="font-poppins group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md"
     @click="onCardClick"
   >
     <!-- Header: logo + company + status badge -->

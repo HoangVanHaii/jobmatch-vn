@@ -85,7 +85,7 @@ const testData = ref<CvRenderData>({
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-100 py-8 px-4 font-sans text-slate-800">
+  <div class="font-poppins min-h-screen bg-slate-100 py-8 px-4 font-sans text-slate-800">
     <div class="mx-auto max-w-[860px]">
       <!-- Top Bar -->
       <div class="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-white p-4 shadow-sm">

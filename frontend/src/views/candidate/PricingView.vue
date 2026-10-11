@@ -11,4 +11,3 @@ import PricingComponent from "@components/pricing/PricingComponent.vue";
 <template>
   <PricingComponent role="candidate" />
 </template>
-

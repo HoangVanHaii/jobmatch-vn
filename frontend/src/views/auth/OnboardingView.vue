@@ -229,7 +229,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 overflow-hidden bg-slate-50">
+  <div class="font-poppins fixed inset-0 overflow-hidden bg-slate-50">
     <!-- Ambient background + decorative blobs (đồng bộ 4 trang auth) -->
     <div class="pointer-events-none absolute inset-0" aria-hidden="true">
       <div

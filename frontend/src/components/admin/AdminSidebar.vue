@@ -323,7 +323,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
     Theme: dark — nền #14161c, border #262a35, accent indigo.
   -->
   <aside
-    class="flex flex-col transition-[transform,width] duration-300 ease-out"
+    class="flex flex-col transition-[transform,width] duration-300 ease-out font-poppins"
     :class="[
       'bg-[var(--admin-bg)]',
       // Positioning

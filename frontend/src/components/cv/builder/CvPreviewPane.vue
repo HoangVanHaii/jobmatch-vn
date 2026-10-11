@@ -86,7 +86,7 @@ const langs = ['en', 'vi'] as const;
        toolbar pill/toggle tự mang nền riêng nên vẫn đọc được trên nền dim. -->
   <div>
     <!-- ============ Toolbar: switcher 7 mẫu + EN/VI + mở rộng ============ -->
-    <div class="flex items-center gap-2 px-3.5 pb-1.5">
+    <div class="font-poppins flex items-center gap-2 px-3.5 pb-1.5">
       <div class="scrollbar-hide flex flex-1 items-center gap-1.5 overflow-x-auto pb-1">
         <button
           v-for="tpl in CV_TEMPLATE_META"

@@ -61,7 +61,7 @@ const onSelect = (provider: 'google' | 'facebook' | 'github'): void => {
     Layout 3 cột ngang, icon + label ngắn → hài hòa với nút Đăng nhập full-width ở trên.
     Mỗi nút chiếm đều 1/3 chiều ngang, canh giữa, gap đồng nhất.
   -->
-  <div data-testid="oauth-buttons" class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+  <div data-testid="oauth-buttons" class="font-poppins grid grid-cols-1 sm:grid-cols-3 gap-2">
     <button type="button" data-testid="oauth-button-google" :disabled="loading"
       @click="onSelect('google'); $emit('select', 'google')"
       class="oauth-btn-stagger flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-100 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white disabled:hover:border-slate-200">

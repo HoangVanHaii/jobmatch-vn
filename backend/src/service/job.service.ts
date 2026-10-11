@@ -110,13 +110,13 @@ const getAdjacentJobs = async (
   companyId: string,
   currentJobId: string,
 ): Promise<{
-  prevJob: { id: string; title: string } | null;
-  nextJob: { id: string; title: string } | null;
+  prevJob: { id: string; title: string; slug: string | null } | null;
+  nextJob: { id: string; title: string; slug: string | null } | null;
 }> => {
   const [prevRes, nextRes] = await Promise.all([
     // Prev job: mới hơn trong danh sách (createdAt lớn hơn hoặc id lớn hơn nếu trùng createdAt)
-    db.execute<{ id: string; title: string }>(sql`
-      SELECT id, title FROM jobs
+    db.execute<{ id: string; title: string; slug: string | null }>(sql`
+      SELECT id, title, slug FROM jobs
       WHERE company_id = ${companyId}::uuid
         AND id != ${currentJobId}::uuid
         AND (
@@ -130,8 +130,8 @@ const getAdjacentJobs = async (
       LIMIT 1
     `),
     // Next job: cũ hơn trong danh sách (createdAt nhỏ hơn hoặc id nhỏ hơn nếu trùng createdAt)
-    db.execute<{ id: string; title: string }>(sql`
-      SELECT id, title FROM jobs
+    db.execute<{ id: string; title: string; slug: string | null }>(sql`
+      SELECT id, title, slug FROM jobs
       WHERE company_id = ${companyId}::uuid
         AND id != ${currentJobId}::uuid
         AND (
@@ -443,9 +443,19 @@ export const jobService = {
       .returning();
     if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
 
-    const [{ data: feedbacks, stats }, { prevJob, nextJob }] = await Promise.all([
+    const [{ data: feedbacks, stats }, { prevJob, nextJob }, [company]] = await Promise.all([
       jobFeedbackService.listForJob(id),
       getAdjacentJobs(row.companyId, row.id),
+      db
+        .select({
+          id: companies.id,
+          name: companies.name,
+          logoUrl: companies.logoUrl,
+          slug: companies.slug,
+        })
+        .from(companies)
+        .where(eq(companies.id, row.companyId))
+        .limit(1),
     ]);
 
     // Populate thông tin người phụ trách (assignedTo hoặc fallback postedBy)
@@ -466,29 +476,56 @@ export const jobService = {
       if (u) assignedToUser = u;
     }
 
-    return { ...row, assignedToUser, feedbacks, feedbackStats: stats, prevJob, nextJob };
+    return {
+      ...row,
+      companyName: company?.name ?? null,
+      companyLogoUrl: company?.logoUrl ?? null,
+      companySlug: company?.slug ?? null,
+      company: company ?? null,
+      ratingAvg: stats.average,
+      ratingCount: stats.count,
+      assignedToUser,
+      feedbacks,
+      feedbackStats: stats,
+      prevJob,
+      nextJob,
+    };
   },
 
   /**
    * Lấy job theo slug (URL SEO-friendly). Mirror `getById`:
    *   - Tăng viewsCount +1 (side-effect như getById).
    *   - Nhúng feedbacks + feedbackStats vào response.
+   *   - Nhúng company info (companyName, companyLogoUrl, companySlug).
+   *   - Hỗ trợ fallback tìm theo UUID nếu tham số là id.
    *   - 404 nếu slug không tồn tại.
-   *
-   * Slug được generate unique lúc create (xem migration 0032), nên query theo
-   * slug chỉ trả tối đa 1 row.
    */
   getBySlug: async (slug: string): Promise<JobDetailPayload> => {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug);
+    const condition = isUuid
+      ? or(eq(jobs.slug, slug), eq(jobs.id, slug))
+      : eq(jobs.slug, slug);
+
     const [row] = await db
       .update(jobs)
       .set({ viewsCount: sql`${jobs.viewsCount} + 1` })
-      .where(eq(jobs.slug, slug))
+      .where(condition)
       .returning();
     if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
 
-    const [{ data: feedbacks, stats }, { prevJob, nextJob }] = await Promise.all([
+    const [{ data: feedbacks, stats }, { prevJob, nextJob }, [company]] = await Promise.all([
       jobFeedbackService.listForJob(row.id),
       getAdjacentJobs(row.companyId, row.id),
+      db
+        .select({
+          id: companies.id,
+          name: companies.name,
+          logoUrl: companies.logoUrl,
+          slug: companies.slug,
+        })
+        .from(companies)
+        .where(eq(companies.id, row.companyId))
+        .limit(1),
     ]);
 
     const assigneeUserId = row.assignedTo || row.postedBy;
@@ -508,7 +545,20 @@ export const jobService = {
       if (u) assignedToUser = u;
     }
 
-    return { ...row, assignedToUser, feedbacks, feedbackStats: stats, prevJob, nextJob };
+    return {
+      ...row,
+      companyName: company?.name ?? null,
+      companyLogoUrl: company?.logoUrl ?? null,
+      companySlug: company?.slug ?? null,
+      company: company ?? null,
+      ratingAvg: stats.average,
+      ratingCount: stats.count,
+      assignedToUser,
+      feedbacks,
+      feedbackStats: stats,
+      prevJob,
+      nextJob,
+    };
   },
 
   /**
@@ -800,10 +850,12 @@ generateDraft: async (
       .insert(jobs)
       .values({
         ...data,
+        deadline: data.deadline ? new Date(data.deadline) : null,
+        status: 'draft', // Luôn ép status là 'draft' khi tạo mới, bắt buộc qua /submit để AI kiểm duyệt
+        publishedAt: null, // Chỉ được set publishedAt khi hệ thống AI duyệt thành 'live'
         slug: await generateUniqueSlug(data.title),
         postedBy: userId,
         assignedTo,
-        publishedAt: data.status === 'live' ? new Date() : null,
         salaryMin: data.salaryMin != null ? String(data.salaryMin) : undefined,
         salaryMax: data.salaryMax != null ? String(data.salaryMax) : undefined,
         requiredSkills: data.requiredSkills ?? [],
@@ -964,6 +1016,9 @@ generateDraft: async (
     }
 
     const patch: Record<string, unknown> = { ...data, updatedAt: new Date() };
+    if (data.deadline !== undefined) {
+      patch.deadline = data.deadline ? new Date(data.deadline) : null;
+    }
     // Chuyển draft/pending/expired/closed -> live lần đầu → set publishedAt
     if (data.status === 'live' && existing.status !== 'live') {
       patch.publishedAt = new Date();

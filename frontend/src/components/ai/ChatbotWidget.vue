@@ -25,7 +25,7 @@ const send = async () => {
 </script>
 
 <template>
-  <div class="fixed bottom-4 right-4 z-50">
+  <div class="font-poppins fixed bottom-4 right-4 z-50">
     <button v-if="!isOpen" @click="isOpen = true"
       class="w-14 h-14 bg-primary-600 text-white rounded-full shadow-lg flex items-center justify-center text-2xl hover:bg-primary-700">
       💬

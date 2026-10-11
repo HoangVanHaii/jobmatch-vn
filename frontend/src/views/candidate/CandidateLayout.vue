@@ -22,7 +22,7 @@ const closeMobileSidebar = (): void => {
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-gray-50">
+  <div class="flex min-h-screen bg-gray-50 font-poppins">
     <!--
       Backdrop tối phía sau sidebar (mobile only). Click để đóng sidebar.
       Transition fade đồng bộ với slide-in của sidebar.
@@ -61,11 +61,7 @@ const closeMobileSidebar = (): void => {
       </header>
 
       <main class="flex-1 min-w-0">
-        <router-view v-slot="{ Component }">
-          <transition name="page-fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </router-view>
+        <router-view />
       </main>
     </div>
   </div>

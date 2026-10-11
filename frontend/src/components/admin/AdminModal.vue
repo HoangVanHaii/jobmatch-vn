@@ -70,7 +70,7 @@ onUnmounted(() => {
 <template>
   <Teleport to="body">
     <Transition
-      enter-active-class="transition ease-out duration-150"
+      enter-active-class="font-poppins transition ease-out duration-150"
       enter-from-class="opacity-0"
       enter-to-class="opacity-100"
       leave-active-class="transition ease-in duration-100"

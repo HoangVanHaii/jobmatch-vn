@@ -328,7 +328,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="!asModal || open" class="upgrade-pricing-root">
+  <div v-if="!asModal || open" class="font-poppins upgrade-pricing-root">
     <!-- Modal Backdrop nếu dùng asModal -->
     <div
       v-if="asModal"

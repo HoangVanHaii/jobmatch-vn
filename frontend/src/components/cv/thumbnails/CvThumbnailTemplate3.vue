@@ -48,7 +48,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
 </script>
 
 <template>
-  <div class="w-full h-full bg-white text-neutral-900 font-serif overflow-hidden">
+  <div class="font-poppins w-full h-full bg-white text-neutral-900 font-serif overflow-hidden">
     <!-- ==================== HEADER CENTERED ==================== -->
     <header class="text-center">
       <p

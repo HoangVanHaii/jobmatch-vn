@@ -161,6 +161,16 @@ export const cvService = {
       );
     }
 
+    // Báo client qua socket để reload danh sách file và hiển thị trạng thái đang phân tích
+    notificationGateway.emitToUser(candidateId, "cv:uploaded", {
+      cvId: cv.id,
+      cv,
+    });
+    notificationGateway.emitToUser(candidateId, "cv:status-changed", {
+      cvId: cv.id,
+      status: "parsing",
+    });
+
     return cv;
   },
 

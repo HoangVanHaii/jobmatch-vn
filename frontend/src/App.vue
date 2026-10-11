@@ -183,25 +183,27 @@ useSocket(
 </script>
 
 <template>
-  <RouterView />
-  <!-- Toast container — render hàng đợi toast toàn cục. Teleport tới body.
-   *  - <ToastContainer /> : simple toasts (success/info/warning/error) với icon + title.
-   *  - <ToastHost />     : chat realtime variant (avatar + click → /chat).
-   *  Cả 2 đọc cùng queue trong stores/toast.ts — ToastHost đọc `items` (alias
-   *  của `toasts`), ToastContainer đọc `toasts`. Dedupe theo `id` để socket
-   *  emit duplicate không push 2 lần. -->
-  <ToastContainer v-if="route.name !== 'chat' && route.name !== 'e-chat'"/>
-  <ToastHost v-if="route.name !== 'chat' && route.name !== 'e-chat'" />
+  <div class="font-poppins min-h-screen flex flex-col">
+    <RouterView />
+    <!-- Toast container — render hàng đợi toast toàn cục. Teleport tới body.
+     *  - <ToastContainer /> : simple toasts (success/info/warning/error) với icon + title.
+     *  - <ToastHost />     : chat realtime variant (avatar + click → /chat).
+     *  Cả 2 đọc cùng queue trong stores/toast.ts — ToastHost đọc `items` (alias
+     *  của `toasts`), ToastContainer đọc `toasts`. Dedupe theo `id` để socket
+     *  emit duplicate không push 2 lần. -->
+    <ToastContainer v-if="route.name !== 'chat' && route.name !== 'e-chat'"/>
+    <ToastHost v-if="route.name !== 'chat' && route.name !== 'e-chat'" />
 
-  <!-- Modal nâng cấp gói — mở khi bấm phân tích mà BE trả 402 (hết lượt).
-       Teleport to body + z cao nhất để LUÔN đè lên mọi modal z-50 khác
-       (CvDetailView / builder overlay — user có thể bấm phân tích từ trong
-       modal chi tiết CV). -->
-  <Teleport to="body">
-    <UpgradePricing
-      :open="cvStore.showUpgradeModal"
-      @update:open="cvStore.showUpgradeModal = $event"
-      @close="cvStore.showUpgradeModal = false"
-    />
-  </Teleport>
+    <!-- Modal nâng cấp gói — mở khi bấm phân tích mà BE trả 402 (hết lượt).
+         Teleport to body + z cao nhất để LUÔN đè lên mọi modal z-50 khác
+         (CvDetailView / builder overlay — user có thể bấm phân tích từ trong
+         modal chi tiết CV). -->
+    <Teleport to="body">
+      <UpgradePricing
+        :open="cvStore.showUpgradeModal"
+        @update:open="cvStore.showUpgradeModal = $event"
+        @close="cvStore.showUpgradeModal = false"
+      />
+    </Teleport>
+  </div>
 </template>

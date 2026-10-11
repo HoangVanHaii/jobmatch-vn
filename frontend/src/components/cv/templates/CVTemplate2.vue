@@ -69,7 +69,7 @@ const contacts = computed(() => {
 </script>
 
 <template>
-  <div class="w-full bg-white text-neutral-800 font-sans" style="line-height: 1.5;">
+  <div class="font-poppins w-full bg-white text-neutral-800 font-sans" style="line-height: 1.5;">
     <div class="max-w-[850px] mx-auto relative">
       <!-- ==================== DẢI VÀNG CHÉO GÓC TRÁI (nhỏ) ==================== -->
       <div

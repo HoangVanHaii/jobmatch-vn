@@ -72,7 +72,7 @@ const onMouseLeave = (id: string): void => store.resume(id);
       >
         <div class="flex items-start gap-3 p-3">
           <!-- Avatar: peer-default khi null. -->
-          <div class="shrink-0 w-10 h-10 rounded-full overflow-hidden bg-gray-100 flex items-center justify-center">
+          <div class="font-poppins shrink-0 w-10 h-10 rounded-full overflow-hidden bg-gray-100 flex items-center justify-center">
             <img
               v-if="t.avatarUrl"
               :src="t.avatarUrl"

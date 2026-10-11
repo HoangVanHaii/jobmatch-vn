@@ -674,7 +674,7 @@ const jobsPath = { name: 'employer-jobs' as const };
 
 
 <template>
-  <div class="min-h-screen bg-gray-50/50 p-5 md:p-8">
+  <div class="font-poppins min-h-screen bg-gray-50/50 p-5 md:p-8">
     <div class="max-w-6xl mx-auto space-y-6">
       <!-- Loading state -->
       <template v-if="loadState === 'loading'">

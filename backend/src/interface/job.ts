@@ -168,6 +168,7 @@ export interface JobDetailResponse {
 export interface AdjacentJob {
   id: string;
   title: string;
+  slug?: string | null;
 }
 
 export interface AssignedUserInfo {
@@ -178,6 +179,23 @@ export interface AssignedUserInfo {
 }
 
 export interface JobDetailPayload extends Job {
+  /** Tên công ty. */
+  companyName?: string | null;
+  /** Logo công ty. */
+  companyLogoUrl?: string | null;
+  /** Slug công ty. */
+  companySlug?: string | null;
+  /** Thông tin công ty gọn. */
+  company?: {
+    id: string;
+    name: string;
+    logoUrl: string | null;
+    slug: string | null;
+  } | null;
+  /** Rating trung bình (1-5). */
+  ratingAvg?: number | null;
+  /** Tổng số lượt rating. */
+  ratingCount?: number;
   /** Thông tin người phụ trách tin tuyển dụng (nếu có). */
   assignedToUser?: AssignedUserInfo | null;
   /** Danh sách feedback mới nhất trước, cap 200. Empty array nếu chưa có. */

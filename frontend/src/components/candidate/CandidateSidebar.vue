@@ -341,7 +341,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
     Transition: translate-x + width (300ms) cho slide mượt.
   -->
   <aside
-    class="bg-white border-r border-gray-200 flex flex-col transition-[transform,width] duration-300 ease-out"
+    class="bg-white border-r border-gray-200 flex flex-col transition-[transform,width] duration-300 ease-out font-poppins"
     :class="[
       // Positioning
       'absolute inset-y-0 left-0 z-40 md:sticky md:top-0 md:z-auto',

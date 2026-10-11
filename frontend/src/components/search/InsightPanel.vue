@@ -12,7 +12,7 @@ watch(() => props.keyword, async (k) => {
 </script>
 
 <template>
-  <div v-if="data" class="card bg-gradient-to-br from-blue-50 to-purple-50">
+  <div v-if="data" class="font-poppins card bg-gradient-to-br from-blue-50 to-purple-50">
     <h3 class="font-semibold mb-3 flex items-center gap-2">
       <span>✨</span> Insight cho "{{ keyword }}"
     </h3>

@@ -314,7 +314,7 @@ const goToVerifyOtp = (): void => {
     Hai phần Branding + Form nằm chung 1 grid → cùng trục thị giác, không có
     khoảng trắng lớn ở giữa.
   -->
-  <div class="fixed inset-0 overflow-hidden bg-slate-50">
+  <div class="font-poppins fixed inset-0 overflow-hidden bg-slate-50">
     <!-- Ambient background: gradient mềm từ trái → transparent (giống Register, không có hard divider) -->
     <div class="pointer-events-none absolute inset-0" aria-hidden="true">
       <div

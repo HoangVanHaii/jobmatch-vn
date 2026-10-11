@@ -95,6 +95,7 @@ export interface JobListItem {
 export interface AdjacentJob {
   id: string;
   title: string;
+  slug?: string | null;
 }
 
 export type PaymentCycleType = 'weekly' | 'monthly' | 'contract';

@@ -138,7 +138,7 @@ const selectedLanguageCode = ref<LanguageOptionList['code']>(LANGUAGES[0]!.code)
 </script>
 
 <template>
-  <div class="min-h-full bg-gray-50">
+  <div class="font-poppins min-h-full bg-gray-50">
     <!-- Page header -->
     <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
       <div class="flex items-center gap-3">

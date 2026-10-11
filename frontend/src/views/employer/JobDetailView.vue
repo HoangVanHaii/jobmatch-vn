@@ -90,8 +90,18 @@ const router = useRouter();
 const toast = useToastStore();
 const auth = useAuthStore();
 
-// Job ID từ route param (nếu có)
-const jobId = computed<string>(() => String(route.params.id ?? ''));
+// Job ID hoặc Slug từ route param (nếu có)
+const jobId = computed<string>(() => String(route.params.slug ?? route.params.id ?? ''));
+
+const isUuid = (str: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+/** ID chuẩn dạng UUID của Job dùng cho các API backend đòi hỏi UUID */
+const resolvedJobId = computed<string>(() => {
+  if (job.value?.id) return job.value.id;
+  if (isUuid(jobId.value)) return jobId.value;
+  return '';
+});
 
 // =========================================================================
 // STATE (KHÔNG DÙNG DỮ LIỆU MOCK - TOÀN BỘ FETCH TỪ API)
@@ -542,22 +552,22 @@ const getTruncatedText = (text?: string | null, maxLen = 240, maxLines = 4): str
 // API FETCHING & REALTIME SOCKET
 // =========================================================================
 const fetchDetail = async (): Promise<void> => {
-  let targetId = jobId.value;
+  let targetSlugOrId = jobId.value;
 
-  // Nếu không có id trên URL, tìm job đầu tiên của công ty hoặc hệ thống để hiển thị
-  if (!targetId) {
+  // Nếu không có id hoặc slug trên URL, tìm job đầu tiên của công ty hoặc hệ thống để hiển thị
+  if (!targetSlugOrId) {
     try {
       const res = await jobApi.listByCompany({ limit: 1 });
       const firstJob = res.data?.data?.[0];
-      if (firstJob?.id) {
-        targetId = firstJob.id;
+      if (firstJob) {
+        targetSlugOrId = firstJob.slug || firstJob.id;
       }
     } catch {
       try {
         const publicRes = await jobApi.list({ limit: 1 });
         const firstPublic = publicRes.data?.data?.[0];
-        if (firstPublic?.id) {
-          targetId = firstPublic.id;
+        if (firstPublic) {
+          targetSlugOrId = firstPublic.slug || firstPublic.id;
         }
       } catch {
         // Ignored
@@ -565,25 +575,35 @@ const fetchDetail = async (): Promise<void> => {
     }
   }
 
-  if (!targetId) {
+  if (!targetSlugOrId) {
     error.value = 'Không tìm thấy tin tuyển dụng nào để hiển thị.';
     return;
   }
 
   try {
-    const { data } = await jobApi.detail(targetId);
+    const { data } = await jobApi.bySlug(targetSlugOrId);
     if (data.data) {
       job.value = data.data;
     } else {
       error.value = 'Không tìm thấy thông tin tin tuyển dụng.';
     }
   } catch (e: any) {
+    // Fallback thử tìm theo detail (ID) nếu bySlug gặp lỗi
+    try {
+      const { data } = await jobApi.detail(targetSlugOrId);
+      if (data.data) {
+        job.value = data.data;
+        return;
+      }
+    } catch {
+      // Ignored
+    }
     error.value = e?.response?.data?.message || e?.message || 'Không thể tải chi tiết tin tuyển dụng.';
   }
 };
 
 const fetchScan = async (): Promise<void> => {
-  const targetId = jobId.value || job.value?.id;
+  const targetId = resolvedJobId.value;
   if (!targetId) return;
 
   scanLoading.value = true;
@@ -633,7 +653,7 @@ watch(jobId, () => {
 // Realtime socket: khi worker hoàn thành scan thì tự động refetch
 useSocket(
   'job_scan_complete', async (payload: { jobId: string, verdict: 'approved' | 'flagged', score: number, flaggedCount: number }) => {
-    const targetId = jobId.value || job.value?.id;
+    const targetId = resolvedJobId.value;
     if (payload.jobId === targetId) {
       if (job.value) {
         job.value = {
@@ -660,14 +680,16 @@ const prevJob = computed(() => job.value?.prevJob ?? null);
 const nextJob = computed(() => job.value?.nextJob ?? null);
 
 const goToPrevJob = (): void => {
-  if (prevJob.value?.id) {
-    router.push({ name: route.name || 'employer-job-detail', params: { id: prevJob.value.id } });
+  const target = prevJob.value?.slug || prevJob.value?.id;
+  if (target) {
+    router.push({ name: route.name || 'employer-job-detail', params: { id: target } });
   }
 };
 
 const goToNextJob = (): void => {
-  if (nextJob.value?.id) {
-    router.push({ name: route.name || 'employer-job-detail', params: { id: nextJob.value.id } });
+  const target = nextJob.value?.slug || nextJob.value?.id;
+  if (target) {
+    router.push({ name: route.name || 'employer-job-detail', params: { id: target } });
   }
 };
 
@@ -930,7 +952,7 @@ const mapEmployerAppRow = (row: EmployerApplicationRow, fallbackIdx: number): Jo
 };
 
 const fetchJobApplications = async (pageNum?: number): Promise<void> => {
-  const targetJobId = jobId.value || job.value?.id;
+  const targetJobId = resolvedJobId.value;
   if (!targetJobId) return;
   if (typeof pageNum === 'number') appPage.value = pageNum;
   appLoading.value = true;
@@ -1098,7 +1120,7 @@ const confirmRegenerateOpen = ref(false);
 const testToRegenerate = ref<AiTestSummary | null>(null);
 
 const fetchJobTests = async (): Promise<void> => {
-  const targetJobId = jobId.value || job.value?.id;
+  const targetJobId = resolvedJobId.value;
   if (!targetJobId) return;
   testLoading.value = true;
   testError.value = null;
@@ -1114,7 +1136,7 @@ const fetchJobTests = async (): Promise<void> => {
 };
 
 const handleGenerateTest = async (type: AiTestType): Promise<void> => {
-  const targetJobId = jobId.value || job.value?.id;
+  const targetJobId = resolvedJobId.value;
   if (!targetJobId || generatingTestType.value) return;
   generatingTestType.value = type;
   try {
@@ -1202,7 +1224,7 @@ const handleRegenerateTest = async (testItem: AiTestSummary): Promise<void> => {
 
 // Realtime socket: khi AI sinh đề xong thì tự động reload test list
 useSocket('ai-test:ready', (payload: any) => {
-  const targetJobId = jobId.value || job.value?.id;
+  const targetJobId = resolvedJobId.value;
   if (
     !payload?.jobId ||
     payload.jobId === targetJobId ||

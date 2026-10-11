@@ -93,7 +93,7 @@ const plans: Plan[] = [
 
 <template>
       <!-- ============== MAIN CONTENT ============== -->
-      <main class="min-w-0 flex-1 bg-slate-50/50 px-6 py-10">
+      <main class="font-poppins min-w-0 flex-1 bg-slate-50/50 px-6 py-10">
         <div class="mx-auto max-w-[1100px]">
           <!-- Heading -->
           <h1 class="text-3xl font-bold text-slate-900">

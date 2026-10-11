@@ -37,7 +37,7 @@ const initial = (name: string | undefined | null): string => {
 
 <template>
   <div
-    class="w-full h-full bg-white text-neutral-900 font-sans flex flex-col overflow-hidden"
+    class="font-poppins w-full h-full bg-white text-neutral-900 font-sans flex flex-col overflow-hidden"
   >
     <!-- ==================== THANH NAVY MỎNG TRÊN CÙNG ==================== -->
     <div class="w-full shrink-0" style="height: 1%; background: #164D70;" />

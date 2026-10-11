@@ -6,7 +6,7 @@
 import { ref } from 'vue';
 import { Eye, ArrowLeft, Sparkles, Check } from 'lucide-vue-next';
 import { useRouter } from 'vue-router';
-import CVTemplate6 from '@/components/cv/templates/CVTemplate6.vue';
+import CVTemplate1 from '@/components/cv/templates/CVTemplate1.vue';
 import CvDetailView from '@/components/cv/CvDetailView.vue';
 import type { Cv, CvRenderData } from '@/types/cv';
 
@@ -154,12 +154,12 @@ const onUseTemplate = (cv: Cv) => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-100 text-slate-800">
+  <div class="font-poppins min-h-screen bg-slate-100 text-slate-800">
 
     <!-- Khu vực hiển thị CV trực tiếp dạng bản in A4 -->
     <main class="py-8 px-4 flex justify-center">
       <div class="w-full max-w-[794px] rounded-lg shadow-xl overflow-hidden bg-white ring-1 ring-slate-900/5">
-        <CVTemplate6 :data="testData" :disable-links="false" />
+        <CVTemplate1 :data="testData" :disable-links="false" />
       </div>
     </main>
   </div>

@@ -777,7 +777,7 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50/50 p-5 md:p-8">
+  <div class="font-poppins min-h-screen bg-gray-50/50 p-5 md:p-8">
     <div class="max-w-6xl mx-auto space-y-6">
       <!-- =================== Header =================== -->
       <header class="flex items-center justify-between gap-4 flex-wrap">
