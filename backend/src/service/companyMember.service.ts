@@ -47,6 +47,7 @@ import {
   type CompanyMemberStatus,
   type CompanyMemberWithUser,
   type MyInvitationItem,
+  type PublicCompanyMember,
   type TransferCompanyOwnerResult,
 } from '../interface/companyMember';
 import { CompanyMemberErrorCode as EC } from '../interface/companyMember';
@@ -1269,6 +1270,39 @@ export const companyMemberService = {
             avatarUrl: r.userAvatarUrl ?? null,
           }
         : null,
+    }));
+  },
+
+  /* ==========================================================================
+   * Public list — member active của 1 công ty, dạng rút gọn cho profile
+   * công khai (candidate Job Detail tab "Công ty").
+   * KHÔNG check viewer membership — chỉ trả fullName + avatarUrl, không
+   * trả email/role/invite metadata.
+   * ==========================================================================*/
+  listPublicMembers: async (
+    companyId: string,
+  ): Promise<PublicCompanyMember[]> => {
+    const rows = await db
+      .select({
+        id: companyMembers.id,
+        fullName: userProfiles.fullName,
+        avatarUrl: userProfiles.avatarUrl,
+      })
+      .from(companyMembers)
+      .innerJoin(users, eq(users.id, companyMembers.userId))
+      .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+      .where(
+        and(
+          eq(companyMembers.companyId, companyId),
+          eq(companyMembers.status, 'active'),
+        ),
+      )
+      .limit(20);
+
+    return rows.map((r) => ({
+      id: r.id,
+      fullName: r.fullName ?? null,
+      avatarUrl: r.avatarUrl ?? null,
     }));
   },
 

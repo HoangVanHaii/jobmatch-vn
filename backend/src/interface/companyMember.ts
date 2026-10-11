@@ -105,6 +105,14 @@ export type CompanyMemberWithUser = CompanyMember & {
   user: CompanyMemberUserInfo | null;
 };
 
+/** Member active dạng rút gọn cho profile công khai (GET /:companyId/members/public) —
+ *  chỉ thông tin hiển thị (tên + avatar), KHÔNG có email/role/invite metadata. */
+export interface PublicCompanyMember {
+  id: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+}
+
 /* ============================================================================
  * Input types (tường minh, KHÔNG dùng z.infer) — match với Zod middleware
  * ==========================================================================*/
@@ -186,6 +194,9 @@ export type MyInvitationsResponse = MyInvitationItem[];
 
 /** Response của GET /companies/:companyId/members — list members enriched. */
 export type ListCompanyMembersResponse = CompanyMemberWithUser[];
+
+/** GET /:companyId/members/public — member active rút gọn cho profile công khai. */
+export type ListPublicCompanyMembersResponse = PublicCompanyMember[];
 
 /* ============================================================================
  * Error response shape (extend base AppError nếu cần — đặt tại đây để

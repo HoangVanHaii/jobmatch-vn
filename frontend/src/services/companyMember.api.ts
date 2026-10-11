@@ -19,6 +19,7 @@ import { http } from './http';
 import type {
   AddCompanyMemberPayload,
   CompanyMember,
+  PublicCompanyMember,
   TransferCompanyOwnerPayload,
   TransferCompanyOwnerResult,
   UpdateCompanyMemberPayload,
@@ -34,6 +35,11 @@ export const companyMemberApi = {
   /** GET /companies/:id/members — owner thấy hết, member thường chỉ thấy active */
   list: (companyId: string) =>
     http.get<ApiResponse<CompanyMember[]>>(`/companies/${companyId}/members`),
+
+  /** GET /companies/:id/members/public — member active rút gọn cho profile
+   *  công khai (candidate Job Detail tab "Công ty"), không cần là member. */
+  listPublic: (companyId: string) =>
+    http.get<ApiResponse<PublicCompanyMember[]>>(`/companies/${companyId}/members/public`),
 
   /** POST /companies/:id/members — owner thêm member (mặc định role=member, status=invited) */
   add: (companyId: string, data: AddCompanyMemberPayload) =>
