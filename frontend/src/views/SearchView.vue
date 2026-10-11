@@ -23,7 +23,7 @@ watch(debouncedKeyword, async (val) => {
 }, { immediate: true });
 </script>
 <template>
-  <div class="max-w-6xl mx-auto px-4 py-8">
+  <div class="font-poppins max-w-6xl mx-auto px-4 py-8">
     <input v-model="keyword" placeholder="Tìm kiếm việc làm..." class="input mb-6" />
     <InsightPanel :keyword="debouncedKeyword" />
     <div class="mt-6 space-y-4">

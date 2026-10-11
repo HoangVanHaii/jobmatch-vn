@@ -128,7 +128,7 @@ const routes: RouteRecordRaw[] = [
 
       // Tuyển dụng
       { path: 'jobs', name: 'employer-jobs', component: () => import('@views/employer/PostedJobsView.vue') },
-      { path: 'jobs/:id', name: 'employer-job-detail', component: () => import('@views/employer/JobDetailView.vue') },
+      { path: 'jobs/:id', name: 'employer-job-detail', alias: ['jobs/slug/:slug', 'jobs/by-slug/:slug'], component: () => import('@views/employer/JobDetailView.vue') },
       { path: 'applications', name: 'employer-applications', component: () => import('@views/employer/ApplicationsView.vue') },
       { path: 'interviews', name: 'employer-interviews', component: () => import('@views/employer/InterviewsView.vue') },
 

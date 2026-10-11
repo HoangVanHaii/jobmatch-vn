@@ -57,7 +57,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
 
 <template>
   <div
-    class="w-full bg-white text-neutral-900 font-sans grid grid-cols-[33%_67%]"
+    class="font-poppins w-full bg-white text-neutral-900 font-sans grid grid-cols-[33%_67%]"
     style="min-height: 1100px;"
   >
     <!-- ==================== SIDEBAR TRÁI (~33%) ==================== -->

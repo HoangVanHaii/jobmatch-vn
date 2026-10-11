@@ -55,7 +55,7 @@ const ResolvedTemplate = computed(() => {
 </script>
 
 <template>
-  <component
+  <component class="font-poppins"
     :is="ResolvedTemplate"
     :data="data"
     :disable-links="disableLinks"

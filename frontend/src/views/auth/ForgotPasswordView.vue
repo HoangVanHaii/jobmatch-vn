@@ -487,7 +487,7 @@ watch(step, (s) => {
             → header (logo, cùng container)
             → main grid (2 cột)
   -->
-  <div class="fixed inset-0 overflow-hidden bg-slate-50">
+  <div class="font-poppins fixed inset-0 overflow-hidden bg-slate-50">
     <!-- Ambient background: gradient mềm từ trái → transparent -->
     <div class="pointer-events-none absolute inset-0" aria-hidden="true">
       <div

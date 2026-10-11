@@ -257,7 +257,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div :class="wrapperClass">
+  <div class="font-poppins" :class="wrapperClass">
     <button
       ref="buttonRef"
       type="button"

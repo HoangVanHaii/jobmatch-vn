@@ -6,7 +6,7 @@ import { Construction } from 'lucide-vue-next';
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50/50 p-5 md:p-8">
+  <div class="font-poppins min-h-screen bg-gray-50/50 p-5 md:p-8">
     <div class="max-w-3xl mx-auto">
       <header class="mb-6">
         <h1 class="text-xl font-semibold text-gray-900 tracking-tight">Cài đặt</h1>

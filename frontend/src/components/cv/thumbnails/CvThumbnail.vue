@@ -499,7 +499,7 @@ onBeforeUnmount(() => {
   -->
   <div
     ref="containerRef"
-    class="relative w-full h-full bg-white rounded-[3px] overflow-hidden"
+    class="font-poppins relative w-full h-full bg-white rounded-[3px] overflow-hidden"
     :class="fit === 'cover' ? '' : 'ring-1 ring-slate-900/[0.06]'"
   >
     <!-- ==================== Direct CV: switch theo templateId ==================== -->

@@ -528,7 +528,7 @@ const showSubmitAiBtn = computed(() =>
     <Transition name="modal">
       <div
         v-if="open"
-        class="fixed inset-0 z-50 flex items-center justify-center p-4"
+        class="font-poppins fixed inset-0 z-50 flex items-center justify-center p-4"
         role="dialog"
         aria-modal="true"
       >

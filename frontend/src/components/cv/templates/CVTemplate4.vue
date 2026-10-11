@@ -45,7 +45,7 @@ const initial = (name: string | undefined | null): string => {
 
 <template>
   <div
-    class="w-full bg-white text-neutral-900 font-sans"
+    class="font-poppins w-full bg-white text-neutral-900 font-sans"
     style="min-height: 1100px;"
   >
     <!-- ==================== THANH NAVY MỎNG TRÊN CÙNG ==================== -->

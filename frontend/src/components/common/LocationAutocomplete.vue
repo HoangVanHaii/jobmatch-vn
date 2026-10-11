@@ -193,7 +193,7 @@ watch(filteredOptions, () => {
 </script>
 
 <template>
-  <div class="relative">
+  <div class="font-poppins relative">
     <!-- Input wrapper — relative để chevron icon absolute bên phải -->
     <div class="relative">
       <input

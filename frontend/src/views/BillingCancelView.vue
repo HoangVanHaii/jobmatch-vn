@@ -204,7 +204,7 @@ const formattedDate = computed<string>(() => formatDate(payment.value?.createdAt
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto px-4 py-8 md:py-12">
+  <div class="font-poppins max-w-2xl mx-auto px-4 py-8 md:py-12">
     <!-- ============ LOADING ============ -->
     <div v-if="status === 'loading'" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center">
       <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-50 mb-5">

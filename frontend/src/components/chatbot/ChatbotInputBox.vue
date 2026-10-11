@@ -52,7 +52,7 @@ const onInput = (e: Event): void => {
 </script>
 
 <template>
-  <div class="rounded-xl border border-gray-200 bg-white shadow-sm focus-within:border-gray-900 focus-within:ring-1 focus-within:ring-gray-900/10">
+  <div class="font-poppins rounded-xl border border-gray-200 bg-white shadow-sm focus-within:border-gray-900 focus-within:ring-1 focus-within:ring-gray-900/10">
     <!-- Chips row (chỉ hiện khi có context) -->
     <div
       v-if="hasContext"

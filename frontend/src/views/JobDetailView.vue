@@ -27,7 +27,7 @@ onMounted(async () => {
 });
 </script>
 <template>
-  <div v-if="job" class="max-w-4xl mx-auto px-4 py-8">
+  <div v-if="job" class="font-poppins max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold mb-4">{{ job.title }}</h1>
     <p class="text-gray-600 mb-6">{{ job.company?.name }} · {{ job.location?.city }}</p>
     <div class="card mb-6">

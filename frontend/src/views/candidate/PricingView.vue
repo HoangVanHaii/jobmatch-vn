@@ -9,5 +9,7 @@ import PricingComponent from "@components/pricing/PricingComponent.vue";
 </script>
 
 <template>
-  <PricingComponent />
+  <div class="font-poppins">
+    <PricingComponent />
+  </div>
 </template>

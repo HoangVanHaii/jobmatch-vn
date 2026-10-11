@@ -98,7 +98,7 @@ function close(): void {
     @update:open="close"
   >
     <!-- Loading -->
-    <div v-if="loading" class="flex items-center justify-center gap-2 py-8" style="color: var(--admin-text-muted);">
+    <div v-if="loading" class="font-poppins flex items-center justify-center gap-2 py-8" style="color: var(--admin-text-muted);">
       <Loader2 class="h-4 w-4 animate-spin" />
       <span class="text-sm">Đang tải...</span>
     </div>

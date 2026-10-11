@@ -381,7 +381,7 @@ const isEmpty = computed(() => !loading.value && paged.value.length === 0);
 </script>
 
 <template>
-  <div class="min-h-screen px-4 py-6 sm:px-6 sm:py-8 lg:px-8" style="background-color: var(--admin-page-bg);">
+  <div class="font-poppins min-h-screen px-4 py-6 sm:px-6 sm:py-8 lg:px-8" style="background-color: var(--admin-page-bg);">
     <div v-if="openDropdown" class="fixed inset-0 z-10" @click="closeDropdowns" />
 
     <div class="mx-auto max-w-7xl space-y-6">

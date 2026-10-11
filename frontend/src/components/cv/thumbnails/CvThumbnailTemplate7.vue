@@ -41,7 +41,7 @@ const scale = computed(() =>
 </script>
 
 <template>
-  <div ref="el" class="relative w-full overflow-hidden" style="aspect-ratio: 850 / 1100">
+  <div ref="el" class="font-poppins relative w-full overflow-hidden" style="aspect-ratio: 850 / 1100">
     <div
       v-if="scale > 0"
       class="absolute left-0 top-0 origin-top-left bg-white"

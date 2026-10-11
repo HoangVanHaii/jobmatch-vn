@@ -17,6 +17,7 @@ import {
   Briefcase,
   Building2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Clock,
   Code,
@@ -26,6 +27,7 @@ import {
   Globe,
   Github,
   GraduationCap,
+  Heart,
   ImagePlus,
   Laptop,
   Linkedin,
@@ -409,6 +411,23 @@ const canExpandResponsibilities = computed(() =>
 // ============================================================================
 // Handlers
 // ============================================================================
+const prevJob = computed(() => job.value?.prevJob ?? null);
+const nextJob = computed(() => job.value?.nextJob ?? null);
+
+const goToPrevJob = (): void => {
+  const target = prevJob.value?.slug || prevJob.value?.id;
+  if (target) {
+    router.push({ name: route.name || 'candidate-job-detail', params: { slug: target } });
+  }
+};
+
+const goToNextJob = (): void => {
+  const target = nextJob.value?.slug || nextJob.value?.id;
+  if (target) {
+    router.push({ name: route.name || 'candidate-job-detail', params: { slug: target } });
+  }
+};
+
 const goBack = (): void => {
   if (window.history.length > 1) {
     router.back();
@@ -487,10 +506,11 @@ const onShare = async (): Promise<void> => {
   }
 };
 
-/** Click "Feedback" trong More menu → scroll xuống section Feedbacks. */
+/** Click "Feedback" trong More menu → chuyển sang tab Đánh giá và scroll tới form. */
 const feedbackSectionEl = ref<HTMLElement | null>(null);
 const scrollToFeedback = (): void => {
   moreMenuOpen.value = false;
+  activeTab.value = 'feedback';
   setTimeout(() => {
     feedbackSectionEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 50);
@@ -680,7 +700,7 @@ const fetchApplicantsOverTime = async (jobId: string, seq?: number): Promise<voi
 // ============================================================================
 // Tab state + Company detail
 // ============================================================================
-type ActiveTab = 'overview' | 'company';
+type ActiveTab = 'overview' | 'company' | 'feedback';
 const activeTab = ref<ActiveTab>('overview');
 
 const company = ref<Company | null>(null);
@@ -1023,7 +1043,7 @@ const cancelEditFeedback = (): void => {
 </script>
 
 <template>
-  <div class="h-full bg-white">
+  <div class="h-full bg-white font-poppins">
     <!-- ============ Loading ============ -->
     <div
       v-if="loading && !job"
@@ -1086,70 +1106,102 @@ const cancelEditFeedback = (): void => {
               {{ compactNumber(job.appliesCount) }} Lượt ứng tuyển
             </span>
           </div>
-          <div class="flex items-center gap-2 shrink-0">
+          <div class="flex items-center gap-1.5 shrink-0">
+            <!-- Nút Previous Job -->
             <button
               type="button"
-              class="h-8 px-3.5 rounded-md bg-[#1677FF] text-white text-[12px] font-medium hover:bg-[#0E5FD9] transition inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#1677FF]"
-              :disabled="!canApply"
-              :title="!canApply ? 'Job này hiện không nhận hồ sơ' : undefined"
-              @click="onApply"
+              @click="goToPrevJob"
+              :disabled="!prevJob"
+              class="w-7 h-7 rounded-full border border-gray-200 bg-white flex items-center justify-center transition-colors shadow-2xs"
+              :class="prevJob ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 cursor-pointer' : 'text-gray-300 opacity-40 cursor-not-allowed select-none bg-gray-50'"
+              :title="prevJob ? `Job trước: ${prevJob.title}` : 'Không có job trước đó'"
             >
-              <Send class="w-3.5 h-3.5" />
-              Ứng tuyển
+              <ChevronLeft class="h-3.5 w-3.5" />
             </button>
+
+            <!-- Nút Next Job -->
+            <button
+              type="button"
+              @click="goToNextJob"
+              :disabled="!nextJob"
+              class="w-7 h-7 rounded-full border border-gray-200 bg-white flex items-center justify-center transition-colors shadow-2xs"
+              :class="nextJob ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 cursor-pointer' : 'text-gray-300 opacity-40 cursor-not-allowed select-none bg-gray-50'"
+              :title="nextJob ? `Job tiếp theo: ${nextJob.title}` : 'Không có job tiếp theo'"
+            >
+              <ChevronRight class="h-3.5 w-3.5" />
+            </button>
+
+            <!-- Nút Yêu thích (Favorite) -->
+            <button
+              type="button"
+              @click="onSave"
+              class="w-7 h-7 rounded-full border border-gray-200 bg-white flex items-center justify-center hover:bg-red-50 transition-colors cursor-pointer shadow-2xs"
+              :title="saved ? 'Bỏ yêu thích' : 'Yêu thích'"
+            >
+              <Heart
+                class="h-3.5 w-3.5 transition-colors"
+                :class="saved ? 'fill-[#ef4444] text-[#ef4444]' : 'text-gray-400 hover:text-[#ef4444]'"
+              />
+            </button>
+
+            <!-- Nút Share -->
+            <button
+              type="button"
+              @click="onShare"
+              class="w-7 h-7 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors cursor-pointer shadow-2xs"
+              title="Chia sẻ tin tuyển dụng"
+            >
+              <Share2 class="h-3.5 w-3.5" />
+            </button>
+
+            <!-- Nút More actions (...) với dropdown -->
             <div class="relative" ref="moreBtnEl">
               <button
                 type="button"
-                aria-label="More"
-                title="Thêm"
-                class="h-8 w-8 grid place-items-center rounded-md border border-[#EEF1F5] bg-white text-[#334155] hover:bg-[#F8FAFB]"
+                aria-label="More actions"
+                title="Thao tác khác"
+                class="w-7 h-7 grid place-items-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition cursor-pointer shadow-2xs"
                 @click.stop="moreMenuOpen = !moreMenuOpen"
               >
-                <MoreHorizontal class="w-4 h-4" />
+                <MoreHorizontal class="w-3.5 h-3.5" />
               </button>
               <Transition name="more">
                 <div
                   v-if="moreMenuOpen"
-                  class="absolute right-0 top-10 z-30 w-48 rounded-lg border border-[#EEF1F5] bg-white shadow-lg py-1 text-[12.5px]"
+                  class="absolute right-0 top-full mt-1 z-30 w-44 rounded-lg border border-gray-200 bg-white shadow-md py-1 text-xs"
                 >
-                  <button
-                    type="button"
-                    class="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F8FAFB] text-[#334155] transition"
-                    @click="onSave"
-                  >
-                    <Bookmark v-if="!saved" class="w-3.5 h-3.5" />
-                    <BookmarkCheck v-else class="w-3.5 h-3.5 text-[#1677FF]" />
-                    {{ saved ? 'Bỏ lưu job' : 'Lưu job' }}
-                  </button>
                   <button
                     v-if="isCandidateLoggedIn && job.postedBy"
                     type="button"
-                    class="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F8FAFB] text-[#334155] transition"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 text-gray-700 transition cursor-pointer"
                     @click.stop="toggleChat"
                   >
-                    <MessageCircle class="w-3.5 h-3.5" />
+                    <MessageCircle class="w-3.5 h-3.5 text-blue-500" />
                     Nhắn nhanh
                   </button>
                   <button
                     type="button"
-                    class="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F8FAFB] text-[#334155] transition"
-                    @click="onShare"
-                  >
-                    <Share2 class="w-3.5 h-3.5" />
-                    Chia sẻ
-                  </button>
-                  <div class="my-1 border-t border-[#EEF1F5]"></div>
-                  <button
-                    type="button"
-                    class="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F8FAFB] text-[#334155] transition"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 text-gray-700 transition cursor-pointer"
                     @click="scrollToFeedback"
                   >
-                    <Star class="w-3.5 h-3.5" />
+                    <Star class="w-3.5 h-3.5 text-amber-500" />
                     Đánh giá
                   </button>
                 </div>
               </Transition>
             </div>
+
+            <!-- Nút Ứng tuyển -->
+            <button
+              type="button"
+              class="h-7 px-3 rounded-lg bg-[#1677FF] text-white text-xs font-semibold hover:bg-[#0E5FD9] transition inline-flex items-center gap-1.5 shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#1677FF] ml-0.5 cursor-pointer"
+              :disabled="!canApply"
+              :title="!canApply ? 'Job này hiện không nhận hồ sơ' : undefined"
+              @click="onApply"
+            >
+              <Send class="w-3 h-3" />
+              Ứng tuyển
+            </button>
           </div>
         </div>
 
@@ -1185,13 +1237,32 @@ const cancelEditFeedback = (): void => {
             </button>
 
             <button
-              class="relative py-2.5 text-[12.5px] font-medium transition"
+              class="relative py-2.5 text-[12.5px] font-medium transition cursor-pointer"
               :class="activeTab === 'company' ? 'text-[#1677FF]' : 'text-[#64748B] hover:text-[#334155]'"
               @click="selectTab('company')"
             >
               Công ty
               <span
                 v-if="activeTab === 'company'"
+                class="absolute left-0 right-0 -bottom-px h-[2px] bg-[#1677FF] rounded-full"
+              ></span>
+            </button>
+
+            <button
+              class="relative py-2.5 text-[12.5px] font-medium transition cursor-pointer inline-flex items-center gap-1.5"
+              :class="activeTab === 'feedback' ? 'text-[#1677FF]' : 'text-[#64748B] hover:text-[#334155]'"
+              @click="selectTab('feedback')"
+            >
+              Đánh giá
+              <span
+                v-if="job.feedbackStats && job.feedbackStats.count > 0"
+                class="text-[10.5px] px-1.5 py-0.5 rounded-full font-semibold transition leading-none"
+                :class="activeTab === 'feedback' ? 'bg-[#E6F1FF] text-[#1677FF]' : 'bg-gray-100 text-[#64748B]'"
+              >
+                {{ job.feedbackStats.count }}
+              </span>
+              <span
+                v-if="activeTab === 'feedback'"
                 class="absolute left-0 right-0 -bottom-px h-[2px] bg-[#1677FF] rounded-full"
               ></span>
             </button>
@@ -1399,166 +1470,6 @@ const cancelEditFeedback = (): void => {
                 </span>
               </div>
             </section>
-
-            <!-- Feedbacks -->
-            <section
-              ref="feedbackSectionEl"
-              id="feedback-section"
-              class="mt-8 rounded-lg border border-[#EEF1F5] bg-white p-5"
-            >
-              <header class="flex items-center justify-between gap-3 mb-3 flex-wrap">
-                <h3 class="text-[13.5px] font-semibold text-[#0F172A] inline-flex items-center gap-2">
-                  <Star class="w-4 h-4 fill-[#F59E0B] text-[#F59E0B]" />
-                  Đánh giá từ ứng viên
-                </h3>
-                <div v-if="job.feedbackStats.count > 0" class="inline-flex items-center gap-1.5 text-xs">
-                  <span class="inline-flex items-center gap-0.5 text-[#F59E0B] font-bold">
-                    <Star class="w-3.5 h-3.5 fill-[#F59E0B] text-[#F59E0B]" />
-                    {{ job.feedbackStats.average }}
-                  </span>
-                  <span class="text-[#64748B]">({{ job.feedbackStats.count }} lượt)</span>
-                </div>
-              </header>
-
-              <!-- Chưa apply (đã đăng nhập): chỉ banner nhắc — không render form -->
-              <div
-                v-if="isCandidateLoggedIn && !canRateFeedback"
-                class="mb-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900"
-              >
-                <AlertCircle class="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                <span>
-                  Bạn cần <strong>ứng tuyển job này bằng ít nhất 1 CV</strong> trước khi đánh giá.
-                </span>
-              </div>
-
-              <!-- Form đánh giá — chỉ hiện khi đã apply -->
-              <div
-                v-else-if="canRateFeedback"
-                class="border border-[#EEF1F5] rounded-lg p-4 bg-[#F8FAFB] mb-4"
-              >
-                <p class="text-[11px] font-bold tracking-wider text-[#64748B] mb-2.5">
-                  {{ isEditingFeedback ? 'SỬA ĐÁNH GIÁ CỦA BẠN' : 'CHIA SẺ TRẢI NGHIỆM CỦA BẠN' }}
-                </p>
-                <div
-                  class="flex items-center gap-1.5 mb-3 transition"
-                  :class="!canRateFeedback ? 'opacity-50 pointer-events-none' : ''"
-                >
-                  <button
-                    v-for="n in 5"
-                    :key="n"
-                    type="button"
-                    class="p-0 transition hover:scale-110"
-                    :aria-label="`${n} sao`"
-                    :disabled="!canRateFeedback"
-                    @click="feedbackRating = n"
-                  >
-                    <Star
-                      class="w-6 h-6 transition"
-                      :class="n <= feedbackRating
-                        ? 'fill-[#F59E0B] text-[#F59E0B]'
-                        : 'text-[#CBD5E1]'"
-                      :stroke-width="1.5"
-                    />
-                  </button>
-                  <span v-if="feedbackRating > 0" class="ml-2 text-xs font-semibold text-[#334155]">
-                    {{ feedbackRating }}/5
-                  </span>
-                </div>
-                <textarea
-                  v-model="feedbackComment"
-                  rows="3"
-                  maxlength="2000"
-                  :disabled="!canRateFeedback"
-                  placeholder="Cảm nhận của bạn về quy trình tuyển dụng, môi trường làm việc, JD, v.v."
-                  class="w-full text-[13px] font-sans text-[#0F172A] placeholder-[#94A3B8] border border-[#EEF1F5] rounded-[8px] px-3 py-2 focus:outline-none focus:border-[#1677FF] resize-y min-h-[64px] disabled:bg-[#F8FAFB] disabled:cursor-not-allowed"
-                />
-                <div class="mt-2.5 flex items-center justify-between gap-2.5 flex-wrap">
-                  <p class="text-[11px] text-[#64748B]">
-                    Bạn chỉ có thể gửi 1 đánh giá cho job này — có thể chỉnh sửa sau.
-                  </p>
-                  <div class="flex items-center gap-2 shrink-0">
-                    <button
-                      v-if="isEditingFeedback"
-                      type="button"
-                      class="px-3 py-1.5 text-[12.5px] font-semibold rounded-lg border border-[#EEF1F5] bg-white text-[#334155] hover:bg-[#F8FAFB] transition"
-                      :disabled="submittingFeedback"
-                      @click="cancelEditFeedback"
-                    >
-                      Huỷ
-                    </button>
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1.5 px-[18px] py-2 text-[12px] font-bold rounded-md bg-[#1677FF] hover:bg-[#0E5FD9] text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
-                      :disabled="submittingFeedback || feedbackRating < 1 || !canRateFeedback"
-                      @click="submitFeedback"
-                    >
-                      <Loader2 v-if="submittingFeedback" class="w-3.5 h-3.5 animate-spin" />
-                      {{ submittingFeedback
-                        ? 'Đang gửi...'
-                        : (isEditingFeedback ? 'Cập nhật' : 'Gửi đánh giá') }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div
-                v-if="job.feedbacks.length === 0"
-                class="flex flex-col items-center text-center py-5 text-[#94A3B8]"
-              >
-                <Star class="w-[30px] h-[30px] mb-2.5 text-[#E4C876]" :stroke-width="1.6" />
-                <div class="text-[13px] font-bold text-[#334155] mb-0.5">
-                  Hãy là người đầu tiên đánh giá
-                </div>
-                <div class="text-[12px]">Chia sẻ trải nghiệm để giúp ứng viên khác cân nhắc.</div>
-              </div>
-
-              <div v-else class="space-y-3">
-                <article
-                  v-for="fb in job.feedbacks"
-                  :key="fb.id"
-                  class="rounded-lg border p-4 transition"
-                  :class="fb.isMine
-                    ? 'border-[#1677FF]/40 bg-[#E6F1FF]/40'
-                    : 'border-[#EEF1F5] bg-white'"
-                >
-                  <header class="flex items-start justify-between gap-3 mb-2">
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <p class="text-sm font-semibold text-[#0F172A] truncate">
-                          {{ fb.candidateName ?? 'Ứng viên ẩn danh' }}
-                        </p>
-                        <span
-                          v-if="fb.isMine"
-                          class="text-[10px] font-bold text-[#1677FF] bg-[#E6F1FF] rounded-full px-2 py-0.5"
-                        >
-                          Đánh giá của bạn
-                        </span>
-                      </div>
-                      <p class="text-[11px] text-[#64748B] mt-0.5">
-                        {{ dayjs(fb.createdAt).format('DD/MM/YYYY') }}
-                      </p>
-                    </div>
-                    <div class="inline-flex items-center gap-0.5 shrink-0">
-                      <Star
-                        v-for="n in 5"
-                        :key="n"
-                        class="w-3.5 h-3.5"
-                        :class="n <= fb.rating
-                          ? 'fill-[#F59E0B] text-[#F59E0B]'
-                          : 'text-[#CBD5E1]'"
-                      />
-                    </div>
-                  </header>
-                  <p
-                    v-if="fb.comment"
-                    class="text-sm text-[#334155] whitespace-pre-line leading-[1.7]"
-                  >
-                    {{ fb.comment }}
-                  </p>
-                  <p v-else class="text-xs italic text-[#64748B]">(Không có nhận xét)</p>
-                </article>
-              </div>
-            </section>
           </div>
 
           <!-- ============ Right col ============ -->
@@ -1723,6 +1634,208 @@ const cancelEditFeedback = (): void => {
             :company-id="job?.companyId ?? null"
             @open-chat="toggleChat"
           />
+        </template>
+
+        <!-- Feedback tab -->
+        <template v-if="activeTab === 'feedback'">
+          <div class="grid grid-cols-12 gap-5 pb-8">
+            <!-- Left col: feedback list & form -->
+            <div class="col-span-12 lg:col-span-8 min-w-0">
+              <section
+                ref="feedbackSectionEl"
+                id="feedback-section"
+                class="rounded-xl border border-[#EEF1F5] bg-white p-5 shadow-2xs"
+              >
+                <header class="flex items-center justify-between gap-3 mb-4 flex-wrap border-b border-[#EEF1F5] pb-3">
+                  <div>
+                    <h3 class="text-[14px] font-semibold text-[#0F172A] inline-flex items-center gap-2">
+                      <Star class="w-4 h-4 fill-[#F59E0B] text-[#F59E0B]" />
+                      Đánh giá từ ứng viên
+                    </h3>
+                    <p class="text-[11.5px] text-[#64748B] mt-0.5">
+                      Trải nghiệm thực tế về môi trường làm việc và quy trình phỏng vấn.
+                    </p>
+                  </div>
+                  <div v-if="job.feedbackStats && job.feedbackStats.count > 0" class="inline-flex items-center gap-1.5 text-xs bg-amber-50 border border-amber-200/60 px-2.5 py-1 rounded-full">
+                    <span class="inline-flex items-center gap-0.5 text-[#F59E0B] font-bold">
+                      <Star class="w-3.5 h-3.5 fill-[#F59E0B] text-[#F59E0B]" />
+                      {{ job.feedbackStats.average }}
+                    </span>
+                    <span class="text-[#64748B]">({{ job.feedbackStats.count }} lượt)</span>
+                  </div>
+                </header>
+
+                <!-- Chưa apply (đã đăng nhập): chỉ banner nhắc — không render form -->
+                <div
+                  v-if="isCandidateLoggedIn && !canRateFeedback"
+                  class="mb-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900"
+                >
+                  <AlertCircle class="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    Bạn cần <strong>ứng tuyển job này bằng ít nhất 1 CV</strong> trước khi đánh giá.
+                  </span>
+                </div>
+
+                <!-- Form đánh giá — chỉ hiện khi đã apply -->
+                <div
+                  v-else-if="canRateFeedback"
+                  class="border border-[#EEF1F5] rounded-lg p-4 bg-[#F8FAFB] mb-4"
+                >
+                  <p class="text-[11px] font-bold tracking-wider text-[#64748B] mb-2.5">
+                    {{ isEditingFeedback ? 'SỬA ĐÁNH GIÁ CỦA BẠN' : 'CHIA SẺ TRẢI NGHIỆM CỦA BẠN' }}
+                  </p>
+                  <div
+                    class="flex items-center gap-1.5 mb-3 transition"
+                    :class="!canRateFeedback ? 'opacity-50 pointer-events-none' : ''"
+                  >
+                    <button
+                      v-for="n in 5"
+                      :key="n"
+                      type="button"
+                      class="p-0 transition hover:scale-110 cursor-pointer"
+                      :aria-label="`${n} sao`"
+                      :disabled="!canRateFeedback"
+                      @click="feedbackRating = n"
+                    >
+                      <Star
+                        class="w-6 h-6 transition"
+                        :class="n <= feedbackRating
+                          ? 'fill-[#F59E0B] text-[#F59E0B]'
+                          : 'text-[#CBD5E1]'"
+                        :stroke-width="1.5"
+                      />
+                    </button>
+                    <span v-if="feedbackRating > 0" class="ml-2 text-xs font-semibold text-[#334155]">
+                      {{ feedbackRating }}/5
+                    </span>
+                  </div>
+                  <textarea
+                    v-model="feedbackComment"
+                    rows="3"
+                    maxlength="2000"
+                    :disabled="!canRateFeedback"
+                    placeholder="Cảm nhận của bạn về quy trình tuyển dụng, môi trường làm việc, JD, v.v."
+                    class="w-full text-[13px] font-sans text-[#0F172A] placeholder-[#94A3B8] border border-[#EEF1F5] rounded-[8px] px-3 py-2 focus:outline-none focus:border-[#1677FF] resize-y min-h-[64px] disabled:bg-[#F8FAFB] disabled:cursor-not-allowed bg-white"
+                  />
+                  <div class="mt-2.5 flex items-center justify-between gap-2.5 flex-wrap">
+                    <p class="text-[11px] text-[#64748B]">
+                      Bạn chỉ có thể gửi 1 đánh giá cho job này — có thể chỉnh sửa sau.
+                    </p>
+                    <div class="flex items-center gap-2 shrink-0">
+                      <button
+                        v-if="isEditingFeedback"
+                        type="button"
+                        class="px-3 py-1.5 text-[12.5px] font-semibold rounded-lg border border-[#EEF1F5] bg-white text-[#334155] hover:bg-[#F8FAFB] transition cursor-pointer"
+                        :disabled="submittingFeedback"
+                        @click="cancelEditFeedback"
+                      >
+                        Huỷ
+                      </button>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1.5 px-[18px] py-2 text-[12px] font-bold rounded-md bg-[#1677FF] hover:bg-[#0E5FD9] text-white transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                        :disabled="submittingFeedback || feedbackRating < 1 || !canRateFeedback"
+                        @click="submitFeedback"
+                      >
+                        <Loader2 v-if="submittingFeedback" class="w-3.5 h-3.5 animate-spin" />
+                        {{ submittingFeedback
+                          ? 'Đang gửi...'
+                          : (isEditingFeedback ? 'Cập nhật' : 'Gửi đánh giá') }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  v-if="job.feedbacks.length === 0"
+                  class="flex flex-col items-center text-center py-10 text-[#94A3B8]"
+                >
+                  <Star class="w-[36px] h-[36px] mb-2.5 text-[#E4C876]" :stroke-width="1.6" />
+                  <div class="text-[13.5px] font-bold text-[#334155] mb-0.5">
+                    Hãy là người đầu tiên đánh giá
+                  </div>
+                  <div class="text-[12px]">Chia sẻ trải nghiệm để giúp ứng viên khác có cái nhìn rõ hơn.</div>
+                </div>
+
+                <div v-else class="space-y-3">
+                  <article
+                    v-for="fb in job.feedbacks"
+                    :key="fb.id"
+                    class="rounded-lg border p-4 transition"
+                    :class="fb.isMine
+                      ? 'border-[#1677FF]/40 bg-[#E6F1FF]/40'
+                      : 'border-[#EEF1F5] bg-white'"
+                  >
+                    <header class="flex items-start justify-between gap-3 mb-2">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                          <p class="text-sm font-semibold text-[#0F172A] truncate">
+                            {{ fb.candidateName ?? 'Ứng viên ẩn danh' }}
+                          </p>
+                          <span
+                            v-if="fb.isMine"
+                            class="text-[10px] font-bold text-[#1677FF] bg-[#E6F1FF] rounded-full px-2 py-0.5"
+                          >
+                            Đánh giá của bạn
+                          </span>
+                        </div>
+                        <p class="text-[11px] text-[#64748B] mt-0.5">
+                          {{ dayjs(fb.createdAt).format('DD/MM/YYYY') }}
+                        </p>
+                      </div>
+                      <div class="inline-flex items-center gap-0.5 shrink-0">
+                        <Star
+                          v-for="n in 5"
+                          :key="n"
+                          class="w-3.5 h-3.5"
+                          :class="n <= fb.rating
+                            ? 'fill-[#F59E0B] text-[#F59E0B]'
+                            : 'text-[#CBD5E1]'"
+                        />
+                      </div>
+                    </header>
+                    <p
+                      v-if="fb.comment"
+                      class="text-sm text-[#334155] whitespace-pre-line leading-[1.7]"
+                    >
+                      {{ fb.comment }}
+                    </p>
+                    <p v-else class="text-xs italic text-[#64748B]">(Không có nhận xét)</p>
+                  </article>
+                </div>
+              </section>
+            </div>
+
+            <!-- Right col: Rating breakdown / summary card -->
+            <aside class="col-span-12 lg:col-span-4 min-w-0">
+              <div class="rounded-xl border border-[#EEF1F5] bg-white p-5 shadow-2xs space-y-4">
+                <h4 class="text-[13.5px] font-semibold text-[#0F172A]">Tổng quan đánh giá</h4>
+                <div class="flex items-center gap-3.5">
+                  <div class="text-3xl font-extrabold text-[#F59E0B]">
+                    {{ job.feedbackStats?.average ?? '0.0' }}
+                  </div>
+                  <div>
+                    <div class="flex items-center gap-0.5 text-[#F59E0B]">
+                      <Star
+                        v-for="n in 5"
+                        :key="n"
+                        class="w-4 h-4"
+                        :class="n <= Math.round(job.feedbackStats?.average ?? 0)
+                          ? 'fill-[#F59E0B] text-[#F59E0B]'
+                          : 'text-[#CBD5E1]'"
+                      />
+                    </div>
+                    <p class="text-xs text-[#64748B] mt-0.5">
+                      {{ job.feedbackStats?.count ?? 0 }} lượt đánh giá
+                    </p>
+                  </div>
+                </div>
+                <div class="border-t border-[#EEF1F5] pt-3 text-xs text-[#64748B] leading-relaxed">
+                  Đánh giá được chia sẻ bởi những ứng viên đã ứng tuyển vào vị trí này, phản ánh mức độ hài lòng về thông tin tuyển dụng và quy trình ứng tuyển.
+                </div>
+              </div>
+            </aside>
+          </div>
         </template>
         </div>
       </main>

@@ -4,9 +4,8 @@ export default {
     theme: {
         extend: {
             fontFamily: {
-                // Poppins — font chính cho các trang Job Search / Applied Jobs
-                // / Application Detail Panel. Khai báo ở đây để dùng class
-                // `font-poppins` Tailwind utility, không cần scoped CSS ở mỗi view.
+                // Poppins — font chính cho toàn bộ ứng dụng
+                sans: ['Poppins', 'system-ui', '-apple-system', 'sans-serif'],
                 poppins: ['Poppins', 'system-ui', '-apple-system', 'sans-serif'],
             },
             colors: {

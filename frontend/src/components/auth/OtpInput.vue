@@ -145,7 +145,7 @@ onMounted(() => focusBox(0));
 </script>
 
 <template>
-  <fieldset data-testid="otp-input" class="border-0 p-0 m-0" @paste="onPaste">
+  <fieldset data-testid="otp-input" class="font-poppins border-0 p-0 m-0" @paste="onPaste">
     <legend class="sr-only">Mã OTP gồm 6 chữ số</legend>
     <div class="flex justify-between gap-1.5 sm:gap-2">
       <input

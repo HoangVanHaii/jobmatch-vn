@@ -60,6 +60,7 @@ const shortUrl = (url: string): string =>
 
 <template>
   <div
+    class="font-poppins"
     :class="[
       'group flex items-center gap-3.5 rounded-xl border border-slate-200/70 bg-white p-3.5 transition-all',
       value

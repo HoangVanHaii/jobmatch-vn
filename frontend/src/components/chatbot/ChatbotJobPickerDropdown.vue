@@ -165,7 +165,7 @@ const onRemoveAttached = (id: string): void => {
 </script>
 
 <template>
-  <div class="flex w-[28rem] max-w-[calc(100vw-2rem)] flex-col gap-2">
+  <div class="font-poppins flex w-[28rem] max-w-[calc(100vw-2rem)] flex-col gap-2">
     <!-- Tabs -->
     <div class="flex items-center gap-1 rounded-md bg-gray-100 p-0.5 text-xs">
       <button

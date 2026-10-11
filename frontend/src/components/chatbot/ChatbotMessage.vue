@@ -65,7 +65,7 @@ const showClassifying = computed(
     Key dùng `${role}-${idx}` đảm bảo key unique cho mỗi entry append (Vue
     chỉ animate key MỚI, key cũ giữ nguyên → không bị re-animate cả list).
   -->
-  <TransitionGroup tag="div" name="msg" class="flex flex-col gap-4">
+  <TransitionGroup tag="div" name="msg" class="font-poppins flex flex-col gap-4">
     <div v-for="(m, idx) in props.messages" :key="`${m.role}-${idx}`">
       <div v-if="m.role === 'user'" class="flex flex-col items-end gap-1.5">
         <div

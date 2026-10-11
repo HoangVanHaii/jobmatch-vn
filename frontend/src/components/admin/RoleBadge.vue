@@ -26,7 +26,7 @@ const cls = computed(() => {
 
 <template>
   <span
-    class="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset"
+    class="font-poppins inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset"
     :class="cls"
   >
     {{ roleLabel(props.role) }}

@@ -242,7 +242,7 @@ const onToggleTimer = (): void => {
           <!-- ================= HEADER =================
                Icon tone + title (luôn đậm đen) + chevron + X. Nếu toast không
                có title → message đứng ở vị trí title (vẫn đậm đen). -->
-          <div class="toast-header">
+          <div class="font-poppins toast-header">
             <span
               aria-hidden="true"
               class="toast-icon shrink-0"

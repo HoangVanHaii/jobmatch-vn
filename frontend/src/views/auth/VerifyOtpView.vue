@@ -357,7 +357,7 @@ onUnmounted(() => {
             → header (logo, cùng container)
             → main grid (2 cột, items-start, cùng baseline)
   -->
-  <div class="fixed inset-0 overflow-hidden bg-slate-50">
+  <div class="font-poppins fixed inset-0 overflow-hidden bg-slate-50">
     <!-- Ambient background + blobs (đồng bộ Login/Register) -->
     <div class="pointer-events-none absolute inset-0" aria-hidden="true">
       <div

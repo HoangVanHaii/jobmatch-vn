@@ -13,7 +13,7 @@ const onSearch = () => {
 </script>
 
 <template>
-  <div class="min-h-screen">
+  <div class="font-poppins min-h-screen">
     <!-- Hero -->
     <section class="bg-gradient-to-br from-primary-600 to-primary-900 text-white py-20">
       <div class="max-w-5xl mx-auto px-4 text-center">

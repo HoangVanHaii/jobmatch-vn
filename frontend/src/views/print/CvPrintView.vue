@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div id="cv-print-root" class="bg-white text-neutral-800">
+  <div id="cv-print-root" class="font-poppins bg-white text-neutral-800">
     <CVTemplateRenderer
       v-if="data && templateId"
       :data="data"

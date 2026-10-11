@@ -119,7 +119,7 @@ const folderLabel = computed<string>(() => (props.folder === 'logos' ? 'Logo' : 
 </script>
 
 <template>
-  <div class="min-w-0">
+  <div class="font-poppins min-w-0">
     <template v-if="!hideLabel">
       <label class="block text-xs font-medium text-gray-700 mb-1.5">
         {{ label }}

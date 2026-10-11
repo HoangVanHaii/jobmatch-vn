@@ -754,7 +754,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-<div class="min-h-full bg-white py-6 sm:py-9 px-3 sm:px-6 lg:px-10 font-sans text-gray-800 antialiased">
+<div class="font-poppins min-h-full bg-white py-6 sm:py-9 px-3 sm:px-6 lg:px-10 font-sans text-gray-800 antialiased">
     <div class="max-w-[1100px] mx-auto space-y-6">
 
     <!-- ================= 1. Tiêu đề trang ================= -->

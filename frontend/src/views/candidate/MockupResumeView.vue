@@ -711,7 +711,7 @@ const clearAllFilters = async (): Promise<void> => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#F7F8FA]">
+  <div class="font-poppins min-h-screen bg-[#F7F8FA]">
     <div class="max-w-7xl mx-auto px-5 md:px-8 py-8 md:py-11">
 
       <!-- ============ Page Header ============ -->

@@ -117,7 +117,7 @@ const onEditKeydown = (e: KeyboardEvent): void => {
       - md+: cố định w-72 hoặc w-12 tùy collapsed
   -->
   <aside
-    class="flex h-full min-h-0 w-full flex-col border-r border-gray-200 bg-white transition-[width] duration-200 md:w-auto"
+    class="font-poppins flex h-full min-h-0 w-full flex-col border-r border-gray-200 bg-white transition-[width] duration-200 md:w-auto"
     :class="props.collapsed ? 'md:w-12' : 'md:w-72'"
   >
     <!-- Toggle button (desktop only — trên mobile dùng nút back trong header) -->

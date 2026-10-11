@@ -57,7 +57,7 @@ const goTo = (p: number) => {
 </script>
 
 <template>
-  <div class="flex items-center justify-between px-6 py-4 text-sm">
+  <div class="font-poppins flex items-center justify-between px-6 py-4 text-sm">
     <p class="text-gray-500">
       Hiển thị
       <span class="font-medium text-gray-700">{{ from }}–{{ to }}</span>

@@ -154,7 +154,7 @@ const onUseTemplate = (cv: Cv) => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-100 text-slate-800">
+  <div class="font-poppins min-h-screen bg-slate-100 text-slate-800">
 
     <!-- Khu vực hiển thị CV trực tiếp dạng bản in A4 -->
     <main class="py-8 px-4 flex justify-center">

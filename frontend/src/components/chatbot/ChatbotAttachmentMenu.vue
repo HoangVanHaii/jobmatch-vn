@@ -64,7 +64,7 @@ watch(isLocked, (locked) => {
 </script>
 
 <template>
-  <div ref="rootEl" class="relative">
+  <div ref="rootEl" class="font-poppins relative">
     <button
       type="button"
       class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40"

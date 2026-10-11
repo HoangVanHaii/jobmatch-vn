@@ -42,7 +42,7 @@ const descriptionBullets = (desc: string | undefined): string[] => {
 
 <template>
   <div
-    class="w-full h-full bg-white text-neutral-900 font-sans grid overflow-hidden"
+    class="font-poppins w-full h-full bg-white text-neutral-900 font-sans grid overflow-hidden"
     style="grid-template-columns: 33% 67%;"
   >
     <!-- ==================== SIDEBAR TRÁI (~33%) ==================== -->
