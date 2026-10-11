@@ -26,6 +26,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
 import { notificationService } from './notification.service';
+import { sanitizeCandidateName, sanitizeJobTitle } from './notificationMessage.builder';
 import { notificationGateway } from '../socket/notificationGateway';
 import { n8nService } from './n8n.service';
 import { usageLogService } from './usageLog.service';
@@ -188,16 +189,34 @@ export const notifyCandidateOfMatchResult = async (params: {
   const { candidateId, applicationId, jobId, jobTitle, reason, matchPercent, rationale } = params;
 
   try {
-    const titleMap: Record<typeof reason, string> = {
-      success: `AI chấm ${matchPercent}% match cho ${jobTitle}`,
-      quota_exceeded: `Đã nộp hồ sơ cho ${jobTitle} — AI match tạm thời không khả dụng`,
-      failed: `AI match cho ${jobTitle} thất bại, thử lại sau`,
-    };
+    const cleanJob = sanitizeJobTitle(jobTitle);
+    let message: string;
+
+    if (reason === 'success') {
+      if (typeof matchPercent === 'number') {
+        message = cleanJob
+          ? `AI Matching đã chấm ${matchPercent}% độ phù hợp cho vị trí ${cleanJob}`
+          : `AI Matching đã chấm ${matchPercent}% độ phù hợp cho hồ sơ của bạn`;
+      } else {
+        message = cleanJob
+          ? `Hồ sơ ứng tuyển đã được ghi nhận, đánh giá AI Matching sẽ được cập nhật sau cho vị trí ${cleanJob}`
+          : 'Hồ sơ ứng tuyển đã được ghi nhận, đánh giá AI Matching sẽ được cập nhật sau';
+      }
+    } else if (reason === 'quota_exceeded') {
+      message = cleanJob
+        ? `Hồ sơ ứng tuyển cho vị trí ${cleanJob} đã được ghi nhận. Đánh giá AI Matching tạm thời chưa khả dụng`
+        : 'Hồ sơ ứng tuyển của bạn đã được ghi nhận. Đánh giá AI Matching tạm thời chưa khả dụng';
+    } else {
+      message = cleanJob
+        ? `Hồ sơ ứng tuyển cho vị trí ${cleanJob} đã được ghi nhận. Đánh giá AI Matching sẽ được cập nhật sau`
+        : 'Hồ sơ ứng tuyển của bạn đã được ghi nhận. Đánh giá AI Matching sẽ được cập nhật sau';
+    }
 
     await notificationService.create({
       userId: candidateId,
       type: 'application_match_ready',
-      title: titleMap[reason],
+      title: 'Kết quả AI Matching',
+      message,
       payload: {
         applicationId,
         jobId,
@@ -390,7 +409,7 @@ export const create = async (
  *   - candidateId, candidateName: để hiển thị "Nguyễn Văn A vừa ứng tuyển"
  *   - isAnonymous: FE tôn trọng ẩn tên → không hiển thị candidateName
  */
-const notifyEmployerOfNewApplication = async (params: {
+export const notifyEmployerOfNewApplication = async (params: {
   employerId: string;
   applicationId: string;
   jobId: string;
@@ -416,13 +435,25 @@ const notifyEmployerOfNewApplication = async (params: {
 
     if (!row) return;
 
-    const candidateName = row.candidateName ?? 'Một ứng viên';
-    const jobTitle = row.jobTitle ?? 'một job';
+    const cleanCandidate = sanitizeCandidateName(row.candidateName);
+    const cleanJob = sanitizeJobTitle(row.jobTitle);
+
+    let message: string;
+    if (cleanCandidate && cleanJob) {
+      message = `Hồ sơ mới từ ${cleanCandidate} ứng tuyển vị trí ${cleanJob}`;
+    } else if (cleanCandidate) {
+      message = `Hồ sơ mới từ ${cleanCandidate}`;
+    } else if (cleanJob) {
+      message = `Hồ sơ ứng tuyển mới cho vị trí ${cleanJob}`;
+    } else {
+      message = 'Bạn có một hồ sơ ứng tuyển mới';
+    }
 
     await notificationService.create({
       userId: employerId,
       type: 'application_new',
-      title: `${candidateName} vừa ứng tuyển ${jobTitle}`,
+      title: 'Hồ sơ ứng tuyển mới',
+      message,
       payload: {
         applicationId,
         jobId,
@@ -1127,7 +1158,7 @@ export const withdraw = async (
  *   - Best-effort: lỗi KHÔNG rollback status update (đã commit DB).
  *   - FE bell + tab ứng tuyển auto refresh khi nhận notification:new.
  */
-const notifyEmployerOfWithdrawal = async (params: {
+export const notifyEmployerOfWithdrawal = async (params: {
   applicationId: string;
   jobId: string;
   candidateId: string;
@@ -1151,13 +1182,23 @@ const notifyEmployerOfWithdrawal = async (params: {
 
     if (!row) return;
 
-    const candidateName = row.candidateName ?? 'Một ứng viên';
-    const jobTitle = row.jobTitle ?? 'một job';
+    const candidateName = sanitizeCandidateName(row.candidateName);
+    const jobTitle = sanitizeJobTitle(row.jobTitle);
+
+    let message = 'Một ứng viên đã rút hồ sơ ứng tuyển';
+    if (candidateName && jobTitle) {
+      message = `Ứng viên ${candidateName} đã rút hồ sơ ứng tuyển vị trí ${jobTitle}`;
+    } else if (candidateName) {
+      message = `Ứng viên ${candidateName} đã rút hồ sơ ứng tuyển`;
+    } else if (jobTitle) {
+      message = `Hồ sơ ứng tuyển vị trí ${jobTitle} đã được rút`;
+    }
 
     await notificationService.create({
       userId: row.employerId,
       type: 'application_withdrawn',
-      title: `${candidateName} đã rút đơn ứng tuyển ${jobTitle}`,
+      title: 'Ứng viên đã rút hồ sơ',
+      message,
       payload: {
         applicationId,
         jobId,

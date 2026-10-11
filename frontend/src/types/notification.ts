@@ -30,7 +30,11 @@ export type NotificationType =
   | 'system'
   | 'application_new'
   | 'application_match_ready'
-  | 'application_withdrawn';
+  | 'application_withdrawn'
+  | 'interview_scheduled'
+  | 'interview_updated'
+  | 'interview_cancelled'
+  | 'reference_verified';
 
 /**
  * Các kind của payload khi type='company'.
@@ -60,6 +64,7 @@ export interface Notification {
   userId: string;
   type: NotificationType;
   title: string;
+  message?: string | null;
   payload: NotificationPayload;
   readAt: string | null; // ISO 8601, null = chưa đọc
   createdAt: string; // ISO 8601
@@ -76,6 +81,7 @@ export interface CreateNotificationPayload {
 /** Query GET /notifications */
 export interface ListNotificationsQuery {
   unread?: boolean;
+  search?: string;
   cursor?: string;
   limit?: number;
 }

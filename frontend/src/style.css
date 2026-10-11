@@ -218,3 +218,36 @@ html.no-page-scroll body {
   overflow: hidden !important;
   scrollbar-gutter: auto !important;
 }
+
+/* ============================================================================
+ * Page Transition (Route transition cho Candidate & Employer layouts)
+ * Fade thuần túy, thời lượng 180ms mượt mà, không dùng transform để chống tràn scrollbar
+ * Easing cubic-bezier(0.22, 1, 0.36, 1), leave tức thì (60ms) triệt tiêu khoảng trống
+ * ==========================================================================*/
+.page-fade-enter-active {
+  transition: opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity;
+}
+
+.page-fade-leave-active {
+  transition: opacity 0.06s ease-in;
+}
+
+.page-fade-enter-from {
+  opacity: 0;
+}
+
+.page-fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-fade-enter-active,
+  .page-fade-leave-active {
+    transition: none !important;
+  }
+  .page-fade-enter-from,
+  .page-fade-leave-to {
+    opacity: 1 !important;
+  }
+}

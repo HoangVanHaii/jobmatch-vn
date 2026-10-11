@@ -19,8 +19,13 @@ export const createNotificationSchema = z.object({
       'application_new',
       'application_match_ready',
       'application_withdrawn',
+      'interview_scheduled',
+      'interview_updated',
+      'interview_cancelled',
+      'reference_verified',
     ]),
     title: z.string().min(1).max(255),
+    message: z.string().trim().min(1).optional(),
     payload: z.record(z.unknown()).optional().default({}),
 });
 
@@ -28,8 +33,9 @@ export const listNotificationsQuerySchema = z.object({
   unread: z
     .union([z.literal("true"), z.literal("false")])
     .optional()
-    .transform((v) => v === "true"),
+    .transform((v) => (v !== undefined ? v === "true" : undefined)),
   cursor: z.string().min(1).optional(),
+  search: z.string().trim().max(100).optional(),
   limit: z
     .string()
     .optional()

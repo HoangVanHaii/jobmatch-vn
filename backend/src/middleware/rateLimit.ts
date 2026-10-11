@@ -66,7 +66,7 @@ export const rateLimiter = rateLimit({
    * parse body + verify signature như cũ.
    */
   skip: (req) => req.path.startsWith('/api/v1/webhooks'),
-  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau ít phút.' } },
+  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Bạn thao tác quá nhanh, vui lòng thử lại sau' } },
 });
 
 export const oauthRateLimiter = rateLimit({

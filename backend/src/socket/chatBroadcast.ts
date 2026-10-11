@@ -119,6 +119,7 @@ export const notifyPeerIfNotInRoom = async (
       userId: peerId,
       type: 'message',
       title: 'Tin nhắn mới',
+      message: 'Bạn có tin nhắn mới trong phòng trao đổi',
       payload: { conversationId, messageId: message.id },
     });
     return true;
