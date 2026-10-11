@@ -47,6 +47,7 @@ import type {
   JobLevel,
   JobStatus,
   JobType,
+  WorkType,
 } from '@/types/job';
 
 /* ============================================================================
@@ -83,7 +84,7 @@ interface FormState {
   salaryCurrency: string;
   salaryVisible: boolean;
   locationCity: string;
-  remoteOk: boolean;
+  workType: WorkType;
   experienceYearsMin: string;
   experienceYearsMax: string;
   requiredSkills: string[];
@@ -91,6 +92,13 @@ interface FormState {
   deadlineLocal: string;
   status: JobStatus;
 }
+
+const workTypeOptions: Array<{ value: WorkType; label: string }> = [
+  { value: 'onsite', label: 'Tại văn phòng' },
+  { value: 'hybrid', label: 'Hybrid' },
+  { value: 'remote', label: 'Từ xa (Remote)' },
+];
+
 const form = reactive<FormState>({
   title: '',
   description: '',
@@ -104,7 +112,7 @@ const form = reactive<FormState>({
   salaryCurrency: 'VND',
   salaryVisible: true,
   locationCity: '',
-  remoteOk: false,
+  workType: 'onsite',
   experienceYearsMin: '',
   experienceYearsMax: '',
   requiredSkills: [],
@@ -133,7 +141,7 @@ const resetForm = (): void => {
   form.salaryCurrency = 'VND';
   form.salaryVisible = true;
   form.locationCity = '';
-  form.remoteOk = false;
+  form.workType = 'onsite';
   form.experienceYearsMin = '';
   form.experienceYearsMax = '';
   form.requiredSkills = [];
@@ -251,7 +259,7 @@ const seedForm = (j: JobDetail): void => {
   form.salaryCurrency = j.salaryCurrency ?? 'VND';
   form.salaryVisible = j.salaryVisible ?? true;
   form.locationCity = j.location?.city ?? '';
-  form.remoteOk = j.remoteOk ?? false;
+  form.workType = j.workType ?? 'onsite';
   form.experienceYearsMin = j.experienceYearsMin != null ? String(j.experienceYearsMin) : '';
   form.experienceYearsMax = j.experienceYearsMax != null ? String(j.experienceYearsMax) : '';
   form.requiredSkills = [...(j.requiredSkills ?? [])];
@@ -323,7 +331,7 @@ const buildPayload = (): Record<string, unknown> => {
       ? { city: form.locationCity }
       : null;
   }
-  if (dirty.remoteOk)                payload.remoteOk = form.remoteOk;
+  if (dirty.workType)                payload.workType = form.workType;
   if (dirty.experienceYearsMin) {
     payload.experienceYearsMin = form.experienceYearsMin.trim() === ''
       ? null
@@ -864,15 +872,29 @@ const showSubmitAiBtn = computed(() =>
                     </p>
                   </div>
 
-                  <label class="inline-flex items-center gap-2 cursor-pointer">
-                    <input
-                      v-model="form.remoteOk"
-                      type="checkbox"
-                      class="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-2 focus:ring-primary-500/30"
-                      @change="markDirty('remoteOk')"
-                    />
-                    <span class="text-xs text-gray-700">Cho phép làm việc remote</span>
-                  </label>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1.5">Hình thức làm việc</label>
+                    <div class="grid grid-cols-3 gap-2">
+                      <label
+                        v-for="opt in workTypeOptions"
+                        :key="opt.value"
+                        class="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border cursor-pointer transition select-none text-center"
+                        :class="form.workType === opt.value
+                          ? 'border-primary-600 bg-primary-50 text-primary-700 font-semibold shadow-sm'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'"
+                      >
+                        <input
+                          type="radio"
+                          name="editJobWorkType"
+                          :value="opt.value"
+                          v-model="form.workType"
+                          class="sr-only"
+                          @change="markDirty('workType')"
+                        />
+                        <span>{{ opt.label }}</span>
+                      </label>
+                    </div>
+                  </div>
                 </div>
               </section>
 

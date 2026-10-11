@@ -10,6 +10,8 @@ export type JobLevel =
 export type JobType =
   | 'full-time' | 'part-time' | 'contract' | 'internship' | 'freelance';
 
+export type WorkType = 'remote' | 'onsite' | 'hybrid';
+
 export type JobStatus =
   | 'draft' | 'pending' | 'ai_scanning' | 'ai_flagged'
   | 'live' | 'expired' | 'closed';
@@ -51,7 +53,7 @@ export interface JobListItem {
   salaryCurrency: string | null;
   salaryVisible: boolean | null;
   location: JobLocation | null;
-  remoteOk: boolean | null;
+  workType: WorkType;
   deadline: Date | null;
   status: JobStatus;
   /** Badge status cho JobSearchView — mirror DB cột `hiring_status`. */
@@ -78,6 +80,8 @@ export interface JobListItem {
    * có → marked optional. FE dùng để tạo conversation qua `chatApi.createOrGet`.
    */
   postedBy?: string | null;
+  /** User id của người phụ trách tin tuyển dụng. */
+  assignedTo?: string | null;
 }
 
 /**
@@ -88,7 +92,37 @@ export interface JobListItem {
  * Mở rộng thêm `feedbacks` + `feedbackStats` từ `job_feedbacks` — BE nhúng luôn
  * vào detail để FE không phải gọi thêm API. `feedbacks` mới nhất trước, cap 200.
  */
+export interface AdjacentJob {
+  id: string;
+  title: string;
+}
+
+export type PaymentCycleType = 'weekly' | 'monthly' | 'contract';
+
+/**
+ * Cấu trúc JSONB linh hoạt lưu trong cột `jobs.extra_data` ở cơ sở dữ liệu.
+ * Dùng cho các trường mở rộng không có cột SQL riêng như Chu kỳ trả lương,
+ * chuyên môn giáo trình, danh sách hội đồng tuyển dụng và kênh đăng tin.
+ */
+export interface JobExtraData {
+  paymentType?: PaymentCycleType;
+  paymentTypeLabel?: string;
+  curriculumSpecialists?: string[];
+  teamMembers?: Array<{ id: string; name: string; email: string; role: string; selected?: boolean }>;
+  shareChannels?: Record<string, boolean>;
+  [key: string]: unknown;
+}
+
+export interface AssignedUserInfo {
+  id: string;
+  fullName: string | null;
+  email: string;
+  avatarUrl: string | null;
+}
+
 export interface JobDetail extends JobListItem {
+  /** Thông tin người phụ trách tin tuyển dụng (nếu có). */
+  assignedToUser?: AssignedUserInfo | null;
   description: string;
   requirements: string | null;
   benefits: string | null;
@@ -100,11 +134,15 @@ export interface JobDetail extends JobListItem {
   featuredUntil: Date | null;
   createdAt: Date;
   updatedAt: Date;
-  extraData: Record<string, unknown> | null;
+  extraData: JobExtraData | null;
   /** Danh sách feedback của candidate cho job này (mới nhất trước). */
   feedbacks: JobFeedback[];
   /** Aggregate rating. */
   feedbackStats: JobRatingStats;
+  /** Job liền kề mới hơn (cùng công ty). */
+  prevJob?: AdjacentJob | null;
+  /** Job liền kề cũ hơn (cùng công ty). */
+  nextJob?: AdjacentJob | null;
 }
 
 /**
@@ -303,7 +341,7 @@ export interface ListJobQuery {
    */
   status?: JobStatus;
   locationCity?: string;
-  remoteOk?: boolean;
+  workType?: WorkType | WorkType[];
   industry?: string;
   /**
    * Salary range filter (VND). Cả 2 optional; backend dùng overlap semantics

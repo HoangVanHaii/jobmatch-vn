@@ -148,6 +148,7 @@ export const generateOrReuse = async (input: {
         durationMin: preset.durationMin,
         jobTitle: job.title,
         jobRequirements: job.requirements ?? null,
+        jobId: input.jobId,
       } satisfies import('../jobs/aiTestGenerate.worker').AiTestGenerateJobData,
       { attempts: 3, backoff: { type: 'exponential', delay: 5_000 } },
     );
@@ -164,6 +165,110 @@ export const generateOrReuse = async (input: {
   );
 
   return { testId: created.id, status: 'generating', reused: false };
+};
+
+/**
+ * Tạo lại đề kiểm tra cho 1 test cụ thể — employer owns job.
+ * - Nếu đề chưa có ai làm: cập nhật row hiện tại về status='generating'.
+ * - Nếu đề đã có ứng viên gán/làm bài: giữ row cũ để bảo toàn kết quả và tạo row mới.
+ */
+export const regenerateTest = async (
+  testId: string,
+  employerId: string,
+  employerRole: string,
+): Promise<{ testId: string; status: 'generating' }> => {
+  const [test] = await db
+    .select({
+      id: aiTests.id,
+      jobId: aiTests.jobId,
+      testType: aiTests.testType,
+      level: aiTests.level,
+      status: aiTests.status,
+    })
+    .from(aiTests)
+    .where(eq(aiTests.id, testId))
+    .limit(1);
+
+  if (!test) throw new AppError(404, 'TEST_NOT_FOUND', 'Không tìm thấy đề thi');
+
+  const [job] = await db
+    .select({ postedBy: jobs.postedBy, title: jobs.title, requirements: jobs.requirements })
+    .from(jobs)
+    .where(eq(jobs.id, test.jobId))
+    .limit(1);
+
+  if (!job) throw new AppError(404, 'JOB_NOT_FOUND', 'Job không tồn tại');
+  if (employerRole !== 'admin' && job.postedBy !== employerId) {
+    throw new AppError(403, 'FORBIDDEN', 'Bạn không có quyền chỉnh sửa đề thi này');
+  }
+
+  if (test.status === 'generating') {
+    throw new AppError(400, 'IN_FLIGHT', 'Đề thi đang trong quá trình tạo');
+  }
+
+  const testType = test.testType as 'iq' | 'english';
+  const preset = TEST_PRESETS[testType];
+
+  // Kiểm tra nếu đề đã có ứng viên được gán
+  const [assigned] = await db
+    .select({ id: testAssignments.id })
+    .from(testAssignments)
+    .where(eq(testAssignments.testId, testId))
+    .limit(1);
+
+  let targetTestId = test.id;
+
+  if (assigned) {
+    // Đã có ứng viên làm bài -> Giữ nguyên đề cũ để bảo toàn kết quả, tạo row đề mới
+    const [created] = await db
+      .insert(aiTests)
+      .values({
+        jobId: test.jobId,
+        createdBy: employerId,
+        testType: test.testType,
+        level: test.level || preset.level,
+        status: 'generating',
+      })
+      .returning({ id: aiTests.id });
+
+    if (!created) throw new AppError(500, 'INSERT_FAILED', 'Không tạo được đề test');
+    targetTestId = created.id;
+  } else {
+    // Chưa có ứng viên -> Tái sử dụng row hiện tại, reset về 'generating'
+    await db
+      .update(aiTests)
+      .set({
+        status: 'generating',
+      })
+      .where(eq(aiTests.id, testId));
+  }
+
+  const { aiTestGenerateQueue } = await import('../config/queue');
+  try {
+    await aiTestGenerateQueue.add(
+      'ai-test-generate',
+      {
+        testId: targetTestId,
+        employerId,
+        testType,
+        level: test.level || preset.level,
+        questionCount: preset.questionCount,
+        pointsPerQuestion: preset.pointsPerQuestion,
+        durationMin: preset.durationMin,
+        jobTitle: job.title,
+        jobRequirements: job.requirements ?? null,
+        jobId: test.jobId,
+      } satisfies import('../jobs/aiTestGenerate.worker').AiTestGenerateJobData,
+      { attempts: 3, backoff: { type: 'exponential', delay: 5_000 } },
+    );
+  } catch (err) {
+    await db.update(aiTests).set({ status: 'failed' }).where(eq(aiTests.id, targetTestId));
+    logger.error({ err, testId: targetTestId }, 'aiTest.regenerateTest: enqueue thất bại');
+    throw new AppError(502, 'QUEUE_DOWN', 'Hệ thống bận — thử tạo đề lại sau');
+  }
+
+  logger.info({ testId: targetTestId, jobId: test.jobId, testType }, 'aiTest: enqueue tạo lại đề');
+  return { testId: targetTestId, status: 'generating' };
 };
 
 /** Danh sách đề của 1 job (mọi trạng thái) — employer owns job. */
@@ -706,6 +811,7 @@ export const submitTest = async (
 
 export const aiTestService = {
   generateOrReuse,
+  regenerateTest,
   listTestsForJob,
   getTestDetail,
   listAssignmentsForApplication,

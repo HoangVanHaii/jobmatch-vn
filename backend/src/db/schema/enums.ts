@@ -9,6 +9,7 @@ export const oauthProviderEnum = pgEnum('oauth_provider', ['google', 'facebook',
 export const jobStatusEnum = pgEnum('job_status', ['draft', 'pending', 'ai_scanning', 'ai_flagged', 'live', 'expired', 'closed']);
 export const jobLevelEnum = pgEnum('job_level', ['intern', 'fresher', 'junior', 'mid', 'senior', 'lead', 'manager']);
 export const jobTypeEnum = pgEnum('job_type', ['full-time', 'part-time', 'contract', 'internship', 'freelance']);
+export const workTypeEnum = pgEnum('work_type', ['remote', 'onsite', 'hybrid']);
 
 /**
  * Hiring status — dùng để FE render badge "Urgently Hiring" / "Actively Hiring"

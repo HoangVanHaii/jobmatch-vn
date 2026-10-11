@@ -1405,9 +1405,9 @@ export const companyMemberService = {
    */
   findMembershipByUserId: async (
     userId: string,
-  ): Promise<{ companyId: string } | null> => {
+  ): Promise<{ companyId: string; role: 'owner' | 'member' } | null> => {
     const [row] = await db
-      .select({ companyId: companyMembers.companyId })
+      .select({ companyId: companyMembers.companyId, role: companyMembers.role })
       .from(companyMembers)
         .where(
             and(

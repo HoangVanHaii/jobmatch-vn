@@ -59,6 +59,17 @@ export const aiTestController = {
     } catch (err) { next(err); }
   },
 
+  /** POST /:testId/regenerate — tạo lại bộ đề mới bằng AI. Employer owns job. */
+  regenerate: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+      const { testId } = req.params as { testId: string };
+      const data = await aiTestService.regenerateTest(testId, userId, req.user?.role ?? 'employer');
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
   /** GET /application/:applicationId — assignments của application. */
   listAssignments: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

@@ -151,6 +151,12 @@ export const aiTestApi = {
   getDetail: (testId: string) =>
     http.get<ApiResponse<AiTestDetail>>(`/ai-tests/${testId}`),
 
+  /** POST /ai-tests/:testId/regenerate — tạo lại đề kiểm tra bằng AI. */
+  regenerate: (testId: string) =>
+    http.post<ApiResponse<{ testId: string; status: 'generating' }>>(
+      `/ai-tests/${testId}/regenerate`,
+    ),
+
   /** GET /ai-tests/application/:applicationId — assignments của application. */
   listAssignments: (applicationId: string) =>
     http.get<ApiResponse<TestAssignmentRow[]>>(`/ai-tests/application/${applicationId}`),

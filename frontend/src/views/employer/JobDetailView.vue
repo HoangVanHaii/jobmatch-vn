@@ -1,474 +1,697 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import {
-  AlertCircle,
-  AlertTriangle,
-  ArrowLeft,
-  Briefcase,
-  Building2,
-  Calendar,
-  CheckCircle2,
-  ChevronDown,
-  Clock,
-  ExternalLink,
-  Eye,
-  FileText,
-  Globe2,
-  Loader2,
-  MapPin,
-  Pencil,
-  RefreshCw,
-  RotateCcw,
-  ScanLine,
-  Send,
-  ShieldCheck,
-  Trash2,
-  Users,
-  Wallet,
-} from 'lucide-vue-next';
-import dayjs from 'dayjs';
 import { useToastStore } from '@stores/toast';
 import { useAuthStore } from '@stores/auth';
 import { jobApi } from '@services/job.api';
+import { applicationApi } from '@services/application.api';
+import { companyMemberApi } from '@services/companyMember.api';
+import type { CompanyMember } from '@/types/companyMember';
+import {
+  aiTestApi,
+  type AiTestSummary,
+  type AiTestDetail,
+  type AiTestType,
+} from '@services/aiTest.api';
+import AiTestReviewModal from '@components/employer/AiTestReviewModal.vue';
+import type {
+  ApplicationStatus,
+  EmployerApplicationRow,
+  ApplicationDetail,
+} from '@/types/application';
+import dayjs from 'dayjs';
+import 'dayjs/locale/vi';
 import ConfirmModal from '@components/common/ConfirmModal.vue';
 import EditJobModal from '@components/employer/EditJobModal.vue';
+import UpgradePricing from '@components/pricing/UpgradePricing.vue';
 import type { JobDetail, JobStatus } from '@/types/job';
 import { useSocket } from '@/composables/useSocket';
-/* ============================================================================
- * State
- * ==========================================================================*/
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ArrowUpDown,
+  UserCheck,
+  ArrowUp,
+  ArrowDown,
+  Search,
+  X,
+  Mail,
+  Check,
+  Plus,
+  HelpCircle,
+  Heart,
+  MoreHorizontal,
+  Share2,
+  BadgeAlert,
+  Crown,
+  Pencil,
+  User,
+  Users,
+  Info,
+  Globe,
+  Briefcase,
+  FileText,
+  Calendar,
+  Clock,
+  Hourglass,
+  Building2,
+  Banknote,
+  GraduationCap,
+  MapPin,
+  MinusCircle,
+  CheckSquare,
+  BookOpen,
+  Compass,
+  Star,
+  ScanLine,
+  AlertTriangle,
+  CheckCircle2,
+  AlertCircle,
+  ShieldAlert,
+  ShieldCheck,
+  Cpu,
+  Loader2,
+  ExternalLink,
+  Trash2,
+  Send,
+  RotateCcw,
+  Eye,
+  Sparkles
+} from 'lucide-vue-next';
+
+// =========================================================================
+// ROUTE & STORES
+// =========================================================================
 const route = useRoute();
 const router = useRouter();
 const toast = useToastStore();
 const auth = useAuthStore();
 
+// Job ID từ route param (nếu có)
+const jobId = computed<string>(() => String(route.params.id ?? ''));
+
+// =========================================================================
+// STATE (KHÔNG DÙNG DỮ LIỆU MOCK - TOÀN BỘ FETCH TỪ API)
+// =========================================================================
 const job = ref<JobDetail | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-/** AI scan result. `null` = chưa scan bao giờ. `undefined` = chưa load / lỗi. */
+// AI Scan result từ API
 const scan = ref<unknown>(undefined);
 const scanLoading = ref(false);
 const scanError = ref<string | null>(null);
 
-/** Submit / re-scan / reopen in-flight. */
-const actionPending = ref(false);
-
-/** Delete confirm. */
-const deleteOpen = ref(false);
-
-/** Edit modal — toggle state, controlled by `<EditJobModal v-model:open>`. */
+// Modals & Action states
 const editOpen = ref(false);
-
-/* ============================================================================
- * "Thao tác khác" dropdown
- *  - showMoreActions : toggle mở/đóng menu phụ trong panel "Quản lý".
- *  - managePanelRef  : ref tới root card, dùng để detect click-outside.
- *  - Click ra ngoài card → tự đóng (document mousedown listener).
- *  - Mỗi action trong dropdown → cũng tự đóng (gọi showMoreActions = false).
- * ==========================================================================*/
+const deleteOpen = ref(false);
+const reopenOpen = ref(false);
+const showUpgradeModal = ref(false);
+const actionPending = ref(false);
 const showMoreActions = ref(false);
-const managePanelRef = ref<HTMLElement | null>(null);
 
-/** Click ngoài panel → đóng dropdown (nếu đang mở). */
-const onDocMouseDown = (e: MouseEvent): void => {
-  const root = managePanelRef.value;
-  if (!root) return;
-  if (e.target instanceof Node && !root.contains(e.target)) {
-    showMoreActions.value = false;
-  }
-};
-onMounted((): void => { document.addEventListener('mousedown', onDocMouseDown); });
-onUnmounted((): void => { document.removeEventListener('mousedown', onDocMouseDown); });
+// Company members & Assignee states
+const companyMembers = ref<CompanyMember[]>([]);
+const membersLoading = ref(false);
+const assignModalOpen = ref(false);
+const assigning = ref(false);
+const selectedAssigneeId = ref<string>('');
+const assigneeSearchQuery = ref<string>('');
 
-const jobId = computed<string>(() => String(route.params.id ?? ''));
+// State tương tác giao diện
+const activeTab = ref<'information' | 'application' | 'test' | 'feedback'>('information');
+const isFavorite = ref(true);
+const showModerationDetail = ref(false);
 
-/* ============================================================================
- * Formatters (mirror candidate JobDetailView)
- * ==========================================================================*/
-const jobLevelLabel = computed((): string => {
-  const m: Record<string, string> = {
-    intern: 'Intern', fresher: 'Fresher', junior: 'Junior', mid: 'Mid-level',
-    senior: 'Senior', lead: 'Lead', manager: 'Manager',
-  };
-  return job.value?.jobLevel ? m[job.value.jobLevel] ?? job.value.jobLevel : '';
-});
+// Hiring manager removed ids (client-side toggle)
+const removedManagerIds = ref<number[]>([]);
 
-const jobTypeLabel = computed((): string => {
-  const m: Record<string, string> = {
-    'full-time': 'Toàn thời gian', 'part-time': 'Bán thời gian',
-    contract: 'Hợp đồng', internship: 'Thực tập', freelance: 'Freelance',
-  };
-  return job.value?.jobType ? m[job.value.jobType] ?? job.value.jobType : '';
-});
-
-const salaryLabel = computed((): string => {
-  const j = job.value;
-  if (!j) return '';
-  if (!j.salaryVisible) return 'Thoả thuận';
-  const { salaryMin, salaryMax } = j;
-  if (!salaryMin && !salaryMax) return 'Thoả thuận';
-  const toM = (s: string): string => `${(Number(s) / 1_000_000).toFixed(0)} triệu`;
-  if (salaryMin && salaryMax) return `${toM(salaryMin)} – ${toM(salaryMax)}`;
-  if (salaryMin) return `Từ ${toM(salaryMin)}`;
-  return `Đến ${toM(salaryMax!)}`;
-});
-
-const companyInitial = computed((): string => {
-  const name = job.value?.companyName;
-  if (!name) return '?';
-  return name.trim().charAt(0).toUpperCase();
-});
-
-const locationLine = computed((): string => {
-  const loc = job.value?.location;
-  if (!loc) return '';
-  const parts = [loc.district, loc.city].filter(Boolean);
-  return parts.join(', ');
-});
-
-const experienceLabel = computed((): string => {
-  const j = job.value;
-  if (!j) return '';
-  const { experienceYearsMin, experienceYearsMax } = j;
-  if (experienceYearsMin == null && experienceYearsMax == null) return '';
-  if (experienceYearsMin != null && experienceYearsMax != null) {
-    return `${experienceYearsMin}–${experienceYearsMax} năm`;
-  }
-  if (experienceYearsMin != null) return `Từ ${experienceYearsMin} năm`;
-  return `Đến ${experienceYearsMax} năm`;
-});
-
-const publishedLabel = computed((): string => {
-  if (!job.value?.publishedAt) return '';
-  return dayjs(job.value.publishedAt).format('DD/MM/YYYY');
-});
-
-const deadlineLabel = computed((): string => {
-  if (!job.value?.deadline) return '';
-  return dayjs(job.value.deadline).format('DD/MM/YYYY');
-});
-
-const deadlineRelative = computed((): string => {
-  if (!job.value?.deadline) return '';
-  const d = dayjs(job.value.deadline);
-  const now = dayjs();
-  const diff = d.diff(now, 'day');
-  if (diff < 0) return `Đã quá hạn ${-diff} ngày`;
-  if (diff === 0) return 'Hết hạn hôm nay';
-  if (diff <= 7) return `Còn ${diff} ngày`;
-  return `Còn ${diff} ngày`;
-});
-
-const compactNumber = (n: number): string => {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
-  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-};
-
-/* ============================================================================
- * Status badge (mirror EmployerJobCard)
- * ==========================================================================*/
-interface StatusBadge {
-  label: string;
-  classes: string;
-  description: string;
-}
-const STATUS_MAP: Record<JobStatus, StatusBadge> = {
-  live:        { label: 'Đang hiển thị', classes: 'bg-green-100 text-green-700',
-                 description: 'Job đã vượt qua AI moderation và hiển thị công khai cho ứng viên.' },
-  draft:       { label: 'Bản nháp',     classes: 'bg-gray-100 text-gray-600',
-                 description: 'Job đang là bản nháp — chỉ bạn thấy. Submit để gửi AI moderation.' },
-  pending:     { label: 'Đang chờ',     classes: 'bg-blue-100 text-blue-700',
-                 description: 'Job đang chờ xử lý moderation.' },
-  ai_scanning: { label: 'AI đang quét',  classes: 'bg-yellow-100 text-yellow-700',
-                 description: 'Hệ thống AI đang quét nội dung job. Vui lòng đợi trong ít phút.' },
-  ai_flagged:  { label: 'Bị gắn cờ',    classes: 'bg-red-100 text-red-700',
-                 description: 'AI phát hiện vấn đề trong nội dung. Sửa job rồi re-scan.' },
-  expired:     { label: 'Hết hạn',      classes: 'bg-orange-100 text-orange-700',
-                 description: 'Job đã quá hạn nộp. Gia hạn hoặc re-scan để tiếp tục.' },
-  closed:      { label: 'Đã đóng',      classes: 'bg-gray-200 text-gray-500 line-through',
-                 description: 'Job đã bị đóng — ứng viên không thấy job này nữa.' },
-};
-const statusBadge = computed<StatusBadge | null>(() => {
-  if (!job.value) return null;
-  return STATUS_MAP[job.value.status] ?? STATUS_MAP.closed;
-});
-
-/* ============================================================================
- * AI scan — typed khớp schema backend (jobAiScans + jobAiFlags).
- *
- * Backend enums (xem backend/src/db/schema/enums.ts):
- *   scan_verdict  : 'approved' | 'flagged'
- *   flag_severity : 'block' | 'warn'
- *   field         : 'title' | 'description' | 'requirements'
- *   score         : numeric(3,2) → 0.00–1.00 (LUÔN 0..1, không phải 0..100)
- *
- * Backend flag fields (xem backend/src/db/schema/jobAiFlags.ts):
- *   id, scanId, severity, category (text free-form), field, quote,
- *   reasoning, suggestion, lawRef
- *
- * Lưu ý:
- *   - CATEGORY không phải enum ở DB — là text do LLM sinh ra. Có ~15 giá trị
- *     chuẩn (xem JOB_MODERATION_SYSTEM_PROMPT) nhưng LLM có thể trả giá trị
- *     mới → CATEGORY_LABELS map tối đa, còn lại hiển thị raw.
- *   - `quote` là text GỐC bị vi phạm (Ctrl+F để tìm trong job).
- *   - `reasoning` là giải thích bằng tiếng Việt từ LLM.
- *   - `suggestion` là gợi ý sửa cụ thể (HR-readable).
- *   - `lawRef` tham chiếu pháp luật (vd "Bộ luật LĐ 2019 §6").
- *
- * Giữ `scan` ref là unknown + cast qua interface (defensive) — nếu backend
- * thêm field mới FE không vỡ.
- * ==========================================================================*/
-
-type ScanVerdict = 'approved' | 'flagged';
-type FlagSeverity = 'block' | 'warn';
-type FlagField = 'title' | 'description' | 'requirements';
-
-interface ScanFlag {
-  id?: string;
-  severity?: FlagSeverity | string;
-  category?: string;
-  field?: FlagField | string;
-  quote?: string;
-  reasoning?: string;
-  suggestion?: string;
-  lawRef?: string;
-}
+// =========================================================================
+// AI MODERATION TYPING & COMPUTED
+// =========================================================================
 interface ScanInfo {
   id?: string;
-  verdict?: ScanVerdict | string;
-  /** numeric(3,2) → 0.00–1.00. Cast string → number ở đây. */
+  verdict?: 'approved' | 'flagged' | string;
   score?: number | string;
   model?: string;
   scannedAt?: string | Date;
   scannedBy?: string;
 }
+
+interface ScanFlag {
+  id?: string;
+  scanId?: string;
+  severity: 'block' | 'warn';
+  category: string;
+  field: string;
+  quote?: string;
+  reasoning: string;
+  suggestion?: string;
+  lawRef?: string;
+}
+
 interface ScanPayload {
   scan: ScanInfo;
   flags: ScanFlag[];
 }
 
-const scanInfo = computed<ScanInfo | null>(() => {
+const scanData = computed<ScanPayload | null>(() => {
   if (!scan.value) return null;
-  const s = scan.value as Partial<ScanPayload> | null;
-  return s?.scan ?? null;
-});
-const scanFlags = computed<ScanFlag[]>(() => {
-  if (!scan.value) return [];
-  const s = scan.value as Partial<ScanPayload> | null;
-  return s?.flags ?? [];
+  const s = scan.value as Partial<ScanPayload>;
+  if (s && s.scan) return s as ScanPayload;
+  return null;
 });
 
-/** Verdict (chỉ 2 giá trị theo enum backend). */
-interface VerdictMeta {
-  label: string;
-  classes: string;
-  description: string;
-  icon: typeof CheckCircle2;
-}
-const VERDICT_MAP: Record<ScanVerdict, VerdictMeta> = {
-  approved: {
-    label: 'Đã duyệt',
-    classes: 'bg-green-100 text-green-700',
-    description: 'AI không phát hiện vấn đề. Job có thể hiển thị cho ứng viên.',
-    icon: CheckCircle2,
-  },
-  flagged: {
-    label: 'Bị gắn cờ',
-    classes: 'bg-red-100 text-red-700',
-    description: 'AI phát hiện vấn đề. Sửa nội dung rồi gửi re-scan.',
-    icon: AlertTriangle,
-  },
-};
-const scanVerdictMeta = computed<VerdictMeta>(() => {
-  const v = scanInfo.value?.verdict;
-  return (v && v in VERDICT_MAP)
-    ? VERDICT_MAP[v as ScanVerdict]
-    : { label: 'Không rõ', classes: 'bg-gray-100 text-gray-600', description: '', icon: AlertCircle };
-});
+const currentScan = computed<ScanInfo | null>(() => scanData.value?.scan ?? null);
+const currentFlags = computed<ScanFlag[]>(() => scanData.value?.flags ?? []);
 
-/** Score LUÔN 0..1 theo schema. Nhân 100 cho %. */
 const scanScorePct = computed((): number => {
-  const raw = scanInfo.value?.score;
-  const s = typeof raw === 'string' ? Number(raw) : raw;
-  if (typeof s !== 'number' || Number.isNaN(s)) return 0;
-  return Math.round(Math.max(0, Math.min(1, s)) * 100);
+  if (!currentScan.value?.score) return 0;
+  const raw = currentScan.value.score;
+  const num = typeof raw === 'string' ? parseFloat(raw) : raw;
+  if (isNaN(num)) return 0;
+  return Math.round(Math.max(0, Math.min(1, num)) * 100);
 });
 
-/** Score bar color — theo mức độ "sạch" của job.
- *  approved + score cao → xanh; flagged + score thấp → đỏ. */
-const scoreBarColor = computed((): string => {
-  const pct = scanScorePct.value;
-  if (scanInfo.value?.verdict === 'approved') return 'bg-green-500';
-  if (pct >= 70) return 'bg-orange-500';
-  return 'bg-red-500';
+// =========================================================================
+// HELPER MAPS CHO CATEGORY VÀ FIELD CỦA AI SCAN
+// =========================================================================
+const CATEGORY_MAP: Record<string, string> = {
+  discrimination_gender: 'Phân biệt giới tính',
+  discrimination_age: 'Phân biệt độ tuổi',
+  discrimination_other: 'Phân biệt khác (tôn giáo/khuyết tật)',
+  scam_mlm: 'Lừa đảo đa cấp',
+  scam_recruitment_fee: 'Thu phí tuyển dụng',
+  scam_money_request: 'Yêu cầu chuyển tiền',
+  sexual_explicit: 'Nội dung khiêu dâm',
+  sexual_solicitation: 'Tuyển dụng mại dâm / gợi dục',
+  profanity: 'Ngôn từ thô tục / xúc phạm',
+  violence_threat: 'Đe dọa bạo lực',
+  pii_leak_post: 'Lộ thông tin cá nhân (PII)',
+};
+
+const FIELD_MAP: Record<string, string> = {
+  description: 'Mô tả công việc (Description)',
+  title: 'Tiêu đề công việc (Title)',
+  requirements: 'Yêu cầu công việc (Requirements)',
+  benefits: 'Quyền lợi (Benefits)',
+};
+
+// =========================================================================
+// FORMATTERS & LABELS
+// =========================================================================
+const formatDateTime = (dateStr?: string | Date): string => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return String(dateStr);
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${hours}:${minutes} · ${day}/${month}/${year}`;
+};
+
+const formatDate = (dateStr?: string | Date | null): string => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return String(dateStr);
+  const day = d.getDate();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[d.getMonth()];
+  const year = d.getFullYear();
+  return `${day} ${month}, ${year}`;
+};
+
+const calculateDaysRemaining = (deadline?: string | Date | null): number => {
+  if (!deadline) return 0;
+  const d = new Date(deadline);
+  const now = new Date();
+  const diffTime = d.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays);
+};
+
+const daysRemaining = computed(() => {
+  return calculateDaysRemaining(job.value?.deadline);
 });
 
-/** Sort flag: block trước, warn sau; trong cùng severity theo field order. */
-const sortedFlags = computed<ScanFlag[]>(() => {
-  const fieldOrder: Record<string, number> = { title: 0, description: 1, requirements: 2 };
-  return [...scanFlags.value].sort((a, b) => {
-    const sa = a.severity === 'block' ? 0 : 1;
-    const sb = b.severity === 'block' ? 0 : 1;
-    if (sa !== sb) return sa - sb;
-    const fa = fieldOrder[a.field ?? ''] ?? 99;
-    const fb = fieldOrder[b.field ?? ''] ?? 99;
-    return fa - fb;
+const jobLevelLabel = computed((): string => {
+  const m: Record<string, string> = {
+    intern: 'Intern',
+    fresher: 'Fresher',
+    junior: 'Junior',
+    mid: 'Mid-level',
+    senior: 'Senior',
+    lead: 'Lead',
+    manager: 'Manager',
+  };
+  return job.value?.jobLevel ? m[job.value.jobLevel] ?? job.value.jobLevel : 'Chưa cập nhật';
+});
+
+const jobTypeLabel = computed((): string => {
+  const m: Record<string, string> = {
+    'full-time': 'Full Time',
+    'part-time': 'Part Time',
+    contract: 'Contract',
+    internship: 'Internship',
+    freelance: 'Freelance',
+  };
+  return job.value?.jobType ? m[job.value.jobType] ?? job.value.jobType : 'Full Time';
+});
+
+const salaryLabel = computed((): string => {
+  const j = job.value;
+  if (!j) return '';
+  if (j.salaryVisible === false) return 'Thoả thuận';
+  const { salaryMin, salaryMax } = j;
+  if (!salaryMin && !salaryMax) return 'Thoả thuận';
+  const toM = (s: string): string => `${(Number(s) / 1_000_000).toFixed(0)} triệu`;
+
+  const extra = (j as any)?.extraData;
+  const cycle = extra?.paymentType;
+  const cycleSuffix = cycle === 'weekly' ? ' / tuần' : cycle === 'contract' ? ' / dự án' : cycle === 'monthly' ? ' / tháng' : '';
+
+  if (salaryMin && salaryMax) return `${toM(salaryMin)} – ${toM(salaryMax)}${cycleSuffix}`;
+  if (salaryMin) return `Từ ${toM(salaryMin)}${cycleSuffix}`;
+  return `Đến ${toM(salaryMax!)}${cycleSuffix}`;
+});
+
+const locationLine = computed((): string => {
+  const loc = job.value?.location;
+  if (!loc) return 'Chưa cập nhật';
+  const parts = [loc.district, loc.city].filter(Boolean);
+  return parts.join(', ') || 'Chưa cập nhật';
+});
+
+const experienceLabel = computed((): string => {
+  const j = job.value;
+  if (!j) return 'Không yêu cầu';
+  const { experienceYearsMin, experienceYearsMax } = j;
+  if (experienceYearsMin == null && experienceYearsMax == null) return 'Không yêu cầu';
+  if (experienceYearsMin != null && experienceYearsMax != null) {
+    return `${experienceYearsMin} - ${experienceYearsMax} Năm`;
+  }
+  if (experienceYearsMin != null) return `Từ ${experienceYearsMin} Năm`;
+  return `Đến ${experienceYearsMax} Năm`;
+});
+
+const STATUS_MAP: Record<string, { label: string; bgClass: string; dotClass: string; description: string }> = {
+  live:        { label: 'Đang hiển thị', bgClass: 'bg-emerald-50 text-emerald-700', dotClass: 'bg-emerald-500', description: 'Job đã vượt qua AI moderation và hiển thị công khai.' },
+  active:      { label: 'Active', bgClass: 'bg-emerald-50 text-emerald-700', dotClass: 'bg-emerald-500', description: 'Job đang hoạt động.' },
+  draft:       { label: 'Bản nháp', bgClass: 'bg-gray-100 text-gray-700', dotClass: 'bg-gray-400', description: 'Job đang là bản nháp — chỉ bạn thấy.' },
+  pending:     { label: 'Đang chờ', bgClass: 'bg-blue-50 text-blue-700', dotClass: 'bg-blue-500', description: 'Job đang chờ xử lý moderation.' },
+  ai_scanning: { label: 'Đang quét', bgClass: 'bg-amber-50 text-amber-700', dotClass: 'bg-amber-500', description: 'Hệ thống AI đang quét nội dung job.' },
+  ai_scaning:  { label: 'Đang quét', bgClass: 'bg-amber-50 text-amber-700', dotClass: 'bg-amber-500', description: 'Hệ thống AI đang quét nội dung job.' },
+  ai_flagged:  { label: 'Bị gắn cờ', bgClass: 'bg-red-50 text-red-700', dotClass: 'bg-red-500', description: 'AI phát hiện vấn đề trong nội dung.' },
+  expired:     { label: 'Hết hạn', bgClass: 'bg-orange-50 text-orange-700', dotClass: 'bg-orange-500', description: 'Job đã quá hạn nộp.' },
+  closed:      { label: 'Đã đóng', bgClass: 'bg-gray-100 text-gray-500 line-through', dotClass: 'bg-gray-400', description: 'Job đã bị đóng.' },
+};
+
+const currentStatusBadge = computed(() => {
+  const s = String(job.value?.status ?? 'active');
+  return STATUS_MAP[s] ?? STATUS_MAP.active;
+});
+
+// Danh sách chi tiết công việc bên cột phải
+const jobDetailsList = computed(() => [
+  {
+    label: 'Ngành',
+    value: job.value?.industry || 'Khác',
+    icon: Users,
+  },
+  {
+    label: 'Hình thức',
+    value: jobTypeLabel.value,
+    icon: Compass,
+  },
+  {
+    label: 'Cách thức',
+    value: job.value?.workType === 'remote' ? 'Remote' : job.value?.workType === 'hybrid' ? 'Hybrid' : 'On-Site',
+    icon: Building2,
+  },
+  {
+    label: 'Lương',
+    value: salaryLabel.value,
+    icon: Banknote,
+  },
+  {
+    label: 'Kinh nghiệm',
+    value: experienceLabel.value,
+    icon: GraduationCap,
+  },
+  {
+    label: 'Địa điểm',
+    value: locationLine.value,
+    icon: MapPin,
+  },
+  {
+    label: 'Lượt xem',
+    value: job.value?.viewsCount != null ? String(job.value.viewsCount) : '0',
+    icon: Eye,
+  },
+]);
+
+// =========================================================================
+// COMPANY MEMBERS & ASSIGNEE LOGIC
+// =========================================================================
+const fetchCompanyMembers = async (): Promise<void> => {
+  const cId = job.value?.companyId;
+  if (!cId) return;
+  membersLoading.value = true;
+  try {
+    const { data } = await companyMemberApi.list(cId);
+    const rawList = Array.isArray(data.data) ? data.data : [];
+    companyMembers.value = rawList.filter((m) => m.status === 'active');
+  } catch (err) {
+    console.error('Failed to load company members:', err);
+  } finally {
+    membersLoading.value = false;
+  }
+};
+
+const currentUserMember = computed(() => {
+  const myId = auth.user?.id;
+  if (!myId || !companyMembers.value.length) return null;
+  return companyMembers.value.find((m) => m.userId === myId) ?? null;
+});
+
+const isOwner = computed(() => {
+  return currentUserMember.value?.role === 'owner' && currentUserMember.value?.status === 'active';
+});
+
+const assignedUser = computed(() => {
+  const j = job.value;
+  if (!j) return null;
+  const targetUserId = j.assignedTo || j.postedBy;
+
+  // 1. Tìm trong companyMembers đã nạp
+  if (companyMembers.value.length && targetUserId) {
+    const mem = companyMembers.value.find((m) => m.userId === targetUserId);
+    if (mem) {
+      return {
+        id: mem.userId,
+        name: mem.user?.fullName || mem.user?.email?.split('@')[0] || 'Người phụ trách',
+        email: mem.user?.email || '',
+        avatarUrl: mem.user?.avatarUrl || null,
+        role: mem.role === 'owner' ? 'Chủ sở hữu (Owner)' : 'Thành viên (Member)',
+        rawRole: mem.role,
+        isCurrentUser: mem.userId === auth.user?.id,
+      };
+    }
+  }
+
+  // 2. Fallback từ assignedToUser trả về trực tiếp trong JobDetail API
+  if (j.assignedToUser) {
+    const u = j.assignedToUser;
+    return {
+      id: u.id,
+      name: u.fullName || u.email?.split('@')[0] || 'Người phụ trách',
+      email: u.email || '',
+      avatarUrl: u.avatarUrl || null,
+      role: 'Người phụ trách',
+      rawRole: 'member',
+      isCurrentUser: u.id === auth.user?.id,
+    };
+  }
+
+  // 3. Fallback từ extraData (teamMembers / hiringManagerName)
+  const extra = (j as any)?.extraData;
+  if (extra?.teamMembers && Array.isArray(extra.teamMembers)) {
+    const matched = extra.teamMembers.find((m: any) => m.selected || (targetUserId && m.userId === targetUserId));
+    if (matched) {
+      return {
+        id: matched.userId || matched.id,
+        name: matched.name || 'Người phụ trách',
+        email: matched.email || '',
+        avatarUrl: matched.avatarUrl || null,
+        role: matched.role || 'Người phụ trách',
+        rawRole: matched.rawRole || 'member',
+        isCurrentUser: matched.userId === auth.user?.id,
+      };
+    }
+  }
+
+  if (extra?.hiringManagerName) {
+    return {
+      id: 'default',
+      name: extra.hiringManagerName,
+      email: '',
+      avatarUrl: null,
+      role: 'Quản lý tuyển dụng',
+      rawRole: 'member',
+      isCurrentUser: false,
+    };
+  }
+
+  return null;
+});
+
+const filteredMembers = computed(() => {
+  const q = assigneeSearchQuery.value.trim().toLowerCase();
+  if (!q) return companyMembers.value;
+  return companyMembers.value.filter((m) => {
+    const name = (m.user?.fullName || '').toLowerCase();
+    const email = (m.user?.email || '').toLowerCase();
+    return name.includes(q) || email.includes(q);
   });
 });
 
-/** Đếm severity để hiển thị "(Y nghiêm trọng)" ở header. */
-const flagCounts = computed(() => {
-  const block = scanFlags.value.filter((f) => f.severity === 'block').length;
-  const warn = scanFlags.value.filter((f) => f.severity === 'warn').length;
-  return { block, warn, total: scanFlags.value.length };
-});
-
-/** Category labels — map từ 15 giá trị chuẩn trong JOB_MODERATION_SYSTEM_PROMPT. */
-const CATEGORY_LABELS: Record<string, string> = {
-  discrimination_gender: 'Phân biệt giới tính',
-  discrimination_age: 'Phân biệt tuổi',
-  discrimination_other: 'Phân biệt khác (tôn giáo/khuyết tật)',
-  scam_mlm: 'Lừa đảo đa cấp',
-  scam_recruitment_fee: 'Thu phí ứng tuyển',
-  scam_money_request: 'Yêu cầu chuyển tiền',
-  sexual_explicit: 'Nội dung khiêu dâm',
-  sexual_solicitation: 'Tuyển mại dâm/gợi dục',
-  profanity: 'Ngôn ngữ thô thiển',
-  violence_threat: 'Đe doạ bạo lực',
-  hate_speech: 'Ngôn từ thù ghét',
-  pii_leak_post: 'Lộ thông tin cá nhân (PII)',
-  illegal_activity: 'Hoạt động phi pháp',
-  low_quality_vague: 'Nội dung mơ hồ/thiếu thông tin',
-  misleading_title: 'Tiêu đề gây hiểu lầm/clickbait',
-};
-const categoryLabel = (cat: string | undefined): string => {
-  if (!cat) return '';
-  return CATEGORY_LABELS[cat] ?? cat;
+const openAssignModal = (): void => {
+  if (!isOwner.value) {
+    toast.push({
+      variant: 'warning',
+      title: 'Không có quyền thao tác',
+      body: 'Chỉ Chủ sở hữu (Owner) của công ty mới có quyền phân công người phụ trách tin tuyển dụng.',
+    });
+    return;
+  }
+  selectedAssigneeId.value = job.value?.assignedTo || job.value?.postedBy || '';
+  assigneeSearchQuery.value = '';
+  assignModalOpen.value = true;
 };
 
-/** Field label + icon. */
-const FIELD_META: Record<FlagField, { label: string; sectionId: string }> = {
-  title:        { label: 'Tiêu đề',   sectionId: 'job-title' },
-  description:  { label: 'Mô tả',     sectionId: 'job-description' },
-  requirements: { label: 'Yêu cầu',   sectionId: 'job-requirements' },
-};
-const fieldMeta = (f: string | undefined) => {
-  if (!f) return null;
-  return FIELD_META[f as FlagField] ?? { label: f, sectionId: '' };
-};
+const handleAssign = async (): Promise<void> => {
+  const currentJob = job.value;
+  if (!currentJob?.id) return;
+  if (!selectedAssigneeId.value) {
+    toast.push({
+      variant: 'warning',
+      title: 'Chưa chọn người phụ trách',
+      body: 'Vui lòng chọn một thành viên trong công ty để phân công.',
+    });
+    return;
+  }
 
-/** Severity classes (chỉ 'block' | 'warn' theo enum). */
-const severityClasses = (sev: string | undefined): string => {
-  if (sev === 'block') return 'border-red-200 bg-red-50/50';
-  if (sev === 'warn')  return 'border-yellow-200 bg-yellow-50/50';
-  return 'border-gray-200 bg-gray-50/50';
-};
-const severityBadgeClasses = (sev: string | undefined): string => {
-  if (sev === 'block') return 'bg-red-100 text-red-700';
-  if (sev === 'warn')  return 'bg-yellow-100 text-yellow-700';
-  return 'bg-gray-100 text-gray-600';
-};
-const severityLabel = (sev: string | undefined): string => {
-  if (sev === 'block') return 'Chặn — Không được đăng';
-  if (sev === 'warn')  return 'Cảnh báo — Nên sửa';
-  return sev ?? 'Không rõ';
-};
-
-/** scannedBy: 'system' → Auto, còn lại → Manual (userId). */
-const scannedByLabel = (s: string | undefined): string => {
-  if (!s) return '';
-  if (s === 'system') return 'Auto';
-  return 'Manual';
-};
-
-/* ============================================================================
- * Action availability (dựa trên status)
- * ==========================================================================*/
-const isAdmin = computed(() => auth.user?.role === 'admin');
-const canEdit = computed(() => {
-  // Backend `jobService.update` không chặn theo status (chỉ check ownership).
-  // Chặn duy nhất khi job đang được AI scan (worker đang xử lý) để tránh
-  // race text thay đổi trong lúc moderation đang chạy.
-  return job.value?.status !== 'ai_scanning';
-});
-/**
- * Cho phép submit từ mọi status NGOẠI TRỪ:
- *  - 'ai_scanning'  → đã scan, đợi worker xử lý
- *  - 'closed'       → đã xoá (soft delete), không resurrect
- *
- * Backend `jobService.submit` đã comment-out check status (xem
- * backend/src/service/job.service.ts:201-203) nên FE lo phần gate UX,
- * backend vẫn owner-check qua `postedBy === userId`.
- *
- * Use case:
- *  - draft       → submit lần đầu
- *  - ai_flagged  → re-scan sau khi sửa nội dung
- *  - expired     → gia hạn + re-scan
- *  - pending     → re-queue (vd LLM timeout)
- *  - live        → re-scan nếu muốn cập nhật verdict (vẫn đang hiển thị trong
- *                  khi chờ; cẩn thận có thể bật cờ job đang live).
- */
-const canSubmit = computed(() => {
-  const s = job.value?.status;
-  return s !== undefined && s !== 'ai_scanning' && s !== 'closed';
-});
-const canRescan = computed(() => {
-  const s = job.value?.status;
-  return isAdmin.value && (s === 'ai_flagged' || s === 'expired' || s === 'live');
-});
-const canDelete = computed(() => job.value?.status !== 'closed');
-/** Chỉ job đã đóng mới cho "Mở lại" (chuyển về draft). */
-const canReopen = computed(() => job.value?.status === 'closed');
-
-/* ============================================================================
- * Fetch
- * ==========================================================================*/
-const fetchDetail = async (): Promise<void> => {
-  if (!jobId.value) return;
-  loading.value = true;
-  error.value = null;
+  assigning.value = true;
   try {
-    const { data } = await jobApi.detail(jobId.value);
-    job.value = data.data;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Không tải được chi tiết job';
-    job.value = null;
+    await jobApi.assign(currentJob.id, selectedAssigneeId.value);
+    toast.push({
+      variant: 'success',
+      title: 'Phân công thành công',
+      body: 'Đã cập nhật người phụ trách cho tin tuyển dụng.',
+    });
+
+    currentJob.assignedTo = selectedAssigneeId.value;
+    const member = companyMembers.value.find((m) => m.userId === selectedAssigneeId.value);
+    if (member) {
+      currentJob.assignedToUser = {
+        id: member.userId,
+        email: member.user?.email || '',
+        fullName: member.user?.fullName || null,
+        avatarUrl: member.user?.avatarUrl || null,
+      };
+    }
+    assignModalOpen.value = false;
+  } catch (err: any) {
+    toast.push({
+      variant: 'error',
+      title: 'Phân công thất bại',
+      body: err?.response?.data?.message || err?.message || 'Không thể đổi người phụ trách. Vui lòng thử lại.',
+    });
   } finally {
-    loading.value = false;
+    assigning.value = false;
+  }
+};
+
+// =========================================================================
+// COLLAPSE / EXPAND FOR DESCRIPTION, REQUIREMENTS, BENEFITS
+// =========================================================================
+const isDescExpanded = ref(false);
+const isReqExpanded = ref(false);
+const isBenExpanded = ref(false);
+
+const TEXT_COLLAPSE_THRESHOLD = 240;
+const isDescLong = computed(() => {
+  const t = job.value?.description || '';
+  return t.length > TEXT_COLLAPSE_THRESHOLD || t.trim().split('\n').filter(Boolean).length > 4;
+});
+
+const isReqLong = computed(() => {
+  const t = job.value?.requirements || '';
+  return t.length > TEXT_COLLAPSE_THRESHOLD || t.trim().split('\n').filter(Boolean).length > 4;
+});
+
+const isBenLong = computed(() => {
+  const t = job.value?.benefits || '';
+  return t.length > TEXT_COLLAPSE_THRESHOLD || t.trim().split('\n').filter(Boolean).length > 4;
+});
+
+const getTruncatedText = (text?: string | null, maxLen = 240, maxLines = 4): string => {
+  if (!text) return '';
+  const lines = text.split('\n');
+  if (lines.length > maxLines) {
+    const subset = lines.slice(0, maxLines).join('\n');
+    if (subset.length <= maxLen) {
+      return subset.trim();
+    }
+    const truncated = subset.slice(0, maxLen);
+    const lastSpace = truncated.lastIndexOf(' ');
+    return (lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated).trim();
+  }
+  if (text.length > maxLen) {
+    const truncated = text.slice(0, maxLen);
+    const lastSpace = truncated.lastIndexOf(' ');
+    return (lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated).trim();
+  }
+  return text;
+};
+
+// =========================================================================
+// API FETCHING & REALTIME SOCKET
+// =========================================================================
+const fetchDetail = async (): Promise<void> => {
+  let targetId = jobId.value;
+
+  // Nếu không có id trên URL, tìm job đầu tiên của công ty hoặc hệ thống để hiển thị
+  if (!targetId) {
+    try {
+      const res = await jobApi.listByCompany({ limit: 1 });
+      const firstJob = res.data?.data?.[0];
+      if (firstJob?.id) {
+        targetId = firstJob.id;
+      }
+    } catch {
+      try {
+        const publicRes = await jobApi.list({ limit: 1 });
+        const firstPublic = publicRes.data?.data?.[0];
+        if (firstPublic?.id) {
+          targetId = firstPublic.id;
+        }
+      } catch {
+        // Ignored
+      }
+    }
+  }
+
+  if (!targetId) {
+    error.value = 'Không tìm thấy tin tuyển dụng nào để hiển thị.';
+    return;
+  }
+
+  try {
+    const { data } = await jobApi.detail(targetId);
+    if (data.data) {
+      job.value = data.data;
+    } else {
+      error.value = 'Không tìm thấy thông tin tin tuyển dụng.';
+    }
+  } catch (e: any) {
+    error.value = e?.response?.data?.message || e?.message || 'Không thể tải chi tiết tin tuyển dụng.';
   }
 };
 
 const fetchScan = async (): Promise<void> => {
-  if (!jobId.value) return;
+  const targetId = jobId.value || job.value?.id;
+  if (!targetId) return;
+
   scanLoading.value = true;
   scanError.value = null;
   try {
-    const { data } = await jobApi.scanResult(jobId.value);
-    // Backend có thể trả data=null nếu job chưa từng được scan.
-    scan.value = data.data ?? null;
-  } catch (e) {
-    // 404/403/... → coi như không có scan, không chặn UI.
+    const { data } = await jobApi.scanResult(targetId);
+    if (data.data) {
+      scan.value = data.data;
+    } else {
+      scan.value = null;
+    }
+  } catch {
     scan.value = null;
-    scanError.value = e instanceof Error ? e.message : null;
   } finally {
     scanLoading.value = false;
   }
 };
 
 const loadAll = async (): Promise<void> => {
-  await fetchDetail();
-  if (job.value) await fetchScan();
+  loading.value = true;
+  error.value = null;
+  try {
+    await fetchDetail();
+    if (job.value?.companyId) {
+      void fetchCompanyMembers();
+    }
+    await fetchScan();
+    void fetchJobTests();
+  } finally {
+    loading.value = false;
+  }
 };
 
 onMounted(loadAll);
-watch(jobId, () => { void loadAll(); });
+watch(jobId, () => {
+  isDescExpanded.value = false;
+  isReqExpanded.value = false;
+  isBenExpanded.value = false;
+  void loadAll();
+  if (activeTab.value === 'application') {
+    void fetchJobApplications(1);
+  } else if (activeTab.value === 'test') {
+    void fetchJobTests();
+  }
+});
 
-/* ============================================================================
- * Handlers
- * ==========================================================================*/
+// Realtime socket: khi worker hoàn thành scan thì tự động refetch
+useSocket(
+  'job_scan_complete', async (payload: { jobId: string, verdict: 'approved' | 'flagged', score: number, flaggedCount: number }) => {
+    const targetId = jobId.value || job.value?.id;
+    if (payload.jobId === targetId) {
+      if (job.value) {
+        job.value = {
+          ...job.value,
+          status: payload.verdict === 'approved' ? 'live' : 'ai_flagged'
+        };
+      }
+      await fetchScan();
+      // toast.push({
+      //   variant: payload.verdict === 'approved' ? 'success' : 'warning',
+      //   title: 'Kiểm duyệt AI hoàn tất',
+      //   body: payload.verdict === 'approved'
+      //     ? 'Tin tuyển dụng đã được duyệt tự động'
+      //     : 'Tin tuyển dụng bị gắn cờ cảnh báo nội dung',
+      // });
+    }
+  }
+);
+
+// =========================================================================
+// ACTION HANDLERS
+// =========================================================================
+const prevJob = computed(() => job.value?.prevJob ?? null);
+const nextJob = computed(() => job.value?.nextJob ?? null);
+
+const goToPrevJob = (): void => {
+  if (prevJob.value?.id) {
+    router.push({ name: route.name || 'employer-job-detail', params: { id: prevJob.value.id } });
+  }
+};
+
+const goToNextJob = (): void => {
+  if (nextJob.value?.id) {
+    router.push({ name: route.name || 'employer-job-detail', params: { id: nextJob.value.id } });
+  }
+};
+
 const goBack = (): void => {
   if (window.history.length > 1) {
     router.back();
@@ -480,61 +703,12 @@ const goBack = (): void => {
 const onEdit = (): void => {
   if (!job.value) return;
   showMoreActions.value = false;
-  // Mở modal edit (xem EditJobModal.vue) — không navigate sang trang mới.
   editOpen.value = true;
 };
 
-/** Sau khi EditJobModal PATCH thành công → refetch để cập nhật header + scan. */
 const onEditSaved = async (): Promise<void> => {
   await loadAll();
-};
-
-/* ============================================================================
- * Sidebar "Quản lý" — vertical stack đơn giản (không hover-to-grow).
- *  - Primary action (full width, primary black): Gửi kiểm duyệt AI (draft) /
- *    Xem ứng viên (còn lại).
- *  - Các nút phụ full width bên dưới: Sửa, Re-scan (admin), Xem công khai,
- *    Xoá.
- *  - Xem chi tiết template ở block "Actions" trong template.
- * ==========================================================================*/
-
-const onSubmitForScan = async (): Promise<void> => {
-  if (!job.value || actionPending.value) return;
-  showMoreActions.value = false;
-  actionPending.value = true;
-  try {
-    await jobApi.submit(job.value.id);
-    await loadAll();
-  } catch (e) {
-  } finally {
-    actionPending.value = false;
-  }
-};
-useSocket(
-  'job_scan_complete', async (payload: { jobId: string, verdict: 'approved' | 'flagged', score: number, flaggedCount: number }) => {
-    if (payload.jobId === jobId.value) {
-      // Nếu jobId khớp → refetch scan result để cập nhật verdict/score/flags.
-      job.value = { ...job.value, status: payload.verdict === 'approved' ? 'live' : 'ai_flagged' } as JobDetail;
-      await fetchScan();
-    }
-  }
-)
-const onRescan = async (): Promise<void> => {
-  if (!job.value || actionPending.value) return;
-  showMoreActions.value = false;
-  actionPending.value = true;
-  try {
-    await jobApi.resubmit(job.value.id);
-    await loadAll();
-  } catch (e) {
-    toast.push({
-      variant: 'error',
-      title: 'Re-scan thất bại',
-      body: e instanceof Error ? e.message : 'Vui lòng thử lại',
-    });
-  } finally {
-    actionPending.value = false;
-  }
+  toast.push({ variant: 'success', title: 'Đã cập nhật tin tuyển dụng' });
 };
 
 const onDelete = (): void => {
@@ -546,36 +720,45 @@ const cancelDelete = (): void => { deleteOpen.value = false; };
 const confirmDelete = async (): Promise<void> => {
   if (!job.value) return;
   deleteOpen.value = false;
+  actionPending.value = true;
   try {
     await jobApi.delete(job.value.id);
-    toast.push({ variant: 'success', title: 'Đã đóng job' });
-    await router.push('/employer/jobs');
+    toast.push({ variant: 'success', title: 'Đã đóng job thành công' });
+    if (job.value) {
+      job.value.status = 'closed';
+    }
+    await loadAll();
   } catch (e) {
     toast.push({
       variant: 'error',
-      title: 'Xoá thất bại',
+      title: 'Đóng job thất bại',
       body: e instanceof Error ? e.message : 'Vui lòng thử lại',
     });
+  } finally {
+    actionPending.value = false;
   }
 };
 
-/**
- * Mở lại job đã đóng (closed → draft).
- * KHÔNG dùng confirm modal — đây là action reversible, user có thể close lại
- * nếu lỡ tay. Toast kết quả + refetch detail để status badge + primary button
- * đổi từ "Đã đóng" (placeholder) → "Gửi kiểm duyệt AI" (draft).
- */
-const onReopen = async (): Promise<void> => {
-  if (!job.value || actionPending.value) return;
+const onReopen = (): void => {
+  if (!job.value) return;
   showMoreActions.value = false;
+  reopenOpen.value = true;
+};
+const cancelReopen = (): void => { reopenOpen.value = false; };
+const confirmReopen = async (): Promise<void> => {
+  if (!job.value) return;
+  reopenOpen.value = false;
   actionPending.value = true;
   try {
     await jobApi.reopen(job.value.id);
     toast.push({
       variant: 'success',
       title: 'Đã mở lại job',
-      body: 'Job chuyển về bản nháp. Sửa nội dung rồi gửi AI kiểm duyệt để đăng lại.',
+      body: 'Job chuyển về bản nháp. Bạn có thể cập nhật thông tin và gửi AI kiểm duyệt để đăng lại.',
     });
+    if (job.value) {
+      job.value.status = 'draft';
+    }
     await loadAll();
   } catch (e) {
     toast.push({
@@ -588,599 +771,2387 @@ const onReopen = async (): Promise<void> => {
   }
 };
 
-const onViewApplications = (): void => {
-  if (!job.value) return;
-  router.push({ path: '/employer/applications', query: { jobId: job.value.id } });
+const isQuotaExceeded = (e: unknown): boolean => {
+  const err = e as any;
+  if (err?.response?.status === 402) return true;
+  if (err?.response?.data?.code === 'QUOTA_EXCEEDED') return true;
+  const msg = (err?.response?.data?.message || err?.message || '').toLowerCase();
+  return (
+    msg.includes('quota') ||
+    msg.includes('hết lượt') ||
+    msg.includes('hết hạn ngạch') ||
+    msg.includes('nâng cấp gói') ||
+    msg.includes('payment_required')
+  );
 };
 
-const onViewPublic = (): void => {
+const openUpgradeModal = (): void => {
   showMoreActions.value = false;
-  // Mở candidate view trong tab mới (chỉ job live mới có thể xem public).
-  const url = `/candidate/viec-lam/${jobId.value}`;
-  window.open(url, '_blank', 'noopener,noreferrer');
+  showUpgradeModal.value = true;
 };
 
-/* ============================================================================
- * Helpers cho template — đã move vào block "AI scan" ở trên để giữ tất cả
- * logic moderation cùng chỗ.
- * ==========================================================================*/
+const onUpgradeSuccess = async (): Promise<void> => {
+  showUpgradeModal.value = false;
+  toast.push({
+    variant: 'success',
+    title: 'Nâng cấp gói thành công!',
+    body: 'Lượt sử dụng AI đã được bổ sung. Bạn có thể tiếp tục kiểm duyệt.',
+  });
+  await loadAll();
+};
+
+const onSubmitForScan = async (): Promise<void> => {
+  if (!job.value || actionPending.value || job.value.status === 'ai_scanning') return;
+  showMoreActions.value = false;
+  actionPending.value = true;
+
+  const previousStatus = job.value.status;
+  // Đổi ngay status ở cạnh title thành ai_scanning ("Đang quét")
+  job.value.status = 'ai_scanning' as JobStatus;
+
+  try {
+    await jobApi.submit(job.value.id);
+    await fetchScan();
+  } catch (e) {
+    if (job.value) {
+      job.value.status = previousStatus;
+    }
+    if (isQuotaExceeded(e)) {
+      showUpgradeModal.value = true;
+      toast.push({
+        variant: 'warning',
+        title: 'Hết lượt kiểm duyệt AI',
+        body: 'Bạn đã sử dụng hết lượt kiểm duyệt AI trong gói hiện tại. Vui lòng nâng cấp gói để tiếp tục.',
+      });
+      return;
+    }
+    toast.push({
+      variant: 'error',
+      title: 'Gửi duyệt thất bại',
+      body: e instanceof Error ? e.message : 'Vui lòng thử lại',
+    });
+  } finally {
+    actionPending.value = false;
+  }
+};
+
+// =========================================================================
+// TAB ĐƠN ỨNG TUYỂN (APPLICATIONS LIST CHO RIÊNG JOB NÀY)
+// =========================================================================
+interface JobApplicationItem {
+  applicationId: string;
+  candidateId: string;
+  name: string;
+  avatarUrl?: string | null;
+  email: string;
+  status: ApplicationStatus;
+  match: number | null;
+  date: string;
+}
+
+const STATUS_FILTER_OPTIONS: Array<{ value: ApplicationStatus | ''; label: string }> = [
+  { value: '', label: 'Tất cả trạng thái' },
+  { value: 'pending', label: 'Chờ xử lý' },
+  { value: 'viewed', label: 'Đã xem' },
+  { value: 'screening', label: 'Sàng lọc' },
+  { value: 'interview', label: 'Phỏng vấn' },
+  { value: 'offered', label: 'Đã offer' },
+  { value: 'hired', label: 'Đã tuyển' },
+  { value: 'rejected', label: 'Đã từ chối' },
+  { value: 'withdrawn', label: 'Đã rút đơn' },
+];
+
+const STATUS_LABEL: Record<ApplicationStatus, string> = {
+  pending: 'Chờ xử lý',
+  viewed: 'Đã xem',
+  screening: 'Sàng lọc',
+  interview: 'Phỏng vấn',
+  offered: 'Đã offer',
+  hired: 'Đã tuyển',
+  rejected: 'Đã từ chối',
+  withdrawn: 'Đã rút đơn',
+};
+
+const STATUS_CHIP: Record<ApplicationStatus, { bg: string; text: string }> = {
+  pending: { bg: 'bg-[#eef0f2]', text: 'text-[#64748b]' },
+  viewed: { bg: 'bg-[#eaf2ff]', text: 'text-[#1769e8]' },
+  screening: { bg: 'bg-[#fff1e7]', text: 'text-[#f97316]' },
+  interview: { bg: 'bg-[#eaf2ff]', text: 'text-[#1769e8]' },
+  offered: { bg: 'bg-[#f7e9ff]', text: 'text-[#b24be7]' },
+  hired: { bg: 'bg-[#e7f8f0]', text: 'text-[#0d9463]' },
+  rejected: { bg: 'bg-[#fdecec]', text: 'text-[#e11d48]' },
+  withdrawn: { bg: 'bg-[#f1f5f9]', text: 'text-[#64748b]' },
+};
+
+type MatchLevel = 'high' | 'mid' | 'low';
+const MATCH_LEVEL_STYLE: Record<
+  MatchLevel,
+  { bar: string; ring: string; text: string; label: string }
+> = {
+  high: { bar: 'bg-emerald-500', ring: '#10b981', text: 'text-emerald-700', label: 'Phù hợp cao' },
+  mid:  { bar: 'bg-amber-500',   ring: '#f59e0b', text: 'text-amber-700',   label: 'Trung bình' },
+  low:  { bar: 'bg-rose-500',    ring: '#f43f5e', text: 'text-rose-700',    label: 'Thấp' },
+};
+const matchLevelOf = (m: number): MatchLevel =>
+  m >= 80 ? 'high' : m >= 50 ? 'mid' : 'low';
+
+const avatarInitial = (name: string): string => {
+  const t = name.trim();
+  return t ? t.charAt(0).toLocaleUpperCase('vi-VN') : '?';
+};
+
+const truncate = (s: string | null | undefined, max = 20): string => {
+  const v = (s ?? '').trim();
+  return v.length > max ? `${v.slice(0, max)}…` : v;
+};
+
+const formatAppDate = (iso: string): string => {
+  const d = dayjs(iso);
+  return d.isValid() ? d.format('D [Thg] M, YYYY') : iso;
+};
+
+const formatAppTime = (iso: string): string => {
+  const d = dayjs(iso);
+  return d.isValid() ? d.format('HH:mm') : iso;
+};
+
+const applicationList = ref<JobApplicationItem[]>([]);
+const appLoading = ref(false);
+const appTotal = ref(0);
+const appPage = ref(1);
+const appLimit = ref(10);
+const appSelectedStatus = ref<ApplicationStatus | ''>('');
+const appStatusSelectOpen = ref(false);
+const appStatusSelectRoot = ref<HTMLElement | null>(null);
+const appMatchSort = ref<'none' | 'desc' | 'asc'>('none');
+const appSearchKeyword = ref('');
+
+const appStatusFilterLabel = computed(
+  () => STATUS_FILTER_OPTIONS.find((o) => o.value === appSelectedStatus.value)?.label ?? 'Tất cả trạng thái',
+);
+
+const pickAppStatus = (val: ApplicationStatus | ''): void => {
+  appSelectedStatus.value = val;
+  appStatusSelectOpen.value = false;
+  void fetchJobApplications(1);
+};
+
+const toggleAppMatchSort = (): void => {
+  appMatchSort.value = appMatchSort.value === 'none' ? 'desc' : appMatchSort.value === 'desc' ? 'asc' : 'none';
+};
+
+const mapEmployerAppRow = (row: EmployerApplicationRow, fallbackIdx: number): JobApplicationItem => {
+  const matchNum = row.aiMatchScore != null ? Math.round(Number(row.aiMatchScore)) : null;
+  return {
+    applicationId: row.id,
+    candidateId: row.candidateId,
+    name: row.candidateName ?? `Ứng viên #${fallbackIdx + 1}`,
+    avatarUrl: row.candidateAvatarUrl ?? null,
+    email: row.candidateEmail ?? (row.isAnonymous ? '(Ẩn danh)' : ''),
+    status: row.status,
+    match: matchNum !== null && Number.isFinite(matchNum) ? matchNum : null,
+    date: dayjs(row.appliedAt).isValid() ? row.appliedAt : '',
+  };
+};
+
+const fetchJobApplications = async (pageNum?: number): Promise<void> => {
+  const targetJobId = jobId.value || job.value?.id;
+  if (!targetJobId) return;
+  if (typeof pageNum === 'number') appPage.value = pageNum;
+  appLoading.value = true;
+  try {
+    const { data } = await applicationApi.listByCompany({
+      page: appPage.value,
+      limit: appLimit.value,
+      jobId: targetJobId,
+      status: appSelectedStatus.value || undefined,
+    });
+    const rows = data.data?.rows ?? [];
+    applicationList.value = rows.map((r, i) => mapEmployerAppRow(r, i));
+    appTotal.value = data.data?.total ?? rows.length;
+    if (typeof data.data?.page === 'number') appPage.value = data.data.page;
+    if (typeof data.data?.limit === 'number') appLimit.value = data.data.limit;
+  } catch {
+    applicationList.value = [];
+    appTotal.value = 0;
+  } finally {
+    appLoading.value = false;
+  }
+};
+
+const displayedApplications = computed(() => {
+  let list = applicationList.value;
+  if (appSearchKeyword.value.trim()) {
+    const kw = appSearchKeyword.value.trim().toLowerCase();
+    list = list.filter((a) =>
+      a.name.toLowerCase().includes(kw) || a.email.toLowerCase().includes(kw)
+    );
+  }
+  if (appMatchSort.value === 'none') return list;
+  const dir = appMatchSort.value === 'desc' ? -1 : 1;
+  return [...list].sort((a, b) => {
+    if (a.match === null && b.match === null) return 0;
+    if (a.match === null) return 1;
+    if (b.match === null) return -1;
+    return (a.match - b.match) * dir;
+  });
+});
+
+const appTotalPages = computed(() =>
+  appTotal.value === 0 ? 1 : Math.max(1, Math.ceil(appTotal.value / appLimit.value))
+);
+
+const appPaginationPages = computed<(number | '…')[]>(() => {
+  const total_ = appTotalPages.value;
+  const current = appPage.value;
+  if (total_ <= 7) return Array.from({ length: total_ }, (_, i) => i + 1);
+  const pages: (number | '…')[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total_ - 1, current + 1);
+  if (start > 2) pages.push('…');
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (end < total_ - 1) pages.push('…');
+  pages.push(total_);
+  return pages;
+});
+
+const goToAppPage = (n: number): void => {
+  if (n < 1 || n > appTotalPages.value || n === appPage.value) return;
+  void fetchJobApplications(n);
+};
+
+// Modal chi tiết đơn ứng tuyển
+const showAppDetailModal = ref(false);
+const appDetailLoading = ref(false);
+const selectedAppItem = ref<JobApplicationItem | null>(null);
+const selectedAppDetail = ref<ApplicationDetail | null>(null);
+const updatingAppStatus = ref(false);
+
+const openAppDetail = async (a: JobApplicationItem): Promise<void> => {
+  selectedAppItem.value = a;
+  showAppDetailModal.value = true;
+  appDetailLoading.value = true;
+  selectedAppDetail.value = null;
+  try {
+    const { data } = await applicationApi.getById(a.applicationId);
+    selectedAppDetail.value = data.data;
+  } catch (e: any) {
+    toast.push({
+      variant: 'error',
+      title: 'Không thể tải chi tiết đơn ứng tuyển',
+      body: e?.response?.data?.message || e?.message || 'Vui lòng thử lại sau',
+    });
+  } finally {
+    appDetailLoading.value = false;
+  }
+};
+
+const closeAppDetailModal = (): void => {
+  showAppDetailModal.value = false;
+  selectedAppItem.value = null;
+  selectedAppDetail.value = null;
+};
+
+const changeAppStatus = async (appId: string, next: ApplicationStatus): Promise<void> => {
+  updatingAppStatus.value = true;
+  try {
+    await applicationApi.updateStatus(appId, { status: next });
+    const row = applicationList.value.find((a) => a.applicationId === appId);
+    if (row) row.status = next;
+    if (selectedAppItem.value && selectedAppItem.value.applicationId === appId) {
+      selectedAppItem.value.status = next;
+    }
+    if (selectedAppDetail.value && selectedAppDetail.value.id === appId) {
+      selectedAppDetail.value.status = next;
+    }
+    toast.push({
+      variant: 'success',
+      title: 'Đã cập nhật trạng thái',
+      body: `Đơn ứng tuyển đã chuyển sang "${STATUS_LABEL[next]}".`,
+    });
+  } catch (e: any) {
+    toast.push({
+      variant: 'error',
+      title: 'Cập nhật thất bại',
+      body: e?.response?.data?.message || e?.message || 'Vui lòng thử lại.',
+    });
+  } finally {
+    updatingAppStatus.value = false;
+  }
+};
+
+const onAppDocClick = (e: MouseEvent): void => {
+  const target = e.target as Node;
+  if (appStatusSelectRoot.value && !appStatusSelectRoot.value.contains(target)) {
+    appStatusSelectOpen.value = false;
+  }
+};
+
+onMounted(() => {
+  document.addEventListener('mousedown', onAppDocClick, true);
+  if (activeTab.value === 'application') {
+    void fetchJobApplications(1);
+  } else if (activeTab.value === 'test') {
+    void fetchJobTests();
+  }
+});
+
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onAppDocClick, true);
+});
+
+watch(activeTab, (tab) => {
+  if (tab === 'application') {
+    void fetchJobApplications(1);
+  } else if (tab === 'test') {
+    void fetchJobTests();
+  }
+});
+
+// =========================================================================
+// TAB BÀI KIỂM TRA (AI TEST LIST CHO RIÊNG JOB NÀY)
+// =========================================================================
+const testList = ref<AiTestSummary[]>([]);
+const testLoading = ref(false);
+const testError = ref<string | null>(null);
+const generatingTestType = ref<AiTestType | null>(null);
+const reviewModalOpen = ref(false);
+const reviewTestDetail = ref<AiTestDetail | null>(null);
+const reviewLoading = ref(false);
+const regeneratingTestId = ref<string | null>(null);
+const confirmRegenerateOpen = ref(false);
+const testToRegenerate = ref<AiTestSummary | null>(null);
+
+const fetchJobTests = async (): Promise<void> => {
+  const targetJobId = jobId.value || job.value?.id;
+  if (!targetJobId) return;
+  testLoading.value = true;
+  testError.value = null;
+  try {
+    const { data } = await aiTestApi.listForJob(targetJobId);
+    testList.value = data.data ?? [];
+  } catch (e: any) {
+    testError.value = e?.response?.data?.message || e?.message || 'Không thể tải danh sách bài kiểm tra';
+    testList.value = [];
+  } finally {
+    testLoading.value = false;
+  }
+};
+
+const handleGenerateTest = async (type: AiTestType): Promise<void> => {
+  const targetJobId = jobId.value || job.value?.id;
+  if (!targetJobId || generatingTestType.value) return;
+  generatingTestType.value = type;
+  try {
+    const { data } = await aiTestApi.generate(targetJobId, type);
+    toast.push({
+      variant: 'success',
+      title: data.data.reused ? 'Đã liên kết đề bài có sẵn' : 'Đang sinh đề bài bằng AI',
+      body: data.data.reused
+        ? 'Bộ đề kiểm tra đã sẵn sàng để sử dụng.'
+        : 'AI đang tiến hành sinh bộ câu hỏi. Danh sách sẽ tự động cập nhật khi hoàn tất.',
+    });
+    await fetchJobTests();
+  } catch (e: any) {
+    toast.push({
+      variant: 'error',
+      title: 'Không thể tạo đề kiểm tra',
+      body: e?.response?.data?.message || e?.message || 'Vui lòng thử lại sau',
+    });
+  } finally {
+    generatingTestType.value = null;
+  }
+};
+
+const openReviewTest = async (testId: string): Promise<void> => {
+  reviewModalOpen.value = true;
+  reviewLoading.value = true;
+  reviewTestDetail.value = null;
+  try {
+    const { data } = await aiTestApi.getDetail(testId);
+    reviewTestDetail.value = data.data;
+  } catch (e: any) {
+    toast.push({
+      variant: 'error',
+      title: 'Không thể tải chi tiết đề kiểm tra',
+      body: e?.response?.data?.message || e?.message || 'Vui lòng thử lại',
+    });
+    reviewModalOpen.value = false;
+  } finally {
+    reviewLoading.value = false;
+  }
+};
+
+const requestRegenerateTest = (testItem: AiTestSummary): void => {
+  if (testItem.status === 'failed') {
+    void handleRegenerateTest(testItem);
+    return;
+  }
+  testToRegenerate.value = testItem;
+  confirmRegenerateOpen.value = true;
+};
+
+const confirmRegenerate = async (): Promise<void> => {
+  if (!testToRegenerate.value) return;
+  const target = testToRegenerate.value;
+  confirmRegenerateOpen.value = false;
+  testToRegenerate.value = null;
+  await handleRegenerateTest(target);
+};
+
+const handleRegenerateTest = async (testItem: AiTestSummary): Promise<void> => {
+  if (regeneratingTestId.value || generatingTestType.value) return;
+  regeneratingTestId.value = testItem.id;
+  try {
+    await aiTestApi.regenerate(testItem.id);
+    toast.push({
+      variant: 'success',
+      title: 'Đang tạo lại đề bằng AI',
+      body: `AI đang tiến hành sinh bộ câu hỏi mới cho đề ${testItem.testType === 'iq' ? 'IQ' : 'Tiếng Anh'}. Danh sách sẽ tự động cập nhật khi hoàn tất.`,
+    });
+    const found = testList.value.find((t) => t.id === testItem.id);
+    if (found) {
+      found.status = 'generating';
+    }
+    await fetchJobTests();
+  } catch (e: any) {
+    toast.push({
+      variant: 'error',
+      title: 'Không thể tạo lại đề kiểm tra',
+      body: e?.response?.data?.message || e?.message || 'Vui lòng thử lại sau',
+    });
+  } finally {
+    regeneratingTestId.value = null;
+  }
+};
+
+// Realtime socket: khi AI sinh đề xong thì tự động reload test list
+useSocket('ai-test:ready', (payload: any) => {
+  const targetJobId = jobId.value || job.value?.id;
+  if (
+    !payload?.jobId ||
+    payload.jobId === targetJobId ||
+    (payload?.testId && testList.value.some((t) => t.id === payload.testId))
+  ) {
+    void fetchJobTests();
+  }
+});
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50/50 p-5 md:p-8">
-    <div class="max-w-6xl mx-auto">
-      <!-- ============ Back ============ -->
-      <button
-        type="button"
-        class="mb-4 inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 transition"
-        @click="goBack"
-      >
-        <ArrowLeft class="w-4 h-4" /> Quay lại Job đã đăng
-      </button>
+  <div class="max-w-[1240px] mx-auto bg-white border-none shadow-2xs overflow-hidden relative pb-6 font-poppins text-gray-900 min-h-screen">
 
-      <!-- ============ Loading ============ -->
-      <div
-        v-if="loading && !job"
-        class="bg-white rounded-xl border border-gray-200 flex items-center justify-center py-20"
-      >
-        <Loader2 class="w-5 h-5 text-gray-400 animate-spin" />
+    <!-- ===================================================================
+         TRƯỜNG HỢP 1: SKELETON LOADING (HIỆU ỨNG KHI ĐANG TẢI HOẶC TẢI LẠI)
+         ======================================================f============= -->
+    <div v-if="loading" class="animate-pulse">
+      <!-- 1. Header Skeleton -->
+      <div class="px-6 lg:px-8 pt-5 pb-4 border-b border-gray-100 bg-white">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+          <!-- Trái: Back button + Title + Badges -->
+          <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+            <div class="w-7 h-7 rounded-full bg-gray-200"></div>
+            <div class="h-6 sm:h-7 w-64 sm:w-96 rounded-md bg-gray-200"></div>
+            <div class="h-5 w-24 rounded-full bg-gray-200"></div>
+            <div class="h-5 w-28 rounded-full bg-gray-200 hidden sm:block"></div>
+          </div>
+          <!-- Phải: Action buttons -->
+          <div class="flex items-center gap-1.5 self-end sm:self-auto">
+            <div class="w-7 h-7 rounded-full bg-gray-200"></div>
+            <div class="w-7 h-7 rounded-full bg-gray-200"></div>
+            <div class="w-7 h-7 rounded-full bg-gray-200"></div>
+            <div class="w-7 h-7 rounded-lg bg-gray-200"></div>
+            <div class="w-7 h-7 rounded-lg bg-gray-200"></div>
+            <div class="h-7 w-20 rounded-lg bg-gray-200"></div>
+          </div>
+        </div>
+
+        <!-- Meta row skeleton -->
+        <div class="flex items-center gap-x-4 gap-y-2 flex-wrap mt-3 pt-1">
+          <div class="h-4 w-28 rounded bg-gray-200"></div>
+          <div class="h-4 w-24 rounded bg-gray-200"></div>
+          <div class="h-4 w-24 rounded bg-gray-200"></div>
+          <div class="h-4 w-36 rounded bg-gray-200"></div>
+          <div class="h-4 w-32 rounded bg-gray-200"></div>
+        </div>
       </div>
 
-      <!-- ============ Error / Not found ============ -->
-      <div
-        v-else-if="error || !job"
-        class="bg-white rounded-xl border border-gray-200 px-6 py-16 text-center"
-      >
-        <div class="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-3">
-          <AlertCircle class="w-6 h-6 text-red-500" />
+      <!-- 2. Tabs Row Skeleton -->
+      <div class="px-6 lg:px-8 border-b border-gray-100 bg-white pt-2.5 pb-2.5">
+        <div class="flex items-center gap-4">
+          <div class="h-8 w-28 rounded-lg bg-gray-200"></div>
+          <div class="h-8 w-32 rounded-lg bg-gray-200"></div>
+          <div class="h-8 w-28 rounded-lg bg-gray-200"></div>
+          <div class="h-8 w-24 rounded-lg bg-gray-200"></div>
         </div>
-        <h3 class="text-sm font-semibold text-gray-900">Không tải được chi tiết job</h3>
-        <p class="text-xs text-gray-500 mt-1">{{ error ?? 'Job không tồn tại hoặc bạn không có quyền xem.' }}</p>
+      </div>
+
+      <!-- 3. Body Skeleton (2 Cột 67% - 33%) -->
+      <div class="p-4 sm:p-5 lg:p-6">
+        <div class="flex flex-col lg:flex-row gap-6 lg:gap-8 items-start">
+          <!-- Cột trái (67%) -->
+          <div class="w-full lg:w-[67%] space-y-6">
+            <!-- AI Moderation Card Skeleton -->
+            <div class="rounded-xl border border-gray-100 p-4 space-y-3.5 bg-gray-50/50">
+              <div class="flex items-center justify-between">
+                <div class="h-4 w-44 rounded bg-gray-200"></div>
+                <div class="h-4 w-20 rounded-full bg-gray-200"></div>
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                <div v-for="i in 4" :key="i" class="flex items-center gap-2">
+                  <div class="w-8 h-8 rounded-full bg-gray-200 shrink-0"></div>
+                  <div class="space-y-1.5 flex-1">
+                    <div class="h-2.5 w-14 bg-gray-200 rounded"></div>
+                    <div class="h-3 w-20 bg-gray-200 rounded"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Description Skeleton -->
+            <div class="space-y-3">
+              <div class="h-5 w-44 rounded bg-gray-200"></div>
+              <div class="space-y-2">
+                <div class="h-3.5 w-full rounded bg-gray-200"></div>
+                <div class="h-3.5 w-[94%] rounded bg-gray-200"></div>
+                <div class="h-3.5 w-[98%] rounded bg-gray-200"></div>
+                <div class="h-3.5 w-[85%] rounded bg-gray-200"></div>
+              </div>
+            </div>
+
+            <!-- Requirements Skeleton -->
+            <div class="space-y-3 pt-2">
+              <div class="h-5 w-48 rounded bg-gray-200"></div>
+              <div class="space-y-2.5">
+                <div v-for="i in 4" :key="i" class="flex items-start gap-2.5">
+                  <div class="w-1.5 h-1.5 rounded-full bg-gray-300 mt-1.5 shrink-0"></div>
+                  <div class="h-3.5 rounded bg-gray-200" :class="i % 2 === 0 ? 'w-[90%]' : 'w-[80%]'"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Benefits Skeleton -->
+            <div class="space-y-3 pt-2">
+              <div class="h-5 w-40 rounded bg-gray-200"></div>
+              <div class="space-y-2.5">
+                <div v-for="i in 4" :key="i" class="flex items-start gap-2.5">
+                  <div class="w-1.5 h-1.5 rounded-full bg-gray-300 mt-1.5 shrink-0"></div>
+                  <div class="h-3.5 rounded bg-gray-200" :class="i % 2 === 0 ? 'w-[85%]' : 'w-[75%]'"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cột phải (33%) -->
+          <div class="w-full lg:w-[33%] space-y-5">
+            <!-- Closing Date Skeleton -->
+            <div class="rounded-xl border border-gray-100 p-4 space-y-3 bg-gray-50/50">
+              <div class="h-4 w-36 rounded bg-gray-200"></div>
+              <div class="h-3.5 w-44 rounded bg-gray-200"></div>
+              <div class="h-3.5 w-44 rounded bg-gray-200"></div>
+              <div class="h-12 w-full rounded-lg bg-gray-200"></div>
+            </div>
+
+            <!-- Job Details Card Skeleton -->
+            <div class="rounded-xl border border-gray-100 p-4 space-y-4 bg-gray-50/50">
+              <div class="h-4 w-32 rounded bg-gray-200"></div>
+              <div class="space-y-3">
+                <div v-for="i in 6" :key="i" class="flex items-center gap-3">
+                  <div class="w-7 h-7 rounded-lg bg-gray-200 shrink-0"></div>
+                  <div class="space-y-1.5 flex-1">
+                    <div class="h-2.5 w-16 bg-gray-200 rounded"></div>
+                    <div class="h-3 w-28 bg-gray-200 rounded"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Hiring Team Card Skeleton -->
+            <div class="rounded-xl border border-gray-100 p-4 space-y-3.5 bg-gray-50/50">
+              <div class="h-4 w-36 rounded bg-gray-200"></div>
+              <div class="space-y-3">
+                <div v-for="i in 2" :key="i" class="flex items-center gap-3">
+                  <div class="w-8 h-8 rounded-full bg-gray-200 shrink-0"></div>
+                  <div class="space-y-1.5 flex-1">
+                    <div class="h-3 w-24 bg-gray-200 rounded"></div>
+                    <div class="h-2.5 w-20 bg-gray-200 rounded"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         TRƯỜNG HỢP 2: LỖI HOẶC KHÔNG TÌM THẤY TIN TUYỂN DỤNG
+         =================================================================== -->
+    <div v-else-if="error || !job" class="px-6 py-24 text-center max-w-md mx-auto">
+      <div class="w-14 h-14 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-3">
+        <AlertCircle class="w-7 h-7" />
+      </div>
+      <h2 class="text-base font-bold text-gray-900 mb-1">Không thể tải tin tuyển dụng</h2>
+      <p class="text-xs text-gray-500 mb-5 leading-relaxed">{{ error || 'Tin tuyển dụng không tồn tại hoặc bạn không có quyền xem.' }}</p>
+      <div class="flex items-center justify-center gap-2">
         <button
           type="button"
-          class="mt-4 px-3 py-1.5 text-xs rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition"
           @click="goBack"
+          class="px-4 py-2 text-xs font-semibold rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition cursor-pointer"
         >
-          Quay lại
+          Quay lại danh sách
+        </button>
+        <button
+          type="button"
+          @click="loadAll"
+          class="px-4 py-2 text-xs font-semibold rounded-lg bg-[#5b4eea] text-white hover:bg-[#4b3fd0] transition cursor-pointer"
+        >
+          Thử lại
         </button>
       </div>
+    </div>
 
-      <!-- ============ Main ============ -->
-      <template v-else>
-        <!-- ============ Header ============ -->
-        <header class="bg-white rounded-xl border border-gray-200 p-6 mb-4">
-          <div class="flex items-start gap-4">
-            <div
-              class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-primary-50 to-primary-100 text-xl font-semibold text-primary-700"
+    <!-- ===================================================================
+         TRƯỜNG HỢP 3: HIỂN THỊ DỮ LIỆU THẬT TỪ API
+         =================================================================== -->
+    <div v-else>
+      <!-- Loading indicator nhỏ góc trên khi scan hoặc refetch ngầm -->
+      <div
+        v-if="scanLoading || actionPending"
+        class="absolute top-2 right-4 z-30 flex items-center gap-1.5 text-xs text-[#5b4eea] bg-white/95 px-3 py-1 rounded-full shadow-xs border border-indigo-100"
+      >
+        <!-- <Loader2 class="w-3.5 h-3.5 animate-spin" />
+        <span>Đang đồng bộ...</span> -->
+      </div>
+
+      <!-- ===================================================================
+           KHU VỰC B: JOB HEADER
+           =================================================================== -->
+      <div class="px-6 lg:px-8 pt-5 pb-4 border-b border-gray-100 bg-white">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+          <!-- Bên trái: Nút quay lại, Tên công việc, Badges trạng thái -->
+          <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+            <!-- Nút back -->
+            <button
+              type="button"
+              @click="goBack"
+              class="w-7 h-7 rounded-full border border-gray-200 bg-white flex items-center justify-center text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors shadow-2xs shrink-0 cursor-pointer"
+              title="Quay lại danh sách việc làm"
             >
-              <img
-                v-if="job.companyLogoUrl"
-                :src="job.companyLogoUrl"
-                :alt="job.companyName ?? ''"
-                class="h-full w-full object-cover"
-              />
-              <span v-else>{{ companyInitial }}</span>
-            </div>
+              <ArrowLeft class="h-3.5 w-3.5" />
+            </button>
 
-            <div class="min-w-0 flex-1">
-              <div class="flex items-start gap-2 flex-wrap">
-                <h1 id="job-title" class="text-xl md:text-2xl font-semibold text-gray-900 leading-snug scroll-mt-20">
-                  {{ job.title }}
-                </h1>
-                <span
-                  v-if="statusBadge"
-                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium shrink-0 mt-1"
-                  :class="statusBadge.classes"
-                  :title="statusBadge.description"
-                >
-                  <Loader2 v-if="job.status === 'ai_scanning'" class="w-3 h-3 animate-spin" />
-                  {{ statusBadge.label }}
-                </span>
-              </div>
+            <!-- Tiêu đề công việc -->
+            <h1 class="text-xl sm:text-[22px] font-bold text-gray-900 tracking-tight leading-none">
+              {{ job.title }}
+            </h1>
 
-              <div class="mt-1.5 flex items-center gap-x-4 gap-y-1 flex-wrap text-sm text-gray-600">
-                <span v-if="job.companyName" class="inline-flex items-center gap-1">
-                  <Building2 class="w-3.5 h-3.5 text-gray-400" />
-                  {{ job.companyName }}
-                </span>
-                <span v-if="locationLine" class="inline-flex items-center gap-1">
-                  <MapPin class="w-3.5 h-3.5 text-gray-400" />
-                  {{ locationLine }}
-                </span>
-                <span v-if="job.industry" class="inline-flex items-center gap-1">
-                  <Globe2 class="w-3.5 h-3.5 text-gray-400" />
-                  {{ job.industry }}
-                </span>
-              </div>
-
-              <!-- Tag row -->
-              <div class="mt-3 flex flex-wrap gap-1.5">
-                <span
-                  v-if="job.jobLevel"
-                  class="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-700"
-                >
-                  <Briefcase class="h-3 w-3" />
-                  {{ jobLevelLabel }}
-                </span>
-                <span
-                  v-if="job.jobType"
-                  class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700"
-                >
-                  {{ jobTypeLabel }}
-                </span>
-                <span
-                  class="inline-flex items-center gap-1 rounded-md bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700"
-                >
-                  <Wallet class="h-3 w-3" />
-                  {{ salaryLabel }}
-                </span>
-                <span
-                  v-if="job.remoteOk"
-                  class="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700"
-                >
-                  Remote OK
-                </span>
-              </div>
-
-              <!-- Meta row -->
-              <div class="mt-4 flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-gray-500">
-                <span v-if="publishedLabel" class="inline-flex items-center gap-1">
-                  <Calendar class="w-3 h-3" />
-                  Đăng {{ publishedLabel }}
-                </span>
-                <span v-if="deadlineLabel" class="inline-flex items-center gap-1">
-                  <Clock class="w-3 h-3" />
-                  Hạn nộp {{ deadlineLabel }}
-                </span>
-                <span v-if="experienceLabel" class="inline-flex items-center gap-1">
-                  <Briefcase class="w-3 h-3" />
-                  Kinh nghiệm: {{ experienceLabel }}
-                </span>
-                <span class="inline-flex items-center gap-1">
-                  <Eye class="w-3 h-3" />
-                  {{ compactNumber(job.viewsCount) }} lượt xem
-                </span>
-                <span class="inline-flex items-center gap-1">
-                  <FileText class="w-3 h-3" />
-                  {{ compactNumber(job.appliesCount) }} ứng viên
-                </span>
-              </div>
-
-              <!-- Status description -->
-              <p v-if="statusBadge" class="mt-3 text-xs text-gray-600">
-                <component :is="ShieldCheck" class="inline w-3.5 h-3.5 -mt-0.5 mr-0.5 text-gray-400" />
-                {{ statusBadge.description }}
-              </p>
-            </div>
-          </div>
-        </header>
-
-        <!-- ============ AI Moderation card ============ -->
-        <section
-          v-if="!scanLoading || scan"
-          class="bg-white rounded-xl border border-gray-200 p-5 mb-4"
-        >
-          <div class="flex items-center gap-2 mb-3">
-            <ScanLine class="w-4 h-4 text-gray-500" />
-            <h2 class="text-sm font-semibold text-gray-900">AI Moderation</h2>
+            <!-- Badge trạng thái động theo status của Job -->
             <span
-              v-if="scanLoading"
-              class="inline-flex items-center gap-1 text-[11px] text-gray-500"
+              class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold"
+              :class="currentStatusBadge.bgClass"
+              :title="currentStatusBadge.description"
             >
-              <Loader2 class="w-3 h-3 animate-spin" /> Đang tải kết quả...
+              <Loader2
+                v-if="(job.status as string) === 'ai_scanning' || (job.status as string) === 'ai_scaning'"
+                class="w-3 h-3 animate-spin text-amber-600"
+              />
+              <span v-else class="w-1.5 h-1.5 rounded-full" :class="currentStatusBadge.dotClass"></span>
+              {{ currentStatusBadge.label }}
             </span>
+
+            <!-- Badge phân công: Assigned to me -->
+            <!-- <span
+              class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#eef2ff] text-[#4f46e5]"
+            >
+              <User class="h-3 w-3 text-[#4f46e5]" />
+              Assigned to me
+            </span> -->
           </div>
 
-          <div v-if="scanInfo" class="space-y-4">
-            <!-- ============ Summary row: verdict + score + meta ============ -->
-            <div class="flex items-center gap-3 flex-wrap">
-              <span
-                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold"
-                :class="scanVerdictMeta.classes"
-                :title="scanVerdictMeta.description"
+          <!-- Bên phải: Nhóm actions (Pagination, Favorite, More, Share, Edit Job) -->
+          <div class="flex items-center gap-1.5 self-end sm:self-auto">
+            <!-- Nút Previous Job -->
+            <button
+              type="button"
+              @click="goToPrevJob"
+              :disabled="!prevJob"
+              class="w-7 h-7 rounded-full border border-gray-200 bg-white flex items-center justify-center transition-colors"
+              :class="prevJob ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 cursor-pointer shadow-2xs' : 'text-gray-300 opacity-40 cursor-not-allowed select-none bg-gray-50'"
+              :title="prevJob ? `Job trước: ${prevJob.title}` : 'Không có job trước đó'"
+            >
+              <ChevronLeft class="h-3.5 w-3.5" />
+            </button>
+
+            <!-- Nút Next Job -->
+            <button
+              type="button"
+              @click="goToNextJob"
+              :disabled="!nextJob"
+              class="w-7 h-7 rounded-full border border-gray-200 bg-white flex items-center justify-center transition-colors"
+              :class="nextJob ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-50 cursor-pointer shadow-2xs' : 'text-gray-300 opacity-40 cursor-not-allowed select-none bg-gray-50'"
+              :title="nextJob ? `Job tiếp theo: ${nextJob.title}` : 'Không có job tiếp theo'"
+            >
+              <ChevronRight class="h-3.5 w-3.5" />
+            </button>
+
+            <!-- Nút Favorite (Trái tim đỏ) -->
+            <!-- <button
+              type="button"
+              class="w-7 h-7 rounded-full border border-gray-200 bg-white flex items-center justify-center hover:bg-red-50 transition-colors cursor-pointer"
+              :title="isFavorite ? 'Bỏ yêu thích' : 'Yêu thích'"
+              @click="isFavorite = !isFavorite"
+            >
+              <Heart
+                class="h-3.5 w-3.5 transition-colors"
+                :class="isFavorite ? 'fill-[#ef4444] text-[#ef4444]' : 'text-gray-400'"
+              />
+            </button> -->
+
+            <!-- Nút More actions (...) với dropdown -->
+            <div class="relative">
+              <button
+                type="button"
+                @click="showMoreActions = !showMoreActions"
+                class="w-7 h-7 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors cursor-pointer"
+                title="More actions"
               >
-                <component :is="scanVerdictMeta.icon" class="w-3.5 h-3.5" />
-                {{ scanVerdictMeta.label }}
-              </span>
-              <div class="flex-1 min-w-[200px] max-w-sm">
-                <div class="flex items-center justify-between text-[11px] text-gray-500 mb-1">
-                  <span>Điểm AI</span>
-                  <span class="font-medium text-gray-900">{{ scanScorePct }}%</span>
-                </div>
-                <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    class="h-full rounded-full transition-all"
-                    :class="scoreBarColor"
-                    :style="{ width: `${scanScorePct}%` }"
-                  />
-                </div>
-              </div>
-              <div class="flex items-center gap-3 text-[11px] text-gray-500">
-                <span v-if="scanInfo.model" class="inline-flex items-center gap-1">
-                  <code class="px-1.5 py-0.5 bg-gray-50 rounded text-[10px] font-mono">{{ scanInfo.model }}</code>
-                </span>
-                <span v-if="scanInfo.scannedBy" class="inline-flex items-center gap-1">
-                  🤖 {{ scannedByLabel(scanInfo.scannedBy) }}
-                </span>
-                <span v-if="scanInfo.scannedAt" class="inline-flex items-center gap-1">
-                  {{ dayjs(scanInfo.scannedAt).format('DD/MM/YYYY HH:mm') }}
-                </span>
+                <MoreHorizontal class="h-3.5 w-3.5" />
+              </button>
+
+              <!-- Dropdown menu -->
+              <div
+                v-if="showMoreActions"
+                class="absolute right-0 top-full mt-1 w-48 rounded-lg bg-white border border-gray-200 shadow-md py-1 z-30 text-xs"
+              >
+                <!-- Khi job chưa đóng: Gửi duyệt AI / Đăng tin -->
+                <button
+                  v-if="job.status !== 'closed'"
+                  type="button"
+                  @click="onSubmitForScan"
+                  :disabled="actionPending || job.status === 'ai_scanning'"
+                  class="w-full px-3 py-1.5 text-left flex items-center gap-2 transition"
+                  :class="job.status === 'ai_scanning' ? 'text-gray-400 bg-gray-50 cursor-not-allowed opacity-60' : 'text-gray-700 hover:bg-gray-50 cursor-pointer'"
+                >
+                  <Loader2 v-if="job.status === 'ai_scanning'" class="w-3.5 h-3.5 animate-spin text-amber-500" />
+                  <Send v-else-if="job.status === 'draft'" class="w-3.5 h-3.5 text-[#5b4eea]" />
+                  <RotateCcw v-else class="w-3.5 h-3.5 text-[#5b4eea]" />
+                  <span>{{ job.status === 'ai_scanning' ? 'Đang quét AI...' : (job.status === 'draft' ? 'Đăng tin (Gửi duyệt AI)' : 'Gửi duyệt lại AI') }}</span>
+                </button>
+
+                <!-- Nâng cấp gói -->
+                <button
+                  type="button"
+                  @click="openUpgradeModal"
+                  class="w-full px-3 py-1.5 text-left text-[#5b4eea] hover:bg-indigo-50 flex items-center gap-2 cursor-pointer font-medium"
+                >
+                  <Sparkles class="w-3.5 h-3.5 text-[#5b4eea]" />
+                  <span>Nâng cấp gói (Gia hạn)</span>
+                </button>
+
+                <!-- Khi job đang đóng: Mở lại job -->
+                <button
+                  v-if="job.status === 'closed'"
+                  type="button"
+                  @click="onReopen"
+                  class="w-full px-3 py-1.5 text-left text-emerald-600 hover:bg-emerald-50 flex items-center gap-2 cursor-pointer border-t border-gray-100 font-semibold"
+                >
+                  <RotateCcw class="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Mở lại job</span>
+                </button>
+
+                <!-- Khi job chưa đóng: Đóng job -->
+                <button
+                  v-else
+                  type="button"
+                  @click="onDelete"
+                  class="w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer border-t border-gray-100"
+                >
+                  <Trash2 class="w-3.5 h-3.5 text-red-500" />
+                  <span>Đóng job</span>
+                </button>
               </div>
             </div>
 
-            <p v-if="scanVerdictMeta.description" class="text-xs text-gray-600">
-              {{ scanVerdictMeta.description }}
-            </p>
+            <!-- Nút Share -->
+            <button
+              type="button"
+              class="w-7 h-7 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors cursor-pointer"
+              title="Share"
+            >
+              <Share2 class="h-3.5 w-3.5" />
+            </button>
 
-            <!-- ============ Flags list ============ -->
-            <div v-if="sortedFlags.length > 0" class="space-y-2.5">
-              <div class="flex items-center justify-between">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                  Chi tiết cảnh báo ({{ sortedFlags.length }})
-                </p>
-                <p v-if="flagCounts.block > 0 && flagCounts.warn > 0" class="text-[11px] text-gray-500">
-                  <span class="text-red-700 font-medium">{{ flagCounts.block }} chặn</span>
-                  ·
-                  <span class="text-yellow-700 font-medium">{{ flagCounts.warn }} cảnh báo</span>
-                </p>
-              </div>
-              <ul class="space-y-2.5">
-                <li
-                  v-for="(flag, idx) in sortedFlags"
-                  :key="flag.id ?? idx"
-                  class="rounded-lg border p-3.5"
-                  :class="severityClasses(flag.severity)"
+            <!-- Nút Edit Job (disabled khi AI đang quét) -->
+            <button
+              type="button"
+              @click="onEdit"
+              :disabled="job.status === 'ai_scanning'"
+              class="h-7 px-2.5 rounded-lg border border-gray-200 bg-white flex items-center gap-1.5 text-xs font-semibold text-gray-700 transition-colors shadow-2xs ml-0.5"
+              :class="job.status === 'ai_scanning' ? 'opacity-50 cursor-not-allowed bg-gray-50 text-gray-400' : 'hover:bg-gray-50 hover:text-gray-900 cursor-pointer'"
+              :title="job.status === 'ai_scanning' ? 'Không thể chỉnh sửa khi AI đang quét nội dung' : 'Edit Job'"
+            >
+              <Pencil class="h-3 w-3 text-gray-500" />
+              <span>Edit Job</span>
+            </button>
+
+            <!-- Nút Đăng tin (Duyệt AI) khi job là Draft -->
+            <button
+              v-if="job.status === 'draft'"
+              type="button"
+              @click="onSubmitForScan"
+              :disabled="actionPending"
+              class="h-7 px-3 rounded-lg bg-[#5b4eea] hover:bg-[#4e42d6] text-white flex items-center gap-1.5 text-xs font-semibold transition-colors shadow-2xs ml-0.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Đăng tin - Gửi AI kiểm duyệt nội dung để công khai"
+            >
+              <Loader2 v-if="actionPending" class="h-3 w-3 animate-spin" />
+              <Send v-else class="h-3 w-3" />
+              <span>Đăng tin (Duyệt AI)</span>
+            </button>
+
+            <!-- Khi job đang quét AI: Hiển thị trạng thái Đang quét (disabled hoàn toàn chống spam) -->
+            <button
+              v-else-if="job.status === 'ai_scanning'"
+              type="button"
+              disabled
+              class="h-7 px-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 flex items-center gap-1.5 text-xs font-semibold shadow-2xs ml-0.5 opacity-80 cursor-not-allowed select-none"
+              title="Hệ thống AI đang quét nội dung tin tuyển dụng... Vui lòng đợi trong giây lát"
+            >
+              <Loader2 class="h-3 w-3 animate-spin text-amber-600" />
+              <span>Đang quét AI...</span>
+            </button>
+
+            <!-- Nút Gửi duyệt lại khi job bị gắn cờ -->
+            <button
+              v-else-if="job.status === 'ai_flagged'"
+              type="button"
+              @click="onSubmitForScan"
+              :disabled="actionPending"
+              class="h-7 px-3 rounded-lg bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5 text-xs font-semibold transition-colors shadow-2xs ml-0.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Gửi duyệt lại AI sau khi chỉnh sửa"
+            >
+              <Loader2 v-if="actionPending" class="h-3 w-3 animate-spin" />
+              <RotateCcw v-else class="h-3 w-3" />
+              <span>Gửi duyệt lại AI</span>
+            </button>
+
+            <!-- Nút Mở lại job (khi job đang đóng) -->
+            <button
+              v-else-if="job.status === 'closed'"
+              type="button"
+              @click="onReopen"
+              class="h-7 px-2.5 rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 flex items-center gap-1.5 text-xs font-semibold text-emerald-700 transition-colors shadow-2xs ml-0.5 cursor-pointer"
+              title="Mở lại tin tuyển dụng"
+            >
+              <RotateCcw class="h-3 w-3 text-emerald-600" />
+              <span>Mở lại job</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Dòng Metadata bên dưới tiêu đề -->
+        <div class="flex items-center gap-x-4 gap-y-1.5 flex-wrap text-xs text-gray-500 mt-2.5">
+          <!-- Vị trí làm việc -->
+          <div class="flex items-center gap-1.5">
+            <MapPin class="h-3.5 w-3.5 text-gray-400" />
+            <span>{{ locationLine }}</span>
+          </div>
+
+          <!-- Loại hình công việc -->
+          <div class="flex items-center gap-1.5">
+            <Briefcase class="h-3.5 w-3.5 text-gray-400" />
+            <span>{{ jobTypeLabel }}</span>
+          </div>
+
+          <!-- Cấp bậc công việc -->
+          <div class="flex items-center gap-1.5">
+            <GraduationCap class="h-3.5 w-3.5 text-gray-400" />
+            <span>{{ jobLevelLabel }}</span>
+          </div>
+
+          <!-- Mức lương -->
+          <div class="flex items-center gap-1.5">
+            <Banknote class="h-3.5 w-3.5 text-gray-400" />
+            <span class="font-medium text-gray-700">{{ salaryLabel }}</span>
+          </div>
+
+          <!-- Ngày đăng -->
+          <div v-if="job.publishedAt" class="flex items-center gap-1.5">
+            <Calendar class="h-3.5 w-3.5 text-gray-400" />
+            <span>Đăng ngày {{ formatDate(job.publishedAt) }}</span>
+          </div>
+        </div>
+
+        <!-- Banner hướng dẫn đăng tin khi Job ở trạng thái Draft hoặc đang quét AI -->
+        <!-- <div
+          v-if="job.status === 'draft' || job.status === 'ai_scanning'"
+          class="mt-3.5 p-3 rounded-lg border flex items-center justify-between gap-3 text-xs"
+          :class="job.status === 'ai_scanning' ? 'bg-amber-50/70 border-amber-200' : 'bg-indigo-50/70 border-indigo-100'"
+        >
+          <div class="flex items-center gap-2.5 min-w-0" :class="job.status === 'ai_scanning' ? 'text-amber-950' : 'text-indigo-950'">
+            <div
+              class="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+              :class="job.status === 'ai_scanning' ? 'bg-amber-100 text-amber-600' : 'bg-[#5b4eea]/15 text-[#5b4eea]'"
+            >
+              <Sparkles v-if="job.status === 'draft'" class="w-3.5 h-3.5" />
+            </div>
+           
+            <p v-if="job.status === 'draft'" class="leading-tight text-xs text-indigo-900">
+              <span class="font-bold">Tin đang ở trạng thái Bản nháp:</span> Chưa hiển thị công khai với ứng viên. Hãy nhấn <strong class="text-[#5b4eea]">"Đăng tin (Duyệt AI)"</strong> để AI kiểm duyệt nội dung và tự động xuất bản khi đạt chuẩn.
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="onSubmitForScan"
+            :disabled="actionPending || job.status === 'ai_scanning'"
+            class="shrink-0 h-7 px-3 rounded-md text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
+            :class="job.status === 'ai_scanning' ? 'bg-amber-500 opacity-70 cursor-not-allowed select-none' : 'bg-[#5b4eea] hover:bg-[#4e42d6] cursor-pointer disabled:opacity-50'"
+          >
+            <Loader2 v-if="actionPending || job.status === 'ai_scanning'" class="h-3 w-3 animate-spin" />
+            <Send v-else class="h-3 w-3" />
+            <span>{{ job.status === 'ai_scanning' ? 'Đang quét...' : 'Đăng tin ngay' }}</span>
+          </button>
+        </div> -->
+      </div>
+
+      <!-- ===================================================================
+           KHU VỰC C: NAVIGATION TABS ROW (4 TABS)
+           =================================================================== -->
+      <nav
+        class="px-6 lg:px-8 flex items-center gap-6 sm:gap-8 border-b border-gray-200 bg-white text-xs select-none"
+        aria-label="Job Detail Tabs"
+      >
+        <!-- Tab 1: Thông tin (Information) -->
+        <button
+          type="button"
+          class="flex items-center gap-1.5 py-3 font-medium transition-colors border-b-2 -mb-[1px]"
+          :class="
+            activeTab === 'information'
+              ? 'text-[#5b4eea] border-[#5b4eea] font-semibold'
+              : 'text-gray-500 border-transparent hover:text-gray-700'
+          "
+          @click="activeTab = 'information'"
+        >
+          <Info
+            class="h-3.5 w-3.5"
+            :class="activeTab === 'information' ? 'text-[#5b4eea]' : 'text-gray-400'"
+          />
+          <span>Thông tin</span>
+        </button>
+
+        <!-- Tab 2: Đơn ứng tuyển (Application) -->
+        <button
+          type="button"
+          class="flex items-center gap-1.5 py-3 font-medium transition-colors border-b-2 -mb-[1px]"
+          :class="
+            activeTab === 'application'
+              ? 'text-[#5b4eea] border-[#5b4eea] font-semibold'
+              : 'text-gray-500 border-transparent hover:text-gray-700'
+          "
+          @click="activeTab = 'application'"
+        >
+          <FileText
+            class="h-3.5 w-3.5"
+            :class="activeTab === 'application' ? 'text-[#5b4eea]' : 'text-gray-400'"
+          />
+          <span>Đơn ứng tuyển</span>
+          <span
+            class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+            :class="
+              activeTab === 'application'
+                ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
+                : 'bg-gray-100 text-gray-500'
+            "
+          >
+            {{ appTotal || job.appliesCount || 0 }}
+          </span>
+        </button>
+
+        <!-- Tab 3: Bài kiểm tra (Test) -->
+        <button
+          type="button"
+          class="flex items-center gap-1.5 py-3 font-medium transition-colors border-b-2 -mb-[1px]"
+          :class="
+            activeTab === 'test'
+              ? 'text-[#5b4eea] border-[#5b4eea] font-semibold'
+              : 'text-gray-500 border-transparent hover:text-gray-700'
+          "
+          @click="activeTab = 'test'"
+        >
+          <CheckSquare
+            class="h-3.5 w-3.5"
+            :class="activeTab === 'test' ? 'text-[#5b4eea]' : 'text-gray-400'"
+          />
+          <span>Bài kiểm tra</span>
+          <span
+            v-if="testList.length"
+            class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+            :class="
+              activeTab === 'test'
+                ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
+                : 'bg-gray-100 text-gray-500'
+            "
+          >
+            {{ testList.length }}
+          </span>
+        </button>
+
+        <!-- Tab 4: Đánh giá (Feedback) -->
+        <button
+          type="button"
+          class="flex items-center gap-1.5 py-3 font-medium transition-colors border-b-2 -mb-[1px]"
+          :class="
+            activeTab === 'feedback'
+              ? 'text-[#5b4eea] border-[#5b4eea] font-semibold'
+              : 'text-gray-500 border-transparent hover:text-gray-700'
+          "
+          @click="activeTab = 'feedback'"
+        >
+          <Star
+            class="h-3.5 w-3.5"
+            :class="activeTab === 'feedback' ? 'text-[#5b4eea]' : 'text-gray-400'"
+          />
+          <span>Đánh giá</span>
+          <span
+            v-if="job.feedbackStats?.count"
+            class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+            :class="
+              activeTab === 'feedback'
+                ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
+                : 'bg-gray-100 text-gray-500'
+            "
+          >
+            {{ job.feedbackStats.count }}
+          </span>
+        </button>
+      </nav>
+
+      <!-- ===================================================================
+           NỘI DUNG TAB 1: THÔNG TIN (Layout 2 cột: 67% - 33%)
+           =================================================================== -->
+      <main v-if="activeTab === 'information'" class="flex-1 min-w-0 bg-white">
+        <div class="flex flex-col lg:flex-row">
+          <!-- =================================================================
+               CỘT TRÁI (67% chiều rộng): AI Moderation & Job Description
+               ================================================================= -->
+          <section
+            class="w-full lg:w-[67%] p-4 sm:p-5 lg:p-6 lg:pr-7 min-w-0"
+            aria-label="Thông tin chính việc làm"
+          >
+            <!-- -------------------------------------------------------------
+                 KHU VỰC E: CỘT TRÁI - CARD AI KIỂM DUYỆT (AI MODERATION)
+                 ------------------------------------------------------------- -->
+            <div
+              v-if="currentScan"
+              class="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-2xs mb-6"
+            >
+              <!-- Dải thông báo ở trên cùng: đổi màu tương ứng với verdict -->
+              <div
+                class="border-b px-3.5 py-2 flex items-center justify-between gap-2 transition-colors bg-[#f6effe] text-black-800"
+              >
+                <div class="flex items-center gap-2">
+                  <Info  class="h-3.5 w-3.5 text-[#5b4eea]" />
+                  <p class="text-[11px] text-[#5b4eea] font-normal leading-tight">
+                      Chi tiết kiểm duyệt bằng AI Chỉ phục vụ nội bộ, ứng viên không nhìn thấy.
+                  </p>
+                </div>
+
+                <span
+                  class="text-[10px] font-semibold px-2 py-0.5 rounded shrink-0"
+                  :class="currentScan.verdict === 'flagged' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'"
                 >
-                  <!-- Header: severity badge + category + field chip -->
-                  <div class="flex items-start justify-between gap-2 mb-2">
-                    <div class="flex items-center gap-2 flex-wrap min-w-0">
-                      <span
-                        class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide"
-                        :class="severityBadgeClasses(flag.severity)"
-                      >
-                        {{ severityLabel(flag.severity) }}
+                  {{ currentScan.verdict === 'flagged' ? 'Chưa đạt chuẩn' : 'Đã duyệt tự động' }}
+                </span>
+              </div>
+
+              <!-- Tiêu đề AI Moderation -->
+              <div class="px-3.5 pt-3 pb-2.5 flex items-center justify-between flex-wrap gap-2 border-b border-gray-100">
+                <div class="flex items-center gap-2">
+                  <ScanLine class="w-4 h-4 text-[#5b4eea]" />
+                  <h2 class="text-sm font-bold text-gray-900 leading-none">AI Kiểm duyệt</h2>
+                  
+                </div>
+
+                <!-- Nút gửi quét lại -->
+                <button
+                  type="button"
+                  @click="onSubmitForScan"
+                  :disabled="actionPending || job.status === 'ai_scanning'"
+                  class="px-2.5 py-1 rounded-md text-[11px] font-semibold transition flex items-center gap-1 shadow-2xs"
+                  :class="job.status === 'ai_scanning' ? 'text-amber-700 bg-amber-50 border border-amber-200 opacity-80 cursor-not-allowed select-none' : 'text-[#5b4eea] bg-[#5b4eea]/10 hover:bg-[#5b4eea]/20 cursor-pointer disabled:opacity-50'"
+                  :title="job.status === 'ai_scanning' ? 'AI đang trong quá trình quét, vui lòng đợi' : 'Gửi AI kiểm duyệt lại toàn bộ nội dung'"
+                >
+                  <RotateCcw class="w-3 h-3" :class="{ 'animate-spin': actionPending || job.status === 'ai_scanning' }" />
+                  <span>{{ job.status === 'ai_scanning' ? 'Đang quét...' : 'Quét lại' }}</span>
+                </button>
+              </div>
+
+              <!-- 4 Thông tin bố trí ngang hàng (Kết quả AI moderation) -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 px-3.5 py-3.5">
+                <!-- 1. Kết quả kiểm duyệt (Verdict) -->
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div
+                    class="w-8 h-8 rounded-full border flex items-center justify-center shrink-0"
+                    :class="currentScan.verdict === 'flagged' ? 'bg-red-50 border-red-200 text-red-600' : 'bg-emerald-50 border-emerald-200 text-emerald-600'"
+                  >
+                    <AlertTriangle v-if="currentScan.verdict === 'flagged'" class="h-4 w-4" />
+                    <CheckCircle2 v-else class="h-4 w-4" />
+                  </div>
+                  <div class="min-w-0">
+                    <div class="text-[10px] sm:text-[11px] text-gray-400 font-medium leading-tight">Kết quả kiểm duyệt</div>
+                    <div
+                      class="text-xs font-bold text-gray-900 mt-0.5 truncate font-mono"
+                    >
+                      {{ currentScan.verdict === 'flagged' ? 'Bị gắn cờ' : 'Đã duyệt' }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 2. Điểm tuân thủ (AI Score) -->
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div
+                    class="w-8 h-8 rounded-full border flex items-center justify-center shrink-0"
+                    :class="currentScan.verdict === 'flagged' ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-emerald-50 border-emerald-200 text-emerald-600'"
+                  >
+                    <ShieldAlert v-if="currentScan.verdict === 'flagged'" class="h-4 w-4" />
+                    <ShieldCheck v-else class="h-4 w-4" />
+                  </div>
+                  <div class="min-w-0">
+                    <div class="text-[10px] sm:text-[11px] text-gray-400 font-medium leading-tight">Điểm tuân thủ AI</div>
+                    <div class="text-xs font-bold text-gray-900 mt-0.5 flex items-center gap-1.5">
+                      <span class="text-xs font-bold text-gray-900 mt-0.5 truncate font-mono">
+                        {{ scanScorePct }}%
                       </span>
-                      <span v-if="flag.category" class="text-xs font-medium text-gray-900">
-                        {{ categoryLabel(flag.category) }}
+                      <span v-if="currentScan.score" class="text-[10px] text-gray-400 font-normal">({{ currentScan.score }}/1.0)</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 3. Mô hình kiểm duyệt (Model) -->
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div
+                    class="w-8 h-8 rounded-full bg-indigo-50/80 border border-indigo-100 flex items-center justify-center text-[#5b4eea] shrink-0"
+                  >
+                    <Cpu class="h-4 w-4" />
+                  </div>
+                  <div class="min-w-0">
+                    <div class="text-[10px] sm:text-[11px] text-gray-400 font-medium leading-tight">Mô hình AI</div>
+                    <div class="text-xs font-bold text-gray-900 mt-0.5 truncate font-mono">
+                      {{ currentScan.model || 'Gemini 2.5' }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 4. Thời gian quét (Scanned At) -->
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div
+                    class="w-8 h-8 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-600 shrink-0"
+                  >
+                    <Clock class="h-4 w-4" />
+                  </div>
+                  <div class="min-w-0">
+                    <div class="text-[10px] sm:text-[11px] text-gray-400 font-medium leading-tight">Thời gian quét</div>
+                    <div class="text-xs font-bold text-gray-900 mt-0.5 truncate">
+                      {{ formatDateTime(currentScan.scannedAt) || 'Vừa xong' }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Thanh Xem thêm / Thu gọn chi tiết kiểm duyệt -->
+              <div class="px-3.5 py-2.5 bg-gray-50/70 border-t border-gray-100 flex items-center justify-between">
+                <div class="flex items-center gap-2 text-xs">
+                  <span
+                    v-if="currentFlags.length > 0"
+                    class="flex items-center gap-1.5 text-red-600 font-medium text-[11px] sm:text-xs"
+                  >
+                    <AlertTriangle class="w-3.5 h-3.5 text-red-500 shrink-0" />
+                    <span>Có {{ currentFlags.length }} cảnh báo vi phạm cần xử lý</span>
+                  </span>
+                  <span
+                    v-else
+                    class="flex items-center gap-1.5 text-emerald-600 font-medium text-[11px] sm:text-xs"
+                  >
+                    <CheckCircle2 class="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <span>Không phát hiện vi phạm quy định</span>
+                  </span>
+                </div>
+
+                <!-- Nút Xem thêm / Thu gọn -->
+                <button
+                  type="button"
+                  @click="showModerationDetail = !showModerationDetail"
+                  class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-[#5b4eea] hover:bg-[#5b4eea]/10 transition-colors cursor-pointer select-none"
+                >
+                  <span>{{ showModerationDetail ? 'Thu gọn' : 'Xem thêm' }}</span>
+                  <ChevronDown
+                    class="w-3.5 h-3.5 transition-transform duration-200"
+                    :class="{ 'rotate-180': showModerationDetail }"
+                  />
+                </button>
+              </div>
+
+              <!-- CHI TIẾT CẢNH BÁO HOẶC THÔNG BÁO HỢP LỆ (Ẩn ban đầu, chỉ hiện khi bấm Xem thêm) -->
+              <div
+                v-show="showModerationDetail"
+                class="px-3 pb-2 pt-2.5 border-t border-gray-100 bg-white"
+              >
+                <!-- TH1: Danh sách flags vi phạm -->
+                <div v-if="currentFlags.length > 0" class="space-y-3">
+                  
+
+                  <div
+                    v-for="flag in currentFlags"
+                    :key="flag.id"
+                    class="rounded-lg border border-red-200 bg-red-50/30 p-3 text-xs space-y-2"
+                  >
+                    <!-- Tiêu đề lỗi: Severity + Category + Field -->
+                    <div class="flex items-center justify-between flex-wrap gap-1.5">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-red-600 text-white uppercase tracking-wider">
+                          {{ flag.severity === 'block' ? 'Chặn (Block)' : 'Cảnh báo (Warn)' }}
+                        </span>
+                        <span class="font-semibold text-gray-900">
+                          {{ CATEGORY_MAP[flag.category] || flag.category }}
+                        </span>
+                      </div>
+                      <span class="text-[11px] text-gray-600 bg-white px-2 py-0.5 rounded border border-gray-200">
+                        Vị trí: <strong>{{ FIELD_MAP[flag.field] || flag.field }}</strong>
                       </span>
                     </div>
-                    <a
-                      v-if="fieldMeta(flag.field)?.sectionId"
-                      :href="`#${fieldMeta(flag.field)!.sectionId}`"
-                      class="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 transition"
-                      :title="`Đi tới phần ${fieldMeta(flag.field)!.label}`"
-                    >
-                      📍 {{ fieldMeta(flag.field)!.label }}
-                    </a>
+
+                    <!-- Trích dẫn vi phạm (quote) -->
+                    <div v-if="flag.quote" class="bg-white border-l-4 border-red-500 rounded-r p-2.5">
+                      <div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Trích dẫn vi phạm:</div>
+                      <blockquote class="italic text-red-700 font-semibold text-xs">
+                        "{{ flag.quote }}"
+                      </blockquote>
+                    </div>
+
+                    <!-- Lý do AI phân tích (reasoning) -->
+                    <div class="text-gray-700 leading-relaxed">
+                      <strong class="text-gray-900 font-semibold">Lý do: </strong>
+                      {{ flag.reasoning }}
+                    </div>
+
+                    <!-- Gợi ý sửa (suggestion) -->
+                    <div v-if="flag.suggestion" class="rounded-md bg-blue-50 border border-blue-100 p-2.5 text-blue-900 flex items-start gap-1.5">
+                      <span class="shrink-0 text-sm">💡</span>
+                      <div>
+                        <strong class="font-semibold">Gợi ý sửa đổi: </strong>
+                        <span>{{ flag.suggestion }}</span>
+                      </div>
+                    </div>
+
+                    <!-- Căn cứ pháp lý (lawRef) -->
+                    <div v-if="flag.lawRef" class="text-[11px] text-gray-500 flex items-center gap-1.5 pt-0.5">
+                      <span>📜</span>
+                      <span>Căn cứ pháp lý: <strong>{{ flag.lawRef }}</strong></span>
+                    </div>
                   </div>
+                </div>
 
-                  <!-- Quote: text gốc bị vi phạm (user Ctrl+F trong job) -->
-                  <blockquote
-                    v-if="flag.quote"
-                    class="mt-1 pl-3 border-l-2 border-gray-300 text-xs italic text-gray-700 whitespace-pre-line"
-                  >
-                    "{{ flag.quote }}"
-                  </blockquote>
-
-                  <!-- Reasoning: giải thích từ AI -->
-                  <p
-                    v-if="flag.reasoning"
-                    class="mt-2 text-xs leading-relaxed text-gray-800"
-                  >
-                    <strong class="font-semibold text-gray-900">Lý do:</strong>
-                    {{ flag.reasoning }}
-                  </p>
-
-                  <!-- Suggestion: gợi ý sửa -->
-                  <div
-                    v-if="flag.suggestion"
-                    class="mt-2 rounded-md bg-blue-50 border border-blue-100 px-2.5 py-1.5 text-xs text-blue-900"
-                  >
-                    <span class="font-semibold">💡 Gợi ý sửa:</span>
-                    {{ flag.suggestion }}
+                <!-- TH2: Không vi phạm (Approved) -->
+                <div
+                  v-else
+                  class="rounded-lg bg-emerald-50/60 border border-emerald-200 p-3.5 flex items-start gap-3 mt-1"
+                >
+                  <CheckCircle2 class="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div class="text-xs space-y-1">
+                    <div class="font-bold text-emerald-900">
+                      Nội dung đạt chuẩn - Không phát hiện vi phạm
+                    </div>
+                    <p class="text-emerald-700 leading-relaxed">
+                      Hệ thống AI không phát hiện bất kỳ dấu hiệu phân biệt đối xử, ngôn từ thù ghét, thông tin lừa đảo hoặc vi phạm Bộ luật Lao động Việt Nam nào trong tiêu đề, mô tả và yêu cầu tuyển dụng.
+                    </p>
+                    <div class="text-[11px] text-emerald-600 pt-1 font-mono">
+                      <span v-if="currentScan.id">Scan ID: #{{ currentScan.id.substring(0, 8) }} · </span>
+                      Điểm an toàn: {{ scanScorePct }}%
+                    </div>
                   </div>
-
-                  <!-- Law ref: tham chiếu pháp luật -->
-                  <p
-                    v-if="flag.lawRef"
-                    class="mt-1.5 text-[11px] text-gray-500"
-                  >
-                    📜 <span class="font-medium">{{ flag.lawRef }}</span>
-                  </p>
-                </li>
-              </ul>
+                </div>
+              </div>
             </div>
 
-            <!-- Approved + no flags -->
-            <div
-              v-else-if="scanInfo.verdict === 'approved'"
-              class="flex items-start gap-2 rounded-md bg-green-50 border border-green-100 px-3 py-2.5"
-            >
-              <CheckCircle2 class="w-4 h-4 text-green-600 mt-0.5 shrink-0" />
-              <p class="text-xs text-green-900">
-                <strong class="font-semibold">AI đã duyệt job này.</strong>
-                Không phát hiện vi phạm trong tiêu đề, mô tả và yêu cầu.
-              </p>
-            </div>
-
-            <!-- Flagged nhưng không có flag (LLM output lỗi) -->
+            <!-- Trường hợp chưa có scan data -->
             <div
               v-else
-              class="rounded-md bg-orange-50 border border-orange-100 px-3 py-2.5"
+              class="rounded-xl border border-gray-200 overflow-hidden shadow-2xs bg-white p-4 mb-6"
             >
-              <p class="text-xs text-orange-900">
-                AI trả verdict <strong>flagged</strong> nhưng không cung cấp chi tiết.
-                Vui lòng liên hệ admin.
+              <div class="flex items-center justify-between gap-3 flex-wrap">
+                <div class="flex items-center gap-2">
+                  <ScanLine class="w-4 h-4 text-[#5b4eea]" />
+                  <h2 class="text-sm font-bold text-gray-900 leading-none">AI Kiểm duyệt  </h2>
+                  
+                </div>
+                <button
+                  v-if="job.status !== 'closed'"
+                  type="button"
+                  @click="onSubmitForScan"
+                  :disabled="actionPending || job.status === 'ai_scanning'"
+                  class="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-2xs"
+                  :class="job.status === 'ai_scanning' ? 'bg-amber-50 border border-amber-200 text-amber-700 opacity-80 cursor-not-allowed select-none' : 'bg-[#5b4eea] text-white hover:bg-[#4e42d6] cursor-pointer disabled:opacity-50'"
+                >
+                  <Loader2 v-if="actionPending || job.status === 'ai_scanning'" class="w-3.5 h-3.5 animate-spin text-amber-600" />
+                  <Send v-else-if="job.status === 'draft'" class="w-3.5 h-3.5" />
+                  <RotateCcw v-else class="w-3.5 h-3.5" />
+                  <span>{{ job.status === 'ai_scanning' ? 'Đang quét AI...' : (job.status === 'draft' ? 'Đăng tin & Kiểm duyệt AI' : 'Gửi duyệt AI ngay') }}</span>
+                </button>
+              </div>
+              <p class="text-xs text-gray-500 mt-2">
+                {{ job.status === 'ai_scanning'
+                  ? 'Hệ thống AI đang quét nội dung tin tuyển dụng... Kết quả sẽ tự động cập nhật khi hoàn tất.'
+                  : (job.status === 'draft'
+                    ? 'Tin tuyển dụng đang ở trạng thái Bản nháp. Nhấn "Đăng tin & Kiểm duyệt AI" để gửi tin cho AI kiểm tra tính hợp lệ và tự động xuất bản ra công chúng.'
+                    : 'Tin tuyển dụng chưa có kết quả kiểm duyệt từ AI. Nhấn nút bên trên để kiểm duyệt ngay.') }}
               </p>
             </div>
-          </div>
 
-          <!-- ============ Chưa từng scan ============ -->
-          <p v-else class="text-xs text-gray-500">
-            Job chưa từng được AI quét.
-            <span v-if="canSubmit">Bấm <strong>Gửi kiểm duyệt AI</strong> ở sidebar để bắt đầu.</span>
-          </p>
-        </section>
+            <!-- -------------------------------------------------------------
+                 KHU VỰC F: CỘT TRÁI - JOB DESCRIPTION & BENEFITS
+                 ------------------------------------------------------------- -->
+            <div class="space-y-5">
+              <!-- Tiêu đề Mô tả công việc -->
+              <div v-if="job.description">
+                <div class="flex items-center gap-2 mb-2">
+                  <FileText class="h-4 w-4 text-gray-700" />
+                  <h2 class="text-sm font-bold text-gray-900">Mô tả công việc</h2>
+                </div>
+                <div class="text-xs leading-[1.7] text-gray-600 whitespace-pre-line text-justify md:text-left">
+                  <template v-if="!isDescExpanded && isDescLong">
+                    <span>{{ getTruncatedText(job.description) }}... </span>
+                    <button
+                      type="button"
+                      @click="isDescExpanded = true"
+                      class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none"
+                    >
+                      Xem thêm
+                    </button>
+                  </template>
+                  <template v-else>
+                    <span>{{ job.description }} </span>
+                    <button
+                      v-if="isDescLong"
+                      type="button"
+                      @click="isDescExpanded = false"
+                      class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none ml-1"
+                    >
+                      Thu gọn
+                    </button>
+                  </template>
+                </div>
+              </div>
 
-        <!-- ============ 2-col main ============ -->
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <!-- ============ Left col — content ============ -->
-          <div class="lg:col-span-8 space-y-4">
-            <section class="bg-white rounded-xl border border-gray-200 p-6">
-              <h2 id="job-description" class="text-sm font-semibold text-gray-900 mb-3 scroll-mt-20">Mô tả công việc</h2>
-              <p class="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
-                {{ job.description }}
-              </p>
-            </section>
+              <!-- Yêu cầu công việc -->
+              <div v-if="job.requirements" class="pt-2">
+                <div class="flex items-center gap-2 mb-2">
+                  <CheckSquare class="h-4 w-4 text-gray-700" />
+                  <h2 class="text-sm font-bold text-gray-900">Yêu cầu công việc</h2>
+                </div>
+                <div class="text-xs leading-[1.7] text-gray-600 whitespace-pre-line">
+                  <template v-if="!isReqExpanded && isReqLong">
+                    <span>{{ getTruncatedText(job.requirements) }}... </span>
+                    <button
+                      type="button"
+                      @click="isReqExpanded = true"
+                      class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none"
+                    >
+                      Xem thêm
+                    </button>
+                  </template>
+                  <template v-else>
+                    <span>{{ job.requirements }} </span>
+                    <button
+                      v-if="isReqLong"
+                      type="button"
+                      @click="isReqExpanded = false"
+                      class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none ml-1"
+                    >
+                      Thu gọn
+                    </button>
+                  </template>
+                </div>
+              </div>
 
-            <section
-              v-if="job.requirements"
-              class="bg-white rounded-xl border border-gray-200 p-6"
-            >
-              <h2 id="job-requirements" class="text-sm font-semibold text-gray-900 mb-3 scroll-mt-20">Yêu cầu ứng viên</h2>
-              <p class="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
-                {{ job.requirements }}
-              </p>
-            </section>
+              <!-- Lợi ích -->
+              <div v-if="job.benefits" class="pt-2">
+                <div class="flex items-center gap-2 mb-2">
+                  <Star class="h-4 w-4 text-gray-700" />
+                  <h2 class="text-sm font-bold text-gray-900">Quyền lợi & Phúc lợi</h2>
+                </div>
+                <div class="text-xs leading-[1.7] text-gray-600 whitespace-pre-line">
+                  <template v-if="!isBenExpanded && isBenLong">
+                    <span>{{ getTruncatedText(job.benefits) }}... </span>
+                    <button
+                      type="button"
+                      @click="isBenExpanded = true"
+                      class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none"
+                    >
+                      Xem thêm
+                    </button>
+                  </template>
+                  <template v-else>
+                    <span>{{ job.benefits }} </span>
+                    <button
+                      v-if="isBenLong"
+                      type="button"
+                      @click="isBenExpanded = false"
+                      class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none ml-1"
+                    >
+                      Thu gọn
+                    </button>
+                  </template>
+                </div>
+              </div>
 
-            <section
-              v-if="job.benefits"
-              class="bg-white rounded-xl border border-gray-200 p-6"
-            >
-              <h2 class="text-sm font-semibold text-gray-900 mb-3">Quyền lợi</h2>
-              <p class="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
-                {{ job.benefits }}
-              </p>
-            </section>
-
-            <section
-              v-if="job.requiredSkills?.length || job.niceToHaveSkills?.length"
-              class="bg-white rounded-xl border border-gray-200 p-6"
-            >
-              <h2 class="text-sm font-semibold text-gray-900 mb-3">Kỹ năng</h2>
-              <div v-if="job.requiredSkills?.length" class="mb-3">
-                <p class="text-[11px] font-medium uppercase tracking-wide text-gray-500 mb-1.5">
-                  Yêu cầu
-                </p>
+              <!-- Kỹ năng yêu cầu -->
+              <div v-if="job.requiredSkills?.length" class="pt-2">
+                <h3 class="text-xs font-bold text-gray-900 mb-2">Kỹ năng chuyên môn</h3>
                 <div class="flex flex-wrap gap-1.5">
                   <span
                     v-for="skill in job.requiredSkills"
                     :key="skill"
-                    class="inline-flex items-center rounded-md bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700"
+                    class="px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200"
                   >
                     {{ skill }}
                   </span>
                 </div>
               </div>
-              <div v-if="job.niceToHaveSkills?.length">
-                <p class="text-[11px] font-medium uppercase tracking-wide text-gray-500 mb-1.5">
-                  Ưu tiên
+            </div>
+          </section>
+
+          <!-- =================================================================
+               CỘT PHẢI (33% chiều rộng): Closing Date, Job Detail, Hiring Manager
+               ================================================================= -->
+          <aside
+            class="w-full lg:w-[33%] p-4 sm:p-5 lg:p-6 lg:pl-7 border-t lg:border-t-0 lg:border-l border-gray-200 min-w-0"
+            aria-label="Thông tin bổ sung việc làm"
+          >
+            <!-- -------------------------------------------------------------
+                 KHU VỰC G: CỘT PHẢI - JOB VACANCY CLOSING DATE
+                 ------------------------------------------------------------- -->
+            <div class="mb-5">
+              <!-- Tiêu đề + Nút Edit -->
+              <div class="flex items-center justify-between mb-2.5">
+                <div class="flex items-center gap-1.5">
+                  <Calendar class="h-4 w-4 text-gray-700" />
+                  <h2 class="text-xs sm:text-[13px] font-bold text-gray-900 leading-none whitespace-nowrap">
+                    Ngày kết thúc nhận đơn
+                  </h2>
+                </div>
+              </div>
+
+              <!-- Danh sách ngày công bố / hạn chót -->
+              <div class="space-y-1.5 text-xs">
+                <div class="flex items-center">
+                  <Calendar class="h-3.5 w-3.5 text-gray-400 shrink-0 mr-2" />
+                  <span class="text-gray-500 w-[78px] shrink-0">Ngày đăng</span>
+                  <span class="text-gray-900 font-medium">: {{ formatDate(job.publishedAt) || 'Chưa công bố' }}</span>
+                </div>
+                <div class="flex items-center">
+                  <Clock class="h-3.5 w-3.5 text-gray-400 shrink-0 mr-2" />
+                  <span class="text-gray-500 w-[78px] shrink-0">Hạn chót</span>
+                  <span class="text-gray-900 font-medium">: {{ formatDate(job.deadline) || 'Không giới hạn' }}</span>
+                </div>
+              </div>
+
+              <!-- Khung Days Remaining + Progress bar -->
+              <div v-if="job.deadline" class="mt-3 rounded-xl bg-[#f8f5fd] border border-[#eee4fc] p-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-[11px] font-medium text-gray-500">Thời gian còn lại</span>
+                  <div class="flex items-center gap-1.5 text-xs font-bold text-gray-900">
+                    <Hourglass class="h-3.5 w-3.5 text-gray-700" />
+                    <span>{{ daysRemaining }} ngày</span>
+                  </div>
+                </div>
+
+                <!-- Thanh tiến trình màu tím -->
+                <div class="mt-2.5 h-1.5 w-full bg-[#ebdcfc] rounded-full overflow-hidden">
+                  <div class="h-full bg-[#5b4eea] rounded-full w-[45%] transition-all"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- -------------------------------------------------------------
+                 KHU VỰC H: CỘT PHẢI - JOB DETAIL
+                 ------------------------------------------------------------- -->
+            <div class="mb-5">
+              <!-- Tiêu đề Job Detail -->
+              <div class="flex items-center gap-1.5 mb-2.5">
+                <BookOpen class="h-4 w-4 text-gray-700" />
+                <h2 class="text-sm font-bold text-gray-900 leading-none">Chi tiết công việc</h2>
+              </div>
+
+              <!-- Danh sách 6 thông tin chi tiết -->
+              <div class="space-y-2 text-xs">
+                <div
+                  v-for="item in jobDetailsList"
+                  :key="item.label"
+                  class="flex items-center"
+                >
+                  <component :is="item.icon" class="h-3.5 w-3.5 text-gray-400 shrink-0 mr-2" />
+                  <span class="text-gray-500 w-[74px] shrink-0">{{ item.label }}</span>
+                  <span class="text-gray-900 font-medium whitespace-nowrap">: {{ item.value }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- -------------------------------------------------------------
+                 KHU VỰC I: CỘT PHẢI - NGƯỜI PHỤ TRÁCH (ASSIGNEE)
+                 ------------------------------------------------------------- -->
+            <div>
+              <!-- Dải thông báo nội bộ màu tím nhạt -->
+              <div
+                class="rounded-lg bg-[#f6effe] border border-[#ebdcfc] px-3 py-1.5 flex items-center gap-1.5 mb-3"
+              >
+                <Info class="h-3.5 w-3.5 text-[#5b4eea] shrink-0" />
+                <p class="text-[11px] text-[#5b4eea] font-normal leading-tight">
+                  Người phụ trách chỉ hiển thị trong nội bộ doanh nghiệp.
                 </p>
-                <div class="flex flex-wrap gap-1.5">
-                  <span
-                    v-for="skill in job.niceToHaveSkills"
-                    :key="skill"
-                    class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700"
-                  >
-                    {{ skill }}
+              </div>
+
+              <!-- Tiêu đề + Nút Đổi người phụ trách -->
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-1.5">
+                  <User class="h-4 w-4 text-gray-700" />
+                  <h2 class="text-sm font-bold text-gray-900 leading-none">Người phụ trách</h2>
+                </div>
+                <button
+                  v-if="isOwner"
+                  type="button"
+                  @click="openAssignModal"
+                  class="inline-flex items-center gap-1 text-xs font-semibold text-[#5b4eea] hover:text-[#4a3fd6] transition-colors cursor-pointer bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded-md"
+                  title="Chỉ định hoặc thay đổi người phụ trách tin này"
+                >
+                  <Pencil class="h-3 w-3" />
+                  <span>Đổi người phụ trách</span>
+                </button>
+              </div>
+
+              <!-- Thẻ thông tin người phụ trách -->
+              <div v-if="assignedUser" class="p-3 bg-gray-50/80 rounded-xl border border-gray-100 space-y-2.5">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <!-- Avatar hoặc chữ cái đầu -->
+                    <div
+                      v-if="assignedUser.avatarUrl"
+                      class="w-8 h-8 rounded-full overflow-hidden shrink-0 ring-2 ring-purple-100"
+                    >
+                      <img :src="assignedUser.avatarUrl" :alt="assignedUser.name" class="w-full h-full object-cover" />
+                    </div>
+                    <div
+                      v-else
+                      class="w-8 h-8 rounded-full bg-gradient-to-tr from-[#5b4eea] to-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm"
+                    >
+                      {{ assignedUser.name?.charAt(0)?.toUpperCase() || 'U' }}
+                    </div>
+
+                    <!-- Tên & Email -->
+                    <div class="min-w-0">
+                      <div class="text-xs font-bold text-gray-900 truncate flex items-center gap-1.5">
+                        <span class="truncate">{{ assignedUser.name }}</span>
+                        <span
+                          v-if="assignedUser.isCurrentUser"
+                          class="px-1.5 py-0.2 text-[9px] font-semibold bg-emerald-100 text-emerald-700 rounded shrink-0"
+                        >
+                          Bạn
+                        </span>
+                      </div>
+                      <div class="text-[11px] text-gray-400 truncate leading-tight mt-0.5">
+                        {{ assignedUser.email || assignedUser.role }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Footer thẻ phụ trách: Vai trò & Quyền hạn -->
+                <div class="pt-2 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500">
+                  <span class="flex items-center gap-1 text-[11px] text-gray-600">
+                    <UserCheck class="h-3.5 w-3.5 text-[#5b4eea]" />
+                    <span>{{ assignedUser.role }}</span>
+                  </span>
+                  <span v-if="!isOwner" class="text-[10px] text-gray-400 italic">
+                    Chỉ Owner có quyền đổi
                   </span>
                 </div>
               </div>
-            </section>
-          </div>
 
-          <!-- ============ Right col — management ============ -->
-          <aside class="lg:col-span-4 space-y-4">
-            <div class="lg:sticky lg:top-4 space-y-4">
-              <!--
-                Actions — vertical stack đơn giản, không hover-to-grow.
-                Primary: Xem ứng viên / Gửi kiểm duyệt AI (tuỳ status).
-                Secondary: Sửa, Xoá, Re-scan, Xem trang công khai.
-              -->
-              <div
-                ref="managePanelRef"
-                class="bg-white rounded-xl border border-gray-200 p-5 space-y-2"
-              >
-                <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                  Quản lý
-                </h3>
-
-                <!-- Primary action tuỳ status, hoặc status placeholder khi không có action chính -->
-                <!--
-                  Quy tắc primary:
-                  - live       → "Xem ứng viên" (job đang chạy, action chính là xem apply)
-                  - draft / ai_flagged / expired / pending → "Gửi kiểm duyệt AI"
-                  - ai_scanning / closed → không có primary (chỉ hiển thị badge)
-                  Dropdown "Thao tác khác" bên dưới luôn có để truy cập Sửa, ...
-                -->
+              <!-- Trạng thái chưa có người phụ trách -->
+              <div v-else class="text-center py-4 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                <User class="h-6 w-6 text-gray-300 mx-auto mb-1" />
+                <p class="text-xs text-gray-500">Chưa chỉ định người phụ trách</p>
                 <button
-                  v-if="job.status === 'live'"
+                  v-if="isOwner"
                   type="button"
-                  class="w-full px-3 py-2 text-sm font-semibold rounded-lg bg-gray-900 text-white hover:bg-gray-800 transition inline-flex items-center justify-center gap-2"
-                  @click="onViewApplications"
+                  @click="openAssignModal"
+                  class="mt-2 text-xs text-[#5b4eea] font-semibold hover:underline cursor-pointer"
                 >
-                  <Users class="w-4 h-4" /> Xem ứng viên ({{ job.appliesCount }})
+                  + Chỉ định ngay
                 </button>
-
-                <button
-                  v-else-if="canSubmit"
-                  type="button"
-                  class="w-full px-3 py-2 text-sm font-semibold rounded-lg bg-gray-900 text-white hover:bg-gray-800 transition inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  :disabled="actionPending"
-                  @click="onSubmitForScan"
-                >
-                  <Loader2 v-if="actionPending" class="w-4 h-4 animate-spin" />
-                  <Send v-else class="w-4 h-4" />
-                  Gửi kiểm duyệt AI
-                </button>
-
-                <div
-                  v-else
-                  class="w-full px-3 py-2 text-xs text-gray-600 rounded-lg bg-gray-50 border border-gray-200 text-center inline-flex items-center justify-center gap-2"
-                >
-                  <Loader2 v-if="job.status === 'ai_scanning'" class="w-3.5 h-3.5 animate-spin text-gray-500" />
-                  <span v-if="job.status === 'ai_scanning'">AI đang quét nội dung...</span>
-                  <span v-else-if="job.status === 'closed'">Job đã đóng</span>
-                  <span v-else>Không có thao tác khả dụng</span>
-                </div>
-
-                <!-- "Thao tác khác" toggle -->
-                <button
-                  type="button"
-                  class="w-full px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition inline-flex items-center justify-center gap-2"
-                  aria-haspopup="true"
-                  :aria-expanded="showMoreActions"
-                  @click="showMoreActions = !showMoreActions"
-                >
-                  Thao tác khác
-                  <ChevronDown
-                    class="w-4 h-4 transition-transform"
-                    :class="showMoreActions ? 'rotate-180' : ''"
-                  />
-                </button>
-
-                <!-- Dropdown items — chỉ render khi showMoreActions = true.
-                     Click-outside đóng qua document mousedown (script setup). -->
-                <div
-                  v-if="showMoreActions"
-                  class="rounded-lg border border-gray-200 overflow-hidden"
-                >
-                  <!-- Sửa (luôn hiện) -->
-                  <button
-                    type="button"
-                    class="w-full px-3 py-2 text-sm text-left text-gray-700 hover:bg-gray-50 transition border-b border-gray-200 last:border-b-0 inline-flex items-center gap-2"
-                    @click="onEdit"
-                  >
-                    <Pencil class="w-4 h-4 text-gray-500" /> Sửa job
-                  </button>
-
-                  <!-- Xem trang công khai (chỉ job live) -->
-                  <button
-                    v-if="job.status === 'live'"
-                    type="button"
-                    class="w-full px-3 py-2 text-sm text-left text-gray-700 hover:bg-gray-50 transition border-b border-gray-200 last:border-b-0 inline-flex items-center gap-2"
-                    @click="onViewPublic"
-                  >
-                    <ExternalLink class="w-4 h-4 text-gray-500" /> Xem trang công khai
-                  </button>
-
-                  <!-- Gửi kiểm duyệt lại (live + canSubmit, giữ loading state) -->
-                  <button
-                    v-if="job.status === 'live' && canSubmit"
-                    type="button"
-                    class="w-full px-3 py-2 text-sm text-left text-gray-700 hover:bg-gray-50 transition border-b border-gray-200 last:border-b-0 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    :disabled="actionPending"
-                    @click="onSubmitForScan"
-                  >
-                    <Loader2 v-if="actionPending" class="w-4 h-4 animate-spin text-gray-500" />
-                    <Send v-else class="w-4 h-4 text-gray-500" />
-                    Gửi kiểm duyệt lại
-                  </button>
-
-                  <!-- Re-scan (admin only, giữ loading state) -->
-                  <button
-                    v-if="canRescan"
-                    type="button"
-                    class="w-full px-3 py-2 text-sm text-left text-gray-700 hover:bg-gray-50 transition border-b border-gray-200 last:border-b-0 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    :disabled="actionPending"
-                    @click="onRescan"
-                  >
-                    <Loader2 v-if="actionPending" class="w-4 h-4 animate-spin text-gray-500" />
-                    <RefreshCw v-else class="w-4 h-4 text-gray-500" />
-                    {{ job.status === 'live' ? 'Force re-scan (admin)' : 'Re-scan' }}
-                  </button>
-
-                  <!-- Mở lại (chỉ job đã đóng → chuyển về bản nháp để sửa + submit lại) -->
-                  <button
-                    v-if="canReopen"
-                    type="button"
-                    class="w-full px-3 py-2 text-sm text-left text-gray-700 hover:bg-gray-50 transition border-b border-gray-200 last:border-b-0 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    :disabled="actionPending"
-                    @click="onReopen"
-                  >
-                    <Loader2 v-if="actionPending" class="w-4 h-4 animate-spin text-gray-500" />
-                    <RotateCcw v-else class="w-4 h-4 text-gray-500" />
-                    Mở lại (chuyển về bản nháp)
-                  </button>
-
-                  <!-- Xoá job (luôn last). canDelete=false khi status=closed → không render. -->
-                  <button
-                    v-if="canDelete"
-                    type="button"
-                    class="w-full px-3 py-2 text-sm text-left transition border-b border-gray-200 last:border-b-0 inline-flex items-center gap-2"
-                    :class="job.status === 'closed' ? 'text-gray-400 cursor-not-allowed' : 'text-red-600 hover:bg-red-50'"
-                    :disabled="job.status === 'closed'"
-                    @click="onDelete"
-                  >
-                    <Trash2 class="w-4 h-4" />
-                    {{ job.status === 'closed' ? 'Đã đóng' : 'Xoá job' }}
-                  </button>
-                </div>
-              </div>
-
-              <!-- Deadline (prominent) -->
-              <div
-                v-if="deadlineLabel"
-                class="bg-white rounded-xl border border-gray-200 p-5"
-              >
-                <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                  Hạn nộp hồ sơ
-                </h3>
-                <p class="text-sm font-semibold text-gray-900">{{ deadlineLabel }}</p>
-                <p class="text-xs text-gray-500 mt-0.5">{{ deadlineRelative }}</p>
-              </div>
-
-              <!-- Tổng quan stats -->
-              <div class="bg-white rounded-xl border border-gray-200 p-5 space-y-2.5">
-                <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                  Tổng quan
-                </h3>
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 inline-flex items-center gap-1.5">
-                    <Eye class="w-3.5 h-3.5" /> Lượt xem
-                  </span>
-                  <span class="font-medium text-gray-900">{{ job.viewsCount.toLocaleString('vi-VN') }}</span>
-                </div>
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 inline-flex items-center gap-1.5">
-                    <FileText class="w-3.5 h-3.5" /> Ứng viên
-                  </span>
-                  <span class="font-medium text-gray-900">{{ job.appliesCount.toLocaleString('vi-VN') }}</span>
-                </div>
-                <div v-if="publishedLabel" class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 inline-flex items-center gap-1.5">
-                    <Calendar class="w-3.5 h-3.5" /> Ngày đăng
-                  </span>
-                  <span class="font-medium text-gray-900">{{ publishedLabel }}</span>
-                </div>
               </div>
             </div>
           </aside>
         </div>
-      </template>
-    </div>
+      </main>
 
-    <!-- ============ Delete confirm ============ -->
+      <!-- ===================================================================
+           NỘI DUNG TAB 2: ĐƠN ỨNG TUYỂN (APPLICATION)
+           =================================================================== -->
+      <!-- ===================================================================
+           NỘI DUNG TAB 2: ĐƠN ỨNG TUYỂN (APPLICATION)
+           =================================================================== -->
+      <section v-else-if="activeTab === 'application'" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
+        <!-- Top bar: Tiêu đề + Bộ lọc trạng thái + Tìm kiếm -->
+        <div class="mb-5 flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div class="flex items-center gap-2.5 flex-wrap">
+              <h2 class="text-base font-semibold text-gray-900 tracking-tight">
+                Danh sách đơn ứng tuyển ({{ appTotal }})
+              </h2>
+              <!-- Pill người phụ trách -->
+              <div
+                v-if="assignedUser"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200/60"
+              >
+                <UserCheck class="h-3.5 w-3.5 text-[#5b4eea]" />
+                <span>Phụ trách: <strong class="font-semibold">{{ assignedUser.name }}</strong></span>
+                <span
+                  v-if="assignedUser.isCurrentUser"
+                  class="px-1 py-0.2 text-[9px] font-semibold bg-emerald-100 text-emerald-700 rounded"
+                >
+                  Bạn
+                </span>
+                <button
+                  v-if="isOwner"
+                  type="button"
+                  @click="openAssignModal"
+                  class="ml-1 text-[11px] font-semibold text-[#5b4eea] hover:text-purple-800 underline cursor-pointer"
+                  title="Thay đổi người phụ trách"
+                >
+                  Đổi
+                </button>
+              </div>
+            </div>
+            <p class="text-[12px] text-gray-500 mt-0.5">
+              Quản lý các đơn ứng tuyển và duy trì quy trình tuyển dụng cho vị trí <strong class="text-gray-700 font-medium">{{ job.title }}</strong>.
+            </p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <!-- Tìm kiếm theo tên / email ứng viên -->
+            <div class="relative w-full sm:w-[220px]">
+              <input
+                v-model="appSearchKeyword"
+                type="text"
+                placeholder="Tìm tên, email..."
+                class="w-full h-9 pl-8 pr-3 text-[12px] rounded-lg border border-[#e3e8ef] bg-white text-gray-800 placeholder-[#a0acbc] outline-none focus:border-[#5b4eea] focus:ring-1 focus:ring-[#5b4eea]/20 transition shadow-2xs"
+              />
+              <Search class="absolute left-2.5 top-2.5 h-4 w-4 text-[#a0acbc] pointer-events-none" />
+            </div>
+
+            <!-- Dropdown lọc theo trạng thái đơn -->
+            <div ref="appStatusSelectRoot" class="relative w-full sm:w-[170px]">
+              <button
+                type="button"
+                class="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-[#e3e8ef] bg-white px-3 text-[12px] text-gray-700 transition hover:border-[#c7d2e0] shadow-2xs cursor-pointer"
+                aria-label="Lọc theo trạng thái"
+                @click="appStatusSelectOpen = !appStatusSelectOpen"
+              >
+                <span class="truncate text-left">{{ appStatusFilterLabel }}</span>
+                <ChevronDown
+                  class="h-3.5 w-3.5 shrink-0 text-[#a0acbc] transition"
+                  :class="appStatusSelectOpen ? 'rotate-180' : ''"
+                />
+              </button>
+              <div
+                v-if="appStatusSelectOpen"
+                class="absolute right-0 z-20 mt-1 max-h-60 w-full overflow-y-auto scrollbar-thin rounded-lg border border-[#e3e8ef] bg-white py-1 shadow-lg"
+              >
+                <button
+                  v-for="opt in STATUS_FILTER_OPTIONS"
+                  :key="opt.label"
+                  type="button"
+                  class="block w-full px-3 py-2 text-left text-[12px] transition hover:bg-[#eef5ff] cursor-pointer"
+                  :class="appSelectedStatus === opt.value ? 'font-semibold text-[#5b4eea] bg-[#5b4eea]/5' : 'text-gray-700'"
+                  @click="pickAppStatus(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Nút Tải lại -->
+            <button
+              type="button"
+              class="grid h-9 w-9 place-items-center rounded-lg border border-[#e3e8ef] bg-white hover:bg-gray-50 text-gray-500 transition shadow-2xs cursor-pointer"
+              title="Tải lại danh sách"
+              @click="fetchJobApplications(1)"
+            >
+              <RotateCcw class="h-3.5 w-3.5" :class="appLoading ? 'animate-spin' : ''" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Khung danh sách (Bỏ cột Việc làm vì chỉ load đơn của job này) -->
+        <section class="overflow-hidden rounded-xl border border-[#e7ebf1] bg-white shadow-2xs">
+          <div class="px-4 py-3 flex items-center justify-between border-b border-[#eef1f5] bg-white">
+            <h3 class="text-[14px] font-semibold text-gray-800">
+              Tất cả các đơn ứng tuyển
+            </h3>
+            <span class="text-[12px] text-gray-400 font-medium">Tổng số: {{ appTotal }}</span>
+          </div>
+
+          <!-- Column headers (BỎ CỘT VIỆC LÀM) -->
+          <div
+            class="grid grid-cols-[1.5fr_0.8fr_0.8fr] sm:grid-cols-[2fr_1fr_1fr_0.8fr] items-center border-b border-[#eef1f5] bg-gray-50/50 px-4 py-3 text-[12px] font-medium text-[#7c889a] select-none"
+          >
+            <div>Ứng viên</div>
+            <div>Giai đoạn</div>
+            <div>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 transition hover:text-[#334155] cursor-pointer"
+                title="Sắp xếp theo điểm phù hợp"
+                @click="toggleAppMatchSort"
+              >
+                <span>Phù hợp</span>
+                <ArrowUpDown v-if="appMatchSort === 'none'" class="h-3 w-3" />
+                <ArrowDown v-else-if="appMatchSort === 'desc'" class="h-3 w-3 text-[#5b4eea]" />
+                <ArrowUp v-else class="h-3 w-3 text-[#5b4eea]" />
+              </button>
+            </div>
+            <div class="hidden sm:block">Thời gian</div>
+          </div>
+
+          <!-- Loading State -->
+          <div v-if="appLoading" class="p-12 text-center">
+            <Loader2 class="h-6 w-6 animate-spin text-[#5b4eea] mx-auto mb-2" />
+            <p class="text-xs text-gray-500">Đang tải danh sách hồ sơ ứng tuyển...</p>
+          </div>
+
+          <!-- Empty State -->
+          <div v-else-if="displayedApplications.length === 0" class="p-12 text-center">
+            <div class="w-12 h-12 rounded-full bg-indigo-50 text-[#5b4eea] flex items-center justify-center mx-auto mb-3">
+              <Users class="h-6 w-6 opacity-70" />
+            </div>
+            <p class="text-sm font-semibold text-gray-700">Chưa có đơn ứng tuyển nào</p>
+            <p class="text-xs text-gray-400 mt-1 max-w-sm mx-auto">
+              {{ appSelectedStatus ? 'Không có đơn ứng tuyển nào khớp với bộ lọc trạng thái.' : 'Các hồ sơ nộp vào vị trí này sẽ xuất hiện tại đây.' }}
+            </p>
+          </div>
+
+          <!-- Rows (BỎ CỘT VIỆC LÀM) -->
+          <div v-else class="divide-y divide-[#eef1f5]">
+            <div
+              v-for="(a, i) in displayedApplications"
+              :key="`${a.email}-${i}`"
+              class="grid grid-cols-[1.5fr_0.8fr_0.8fr] sm:grid-cols-[2fr_1fr_1fr_0.8fr] items-center px-4 py-2.5 text-[13px] cursor-pointer transition hover:bg-gray-50/80 group"
+              @click="openAppDetail(a)"
+            >
+              <!-- Ứng viên (Avatar + Tên + Email) -->
+              <div class="flex min-w-0 items-center gap-2">
+                <div
+                  class="relative h-8 w-8 shrink-0 rounded-lg overflow-hidden bg-gradient-to-br from-indigo-50 to-indigo-100 ring-1 ring-black/5"
+                  :aria-label="a.name"
+                >
+                  <img
+                    v-if="a.avatarUrl"
+                    :src="a.avatarUrl"
+                    :alt="a.name"
+                    class="absolute inset-0 h-full w-full object-cover"
+                    loading="lazy"
+                    @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
+                  />
+                  <span
+                    v-else
+                    class="absolute inset-0 grid place-items-center text-[#5b4eea] font-bold text-[12px]"
+                  >
+                    {{ avatarInitial(a.name) }}
+                  </span>
+                </div>
+                <div class="min-w-0">
+                  <div class="truncate font-semibold text-gray-900 group-hover:text-[#5b4eea] transition-colors" :title="a.name">
+                    {{ truncate(a.name, 18) }}
+                  </div>
+                  <div class="hidden sm:block truncate text-[11px] text-[#94a3b8]" :title="a.email">
+                    {{ truncate(a.email, 22) }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Giai đoạn (Status badge) -->
+              <div>
+                <span
+                  class="inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium"
+                  :class="[STATUS_CHIP[a.status]?.bg || 'bg-[#eef0f2]', STATUS_CHIP[a.status]?.text || 'text-[#64748b]']"
+                >
+                  {{ STATUS_LABEL[a.status] || a.status }}
+                </span>
+              </div>
+
+              <!-- Phù hợp (Match %) -->
+              <div>
+                <div v-if="a.match === null">
+                  <span class="text-[11px] text-[#94a3b8] italic">Chưa có điểm</span>
+                </div>
+                <div v-else>
+                  <div
+                    class="font-semibold tabular-nums text-[12px]"
+                    :class="MATCH_LEVEL_STYLE[matchLevelOf(a.match)].text"
+                  >
+                    {{ a.match }}%
+                  </div>
+                  <div class="mt-1 h-1.5 w-[60px] sm:w-[85px] rounded-full bg-[#e8eef8] overflow-hidden">
+                    <div
+                      class="h-full rounded-full transition-all duration-500 ease-out"
+                      :class="MATCH_LEVEL_STYLE[matchLevelOf(a.match)].bar"
+                      :style="{ width: `${a.match}%` }"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Thời gian (Applied time) -->
+              <div class="hidden sm:block text-[12px] text-[#475569]" :title="formatAppDate(a.date)">
+                {{ formatAppTime(a.date) }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Pagination footer -->
+          <div
+            v-if="displayedApplications.length > 0"
+            class="flex items-center justify-between border-t border-[#eef1f5] px-4 py-3 text-[12px] text-[#7c889a]"
+          >
+            <span>
+              Showing
+              <strong class="text-[#334155]">{{ appTotal === 0 ? 0 : (appPage - 1) * appLimit + 1 }}</strong>
+              to
+              <strong class="text-[#334155]">{{ Math.min(appTotal, (appPage - 1) * appLimit + applicationList.length) }}</strong>
+              of <strong class="text-[#334155]">{{ appTotal }}</strong> applications
+            </span>
+            <div class="flex items-center gap-1.5">
+              <button
+                type="button"
+                class="grid h-8 w-8 place-items-center rounded-lg border border-[#e3e8ef] text-[#7c889a] hover:bg-[#f8fafc] transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                :disabled="appPage <= 1"
+                aria-label="Trang trước"
+                @click="goToAppPage(appPage - 1)"
+              >
+                <ChevronLeft class="h-3.5 w-3.5" />
+              </button>
+
+              <template v-for="(p, idx) in appPaginationPages" :key="`${p}-${idx}`">
+                <span
+                  v-if="p === '…'"
+                  class="h-8 min-w-8 px-2 inline-flex items-center justify-center text-[#7c889a]"
+                >…</span>
+                <button
+                  v-else
+                  type="button"
+                  class="h-8 min-w-8 px-2.5 inline-flex items-center justify-center rounded-lg text-[12px] font-medium transition cursor-pointer"
+                  :class="p === appPage
+                    ? 'bg-[#1769e8] text-white'
+                    : 'border border-[#e3e8ef] text-[#334155] hover:bg-[#f8fafc]'"
+                  @click="goToAppPage(p)"
+                >{{ p }}</button>
+              </template>
+
+              <button
+                type="button"
+                class="grid h-8 w-8 place-items-center rounded-lg border border-[#e3e8ef] text-[#7c889a] hover:bg-[#f8fafc] transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                :disabled="appPage >= appTotalPages"
+                aria-label="Trang sau"
+                @click="goToAppPage(appPage + 1)"
+              >
+                <ChevronRight class="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Quick Detail Modal khi click vào row -->
+        <div
+          v-if="showAppDetailModal"
+          class="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4"
+          @click.self="closeAppDetailModal"
+        >
+          <div class="bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <!-- Modal Header -->
+            <div class="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="relative h-11 w-11 shrink-0 rounded-xl overflow-hidden bg-gradient-to-br from-indigo-50 to-indigo-100 ring-1 ring-black/5">
+                  <img
+                    v-if="selectedAppItem?.avatarUrl"
+                    :src="selectedAppItem.avatarUrl"
+                    :alt="selectedAppItem.name"
+                    class="h-full w-full object-cover"
+                  />
+                  <span v-else class="grid h-full w-full place-items-center font-bold text-[#5b4eea] text-sm">
+                    {{ avatarInitial(selectedAppItem?.name || '') }}
+                  </span>
+                </div>
+                <div class="min-w-0">
+                  <h3 class="font-bold text-gray-900 text-sm sm:text-base truncate">
+                    {{ selectedAppItem?.name }}
+                  </h3>
+                  <p class="text-xs text-gray-400 truncate">{{ selectedAppItem?.email }}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="h-8 w-8 rounded-lg hover:bg-gray-200/60 text-gray-400 hover:text-gray-700 grid place-items-center transition cursor-pointer"
+                @click="closeAppDetailModal"
+              >
+                <X class="h-4 w-4" />
+              </button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="p-5 overflow-y-auto space-y-4 scrollbar-thin">
+              <div v-if="appDetailLoading" class="py-8 text-center">
+                <Loader2 class="h-6 w-6 animate-spin text-[#5b4eea] mx-auto mb-2" />
+                <p class="text-xs text-gray-400">Đang tải hồ sơ ứng viên...</p>
+              </div>
+              <template v-else>
+                <!-- Trạng thái & Chuyển trạng thái -->
+                <div class="p-3.5 rounded-xl border border-gray-100 bg-gray-50/50 flex items-center justify-between gap-3 flex-wrap">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-500 font-medium">Trạng thái:</span>
+                    <span
+                      class="inline-flex rounded-md px-2.5 py-1 text-xs font-semibold"
+                      :class="[STATUS_CHIP[selectedAppItem?.status || 'pending']?.bg, STATUS_CHIP[selectedAppItem?.status || 'pending']?.text]"
+                    >
+                      {{ STATUS_LABEL[selectedAppItem?.status || 'pending'] }}
+                    </span>
+                  </div>
+
+                  <!-- Quick Action Buttons -->
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      v-if="selectedAppItem?.status !== 'screening' && selectedAppItem?.status !== 'hired' && selectedAppItem?.status !== 'rejected'"
+                      type="button"
+                      :disabled="updatingAppStatus"
+                      class="px-2.5 py-1 rounded-md text-xs font-medium bg-[#5b4eea] text-white hover:bg-[#4e42d6] transition cursor-pointer disabled:opacity-50"
+                      @click="changeAppStatus(selectedAppItem!.applicationId, 'screening')"
+                    >
+                      Sàng lọc
+                    </button>
+                    <button
+                      v-if="selectedAppItem?.status === 'screening'"
+                      type="button"
+                      :disabled="updatingAppStatus"
+                      class="px-2.5 py-1 rounded-md text-xs font-medium bg-[#1769e8] text-white hover:bg-blue-700 transition cursor-pointer disabled:opacity-50"
+                      @click="changeAppStatus(selectedAppItem!.applicationId, 'interview')"
+                    >
+                      Mời phỏng vấn
+                    </button>
+                    <button
+                      v-if="selectedAppItem?.status !== 'rejected' && selectedAppItem?.status !== 'hired'"
+                      type="button"
+                      :disabled="updatingAppStatus"
+                      class="px-2 py-1 rounded-md text-xs font-medium border border-rose-200 text-rose-600 hover:bg-rose-50 transition cursor-pointer disabled:opacity-50"
+                      @click="changeAppStatus(selectedAppItem!.applicationId, 'rejected')"
+                    >
+                      Từ chối
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Điểm phù hợp AI -->
+                <div class="p-3.5 rounded-xl border border-gray-100 bg-white">
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                      <Sparkles class="h-3.5 w-3.5 text-[#5b4eea]" />
+                      Độ phù hợp AI (Match Score)
+                    </span>
+                    <span
+                      v-if="selectedAppItem?.match !== null"
+                      class="text-xs font-bold"
+                      :class="MATCH_LEVEL_STYLE[matchLevelOf(selectedAppItem?.match || 0)].text"
+                    >
+                      {{ selectedAppItem?.match }}% — {{ MATCH_LEVEL_STYLE[matchLevelOf(selectedAppItem?.match || 0)].label }}
+                    </span>
+                    <span v-else class="text-xs text-gray-400 italic">Chưa có điểm</span>
+                  </div>
+
+                  <!-- Reasoning rationale nếu có -->
+                  <p v-if="selectedAppDetail?.aiMatchReasoning?.rationale" class="text-xs text-gray-600 bg-gray-50 rounded-lg p-2.5 leading-relaxed">
+                    {{ selectedAppDetail.aiMatchReasoning.rationale }}
+                  </p>
+
+                  <!-- Skills match -->
+                  <div v-if="selectedAppDetail?.aiMatchReasoning?.matchedSkills?.length" class="mt-2.5">
+                    <span class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider block mb-1">Kỹ năng khớp:</span>
+                    <div class="flex flex-wrap gap-1">
+                      <span
+                        v-for="sk in selectedAppDetail.aiMatchReasoning.matchedSkills"
+                        :key="sk"
+                        class="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-medium"
+                      >
+                        ✓ {{ sk }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Thư ứng tuyển (Cover Letter) -->
+                <div v-if="selectedAppDetail?.coverLetter" class="p-3.5 rounded-xl border border-gray-100 bg-white">
+                  <span class="text-xs font-semibold text-gray-700 block mb-1.5">Thư ứng tuyển:</span>
+                  <p class="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed bg-gray-50 p-2.5 rounded-lg">
+                    {{ selectedAppDetail.coverLetter }}
+                  </p>
+                </div>
+
+                <!-- File CV đính kèm -->
+                <div v-if="selectedAppDetail?.cv" class="p-3.5 rounded-xl border border-gray-100 bg-white flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <FileText class="h-5 w-5 text-[#5b4eea] shrink-0" />
+                    <div class="min-w-0">
+                      <p class="text-xs font-semibold text-gray-800 truncate">
+                        {{ selectedAppDetail.cv.title || 'Hồ sơ ứng viên (CV)' }}
+                      </p>
+                      <p class="text-[11px] text-gray-400">Đính kèm trong đơn ứng tuyển</p>
+                    </div>
+                  </div>
+                  <a
+                    v-if="selectedAppDetail.cv.url"
+                    :href="selectedAppDetail.cv.url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="h-7 px-3 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 inline-flex items-center gap-1 transition shrink-0 cursor-pointer"
+                  >
+                    <ExternalLink class="h-3 w-3" />
+                    <span>Xem file</span>
+                  </a>
+                </div>
+              </template>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="p-4 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+              <button
+                type="button"
+                class="text-xs font-medium text-[#1769e8] hover:underline flex items-center gap-1 cursor-pointer"
+                @click="router.push('/employer/applications')"
+              >
+                <span>Mở trong Quản lý ứng tuyển</span>
+                <ExternalLink class="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                class="px-4 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 transition cursor-pointer shadow-2xs"
+                @click="closeAppDetailModal"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================================
+           NỘI DUNG TAB 3: BÀI KIỂM TRA (TEST)
+           =================================================================== -->
+      <section v-else-if="activeTab === 'test'" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
+        <!-- Top bar: Tiêu đề + Thống kê + Nút hành động (Sinh đề IQ / Tiếng Anh) -->
+        <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-base font-bold text-gray-900">Bài kiểm tra năng lực</h2>
+              <span
+                v-if="testList.length"
+                class="px-2 py-0.5 text-xs font-semibold rounded-full bg-[#5b4eea]/10 text-[#5b4eea]"
+              >
+                {{ testList.length }} bài test
+              </span>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">
+              Bộ đề trắc nghiệm AI dành cho ứng viên ứng tuyển vào vị trí này.
+              <span v-if="job?.requiredSkills?.length" class="text-gray-400">
+                · Kỹ năng trọng tâm: {{ job.requiredSkills.slice(0, 4).join(', ') }}
+              </span>
+            </p>
+          </div>
+
+          <div class="flex items-center gap-2 flex-wrap">
+            <!-- Nút làm mới -->
+            <button
+              type="button"
+              :disabled="testLoading"
+              class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition shadow-2xs disabled:opacity-50 cursor-pointer"
+              title="Tải lại danh sách bài kiểm tra"
+              @click="fetchJobTests"
+            >
+              <RotateCcw class="h-3.5 w-3.5" :class="testLoading ? 'animate-spin' : ''" />
+              <span>Làm mới</span>
+            </button>
+
+            <!-- Nút Tạo đề IQ -->
+            <button
+              type="button"
+              :disabled="generatingTestType !== null || testLoading"
+              class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-purple-200 bg-purple-50 text-purple-700 text-xs font-semibold hover:bg-purple-100 transition shadow-2xs disabled:opacity-50 cursor-pointer"
+              @click="handleGenerateTest('iq')"
+            >
+              <Loader2 v-if="generatingTestType === 'iq'" class="h-3.5 w-3.5 animate-spin" />
+              <Cpu v-else class="h-3.5 w-3.5" />
+              <span>{{ generatingTestType === 'iq' ? 'Đang tạo IQ…' : 'Tạo đề IQ (AI)' }}</span>
+            </button>
+
+            <!-- Nút Tạo đề Tiếng Anh -->
+            <button
+              type="button"
+              :disabled="generatingTestType !== null || testLoading"
+              class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 transition shadow-2xs disabled:opacity-50 cursor-pointer"
+              @click="handleGenerateTest('english')"
+            >
+              <Loader2 v-if="generatingTestType === 'english'" class="h-3.5 w-3.5 animate-spin" />
+              <Globe v-else class="h-3.5 w-3.5" />
+              <span>{{ generatingTestType === 'english' ? 'Đang tạo English…' : 'Tạo đề Tiếng Anh (AI)' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tip hướng dẫn -->
+        <div class="mb-6 rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/80 via-white to-purple-50/80 p-4 flex items-start gap-3">
+          <Sparkles class="h-5 w-5 text-[#5b4eea] shrink-0 mt-0.5" />
+          <div class="text-xs text-gray-600 leading-relaxed min-w-0">
+            <span class="font-semibold text-gray-900">Quy trình kiểm tra sàng lọc:</span>
+            Sau khi đề được tạo và chuyển sang trạng thái <strong class="text-emerald-700">Sẵn sàng</strong>, bạn có thể xem lại chi tiết nội dung kèm đáp án. Tại tab <strong class="text-[#5b4eea]">Đơn ứng tuyển</strong>, bạn có thể gửi link làm bài trực tiếp cho từng ứng viên ở giai đoạn Sàng lọc (Screening).
+          </div>
+        </div>
+
+        <!-- Loading State -->
+        <div v-if="testLoading && !testList.length" class="py-16 text-center">
+          <Loader2 class="h-8 w-8 animate-spin text-[#5b4eea] mx-auto mb-3" />
+          <p class="text-sm font-medium text-gray-600">Đang tải danh sách bài kiểm tra...</p>
+        </div>
+
+        <!-- Error State -->
+        <div v-else-if="testError" class="rounded-xl border border-rose-200 bg-rose-50 p-6 text-center">
+          <AlertCircle class="h-8 w-8 text-rose-500 mx-auto mb-2" />
+          <p class="text-sm font-semibold text-rose-900 mb-1">Không thể tải bài kiểm tra</p>
+          <p class="text-xs text-rose-600 mb-4">{{ testError }}</p>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-medium hover:bg-rose-700 transition cursor-pointer"
+            @click="fetchJobTests"
+          >
+            <RotateCcw class="h-3.5 w-3.5" /> Thử lại
+          </button>
+        </div>
+
+        <!-- Empty State -->
+        <div
+          v-else-if="testList.length === 0"
+          class="rounded-2xl border-2 border-dashed border-gray-200 bg-white p-10 text-center"
+        >
+          <div class="w-14 h-14 rounded-2xl bg-[#5b4eea]/10 text-[#5b4eea] flex items-center justify-center mx-auto mb-4">
+            <CheckSquare class="h-7 w-7" />
+          </div>
+          <h3 class="text-base font-bold text-gray-900 mb-1.5">Chưa có bài kiểm tra nào cho tin tuyển dụng này</h3>
+          <p class="text-xs text-gray-500 max-w-md mx-auto mb-6 leading-relaxed">
+            Hệ thống AI có thể tự động tạo bộ câu hỏi trắc nghiệm logic (IQ) hoặc Tiếng Anh phù hợp với mô tả công việc, giúp bạn đánh giá ứng viên khách quan và tiết kiệm thời gian.
+          </p>
+
+          <div class="flex items-center justify-center gap-3 flex-wrap">
+            <button
+              type="button"
+              :disabled="generatingTestType !== null || testLoading"
+              class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#5b4eea] text-white text-xs font-semibold hover:bg-[#4a3fd6] transition shadow-xs disabled:opacity-50 cursor-pointer"
+              @click="handleGenerateTest('iq')"
+            >
+              <Loader2 v-if="generatingTestType === 'iq'" class="h-4 w-4 animate-spin" />
+              <Cpu v-else class="h-4 w-4" />
+              <span>Tạo đề IQ (AI)</span>
+            </button>
+
+            <button
+              type="button"
+              :disabled="generatingTestType !== null || testLoading"
+              class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50 transition shadow-2xs disabled:opacity-50 cursor-pointer"
+              @click="handleGenerateTest('english')"
+            >
+              <Loader2 v-if="generatingTestType === 'english'" class="h-4 w-4 animate-spin" />
+              <Globe v-else class="h-4 w-4" />
+              <span>Tạo đề Tiếng Anh (AI)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- List State: Grid Cards -->
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div
+            v-for="t in testList"
+            :key="t.id"
+            class="rounded-xl border border-gray-200 bg-white p-5 shadow-2xs hover:border-[#5b4eea]/40 transition flex flex-col justify-between"
+          >
+            <div>
+              <!-- Card Header -->
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div class="flex items-center gap-3">
+                  <div
+                    class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                    :class="t.testType === 'iq' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'"
+                  >
+                    <Cpu v-if="t.testType === 'iq'" class="h-5 w-5" />
+                    <Globe v-else class="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 class="text-sm font-bold text-gray-900 leading-snug">
+                      {{ t.testType === 'iq' ? 'Bài test IQ & Tư duy logic' : 'Bài test Tiếng Anh tổng quát' }}
+                    </h3>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span v-if="t.level" class="text-[11px] font-medium text-gray-500 uppercase tracking-wide">
+                        Cấp độ: {{ t.level }}
+                      </span>
+                      <span class="text-[11px] text-gray-400">·</span>
+                      <span class="text-[11px] text-gray-400">
+                        {{ formatDate(t.createdAt) }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Status Badge -->
+                <div>
+                  <span
+                    v-if="t.status === 'ready'"
+                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  >
+                    <CheckCircle2 class="h-3 w-3" /> Sẵn sàng
+                  </span>
+                  <span
+                    v-else-if="t.status === 'generating'"
+                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200"
+                  >
+                    <Loader2 class="h-3 w-3 animate-spin" /> Đang tạo đề…
+                  </span>
+                  <span
+                    v-else
+                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200"
+                  >
+                    <AlertCircle class="h-3 w-3" /> Thất bại
+                  </span>
+                </div>
+              </div>
+
+              <!-- Metadata Grid -->
+              <div class="grid grid-cols-3 gap-2 py-3 px-3.5 my-3 rounded-lg bg-gray-50/80 border border-gray-100 text-center">
+                <div>
+                  <div class="text-[11px] text-gray-400">Số câu hỏi</div>
+                  <div class="text-xs font-bold text-gray-800 mt-0.5">
+                    {{ t.questionCount }} câu
+                  </div>
+                </div>
+                <div class="border-x border-gray-200/60">
+                  <div class="text-[11px] text-gray-400">Thời gian</div>
+                  <div class="text-xs font-bold text-gray-800 mt-0.5">
+                    {{ t.durationMin ? `${t.durationMin} phút` : '—' }}
+                  </div>
+                </div>
+                <div>
+                  <div class="text-[11px] text-gray-400">Tổng điểm</div>
+                  <div class="text-xs font-bold text-gray-800 mt-0.5">
+                    {{ t.totalPoints ?? 100 }} đ
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card Actions -->
+            <div class="pt-3 border-t border-gray-100 flex items-center justify-between gap-2">
+              <span class="text-[11px] text-gray-400">
+                Mã đề: <code class="text-gray-600 font-mono">{{ t.id.slice(0, 8) }}</code>
+              </span>
+
+              <div class="flex items-center gap-2">
+                <!-- Nút xem đề thi & đáp án (khi ready) -->
+                <button
+                  v-if="t.status === 'ready'"
+                  type="button"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-[#5b4eea] text-gray-700 hover:text-white text-xs font-semibold transition cursor-pointer"
+                  @click="openReviewTest(t.id)"
+                >
+                  <Eye class="h-3.5 w-3.5" />
+                  <span>Xem đề thi & đáp án</span>
+                </button>
+
+                <!-- Nút Tạo lại cho từng đề thi (khi ready hoặc failed) -->
+                <button
+                  v-if="t.status === 'ready' || t.status === 'failed'"
+                  type="button"
+                  :disabled="regeneratingTestId === t.id || generatingTestType !== null"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-xs font-semibold transition shadow-2xs cursor-pointer disabled:opacity-50"
+                  :class="t.status === 'failed' ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100' : ''"
+                  :title="t.status === 'failed' ? 'Thử tạo lại đề thi này' : 'Dùng AI để sinh lại bộ câu hỏi mới'"
+                  @click="requestRegenerateTest(t)"
+                >
+                  <Loader2 v-if="regeneratingTestId === t.id" class="h-3.5 w-3.5 animate-spin" />
+                  <RotateCcw v-else class="h-3.5 w-3.5" />
+                  <span>{{ t.status === 'failed' ? 'Thử tạo lại' : 'Tạo lại' }}</span>
+                </button>
+
+                <span v-else-if="t.status === 'generating'" class="text-xs text-blue-600 italic inline-flex items-center gap-1">
+                  <Loader2 class="h-3 w-3 animate-spin" /> AI đang soạn thảo...
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================================
+           NỘI DUNG TAB 4: ĐÁNH GIÁ (FEEDBACK)
+           =================================================================== -->
+      <section v-else-if="activeTab === 'feedback'" class="p-6 sm:p-8">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="text-base font-bold text-gray-900">Đánh giá từ ứng viên</h2>
+            <p class="text-xs text-gray-500 mt-0.5">
+              Điểm trung bình: <strong class="text-[#5b4eea]">{{ job.feedbackStats?.average || 0 }}/5 ★</strong>
+              ({{ job.feedbackStats?.count || 0 }} lượt đánh giá)
+            </p>
+          </div>
+        </div>
+
+        <div v-if="job.feedbacks && job.feedbacks.length > 0" class="space-y-3">
+          <div
+            v-for="fb in job.feedbacks"
+            :key="fb.id"
+            class="rounded-xl border border-gray-200 p-4 bg-white shadow-2xs"
+          >
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-full bg-[#5b4eea]/10 text-[#5b4eea] flex items-center justify-center font-bold text-xs">
+                  {{ fb.candidateName ? fb.candidateName.charAt(0).toUpperCase() : 'U' }}
+                </div>
+                <div>
+                  <div class="text-xs font-bold text-gray-900">{{ fb.candidateName || 'Ứng viên ẩn danh' }}</div>
+                  <div class="text-[10px] text-gray-400">Ứng viên</div>
+                </div>
+              </div>
+              <!-- Star rating -->
+              <div class="flex items-center text-amber-400 gap-0.5">
+                <span v-for="s in 5" :key="s" class="text-xs">
+                  {{ s <= fb.rating ? '★' : '☆' }}
+                </span>
+              </div>
+            </div>
+            <p class="text-xs text-gray-600 bg-gray-50 rounded-lg p-2.5">
+              "{{ fb.comment }}"
+            </p>
+          </div>
+        </div>
+
+        <div v-else class="rounded-xl border border-dashed border-gray-300 p-8 text-center bg-gray-50/50">
+          <Star class="h-10 w-10 text-amber-400 mx-auto mb-3 opacity-80" />
+          <p class="text-sm font-semibold text-gray-700">Chưa có đánh giá nào từ ứng viên</p>
+          <p class="text-xs text-gray-400 mt-1">Đánh giá và phản hồi của ứng viên sau phỏng vấn sẽ xuất hiện tại đây</p>
+        </div>
+      </section>
+    </div>
+    <!-- ============ Delete confirm modal ============ -->
     <ConfirmModal
       :open="deleteOpen"
       title="Đóng job này?"
@@ -1191,12 +3162,217 @@ const onViewPublic = (): void => {
       @confirm="confirmDelete"
     />
 
-    <!-- ============ Edit modal ============ -->
+    <!-- ============ Reopen confirm modal ============ -->
+    <ConfirmModal
+      :open="reopenOpen"
+      title="Mở lại job này?"
+      :message="`Job '${job?.title ?? ''}' sẽ chuyển về trạng thái 'Bản nháp'. Bạn có thể cập nhật thông tin và gửi AI kiểm duyệt để đăng lại. Bạn có chắc muốn tiếp tục?`"
+      confirm-text="Mở lại job"
+      variant="default"
+      @cancel="cancelReopen"
+      @confirm="confirmReopen"
+    />
+
+    <!-- ============ Edit job modal ============ -->
     <EditJobModal
-      v-if="job"
+      v-if="job?.id"
       v-model:open="editOpen"
       :job-id="job.id"
       @saved="onEditSaved"
     />
+
+    <!-- ============ Upgrade Pricing modal khi hết lượt kiểm duyệt AI ============ -->
+    <Teleport to="body">
+      <UpgradePricing
+        v-if="showUpgradeModal"
+        :open="showUpgradeModal"
+        title="Nâng cấp gói dịch vụ của bạn"
+        features-title="Mở khóa thêm lượt kiểm duyệt AI"
+        @update:open="showUpgradeModal = $event"
+        @close="showUpgradeModal = false"
+        @success="onUpgradeSuccess"
+      />
+    </Teleport>
+
+    <!-- ============ Regenerate AI Test confirm modal ============ -->
+    <ConfirmModal
+      :open="confirmRegenerateOpen"
+      title="Tạo lại đề kiểm tra?"
+      :message="`Bạn có chắc chắn muốn dùng AI để tạo lại bộ câu hỏi mới cho đề ${testToRegenerate?.testType === 'iq' ? 'IQ' : 'Tiếng Anh'}? Bộ câu hỏi hiện tại sẽ được cập nhật mới.`"
+      confirm-text="Tạo lại đề"
+      variant="default"
+      @cancel="confirmRegenerateOpen = false; testToRegenerate = null"
+      @confirm="confirmRegenerate"
+    />
+
+    <!-- ============ Review AI Test Modal ============ -->
+    <AiTestReviewModal
+      :open="reviewModalOpen"
+      :test="reviewTestDetail"
+      :loading="reviewLoading"
+      @close="reviewModalOpen = false"
+    />
+
+    <!-- ============ Phân công người phụ trách (Assign Job Modal) ============ -->
+    <Teleport to="body">
+      <div
+        v-if="assignModalOpen"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-all"
+        @click.self="assignModalOpen = false"
+      >
+        <div
+          class="w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200"
+        >
+          <!-- Modal Header -->
+          <div class="border-gray-100 flex items-center justify-between">
+            <div>
+              <h3 class="text-base font-bold text-white flex items-center gap-2">
+                <UserCheck class="h-5 w-5 text-white" />
+                Phân công người phụ trách
+              </h3>
+              <p class="text-xs text-gray-500 mt-0.5">
+                Chỉ định thành viên quản lý tin tuyển dụng và hồ sơ ứng viên
+              </p>
+            </div>
+           <button
+              type="button"
+              class="px-4 py-2 text-xs font-semibold text-white bg-[#5b4eea] hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              @click="handleAssign"
+              :disabled="assigning || !selectedAssigneeId"
+            >
+              <Loader2 v-if="assigning" class="h-3.5 w-3.5 animate-spin" />
+              <span>{{ assigning ? '...' : 'Lưu' }}</span>
+            </button>
+          </div>
+
+          <!-- Modal Body -->
+          <div class="flex-1 overflow-y-auto space-y-4 bg-white rounded-xl rounded-tr-xl">
+            <!-- Search bar -->
+            <div class="relative">
+              <Search class="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                v-model="assigneeSearchQuery"
+                type="text"
+                placeholder="Tìm thành viên theo tên hoặc email..."
+                class="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-[#5b4eea] bg-gray-50/40 hover:bg-white transition-all"
+              />
+            </div>
+
+            <!-- Loading members -->
+            <div v-if="membersLoading" class="py-8 flex flex-col items-center justify-center text-gray-400">
+              <Loader2 class="h-6 w-6 animate-spin text-[#5b4eea] mb-2" />
+              <span class="text-xs">Đang tải danh sách thành viên...</span>
+            </div>
+
+            <!-- Members list -->
+            <div v-else-if="filteredMembers.length > 0" class="">
+              <div
+                v-for="member in filteredMembers"
+                :key="member.id"
+                @click="selectedAssigneeId = member.userId"
+                class="p-3 border transition-all cursor-pointer flex items-center justify-between gap-3"
+                
+              >
+                <div class="flex items-center gap-3 min-w-0">
+                  <!-- Avatar -->
+                  <div
+                    v-if="member.user?.avatarUrl"
+                    class="w-9 h-9 rounded-full overflow-hidden shrink-0 border border-gray-100"
+                  >
+                    <img :src="member.user.avatarUrl" :alt="member.user?.fullName || 'Avatar'" class="w-full h-full object-cover" />
+                  </div>
+                  <div
+                    v-else
+                    class="w-9 h-9 rounded-full bg-gradient-to-tr from-purple-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm"
+                  >
+                    {{ (member.user?.fullName || member.user?.email || 'M').charAt(0).toUpperCase() }}
+                  </div>
+
+                  <!-- Name and Email -->
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="text-xs font-semibold text-gray-900 truncate">
+                        {{ member.user?.fullName || member.user?.email?.split('@')[0] || 'Thành viên' }}
+                      </span>
+                      <span
+                        v-if="member.userId === auth.user?.id"
+                        class="px-1.5 py-0.2 text-[9px] font-semibold bg-emerald-100 text-emerald-700 rounded"
+                      >
+                        Bạn
+                      </span>
+                      <span
+                        class="px-1.5 py-0.2 text-[9px] font-medium rounded"
+                        :class="member.role === 'owner' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'"
+                      >
+                        {{ member.role === 'owner' ? 'Owner' : 'Member' }}
+                      </span>
+                    </div>
+                    <div class="text-[11px] text-gray-500 truncate mt-0.5">
+                      {{ member.user?.email }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Radio / Check icon -->
+                <div class="shrink-0 flex items-center">
+                  <div
+                    class="w-5 h-5 rounded-full border flex items-center justify-center transition-all"
+                    :class="
+                      selectedAssigneeId === member.userId
+                        ? 'border-[#5b4eea] bg-[#5b4eea] text-white'
+                        : 'border-gray-300 bg-white'
+                    "
+                  >
+                    <Check v-if="selectedAssigneeId === member.userId" class="h-3 w-3 stroke-[3]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Empty search state -->
+            <div v-else class="py-8 text-center text-gray-400">
+              <Users class="h-8 w-8 mx-auto mb-2 text-gray-300" />
+              <p class="text-xs">Không tìm thấy thành viên nào phù hợp</p>
+            </div>
+          </div>
+
+          <!-- Modal Footer -->
+          <!-- <div class="px-6 py-3.5 border-t border-gray-100 bg-slate-50/50 flex items-center justify-end gap-2.5">
+            <button
+              type="button"
+              class="px-4 py-2 text-xs font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer"
+              @click="assignModalOpen = false"
+              :disabled="assigning"
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              class="px-4 py-2 text-xs font-semibold text-white bg-[#5b4eea] hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              @click="handleAssign"
+              :disabled="assigning || !selectedAssigneeId"
+            >
+              <Loader2 v-if="assigning" class="h-3.5 w-3.5 animate-spin" />
+              <UserCheck v-else class="h-3.5 w-3.5" />
+              <span>{{ assigning ? 'Đang cập nhật...' : 'Xác nhận phân công' }}</span>
+            </button>
+          </div> -->
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+/* Đảm bảo toàn bộ mockup Job Detail dùng font Poppins đồng bộ */
+.font-poppins,
+.font-poppins * {
+  font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+}
+
+/* Giữ font mono chuyên dụng cho model name và scan ID */
+.font-poppins .font-mono,
+.font-poppins code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+}
+</style>

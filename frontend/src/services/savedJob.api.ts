@@ -16,7 +16,7 @@ export interface ApiResponse<T> {
 export const savedJobApi = {
   /**
    * GET /saved-jobs — danh sách job đã lưu (sort theo savedAt DESC ở backend).
-   * Có filter jobLevel/jobType/remoteOk/industry + pagination.
+   * Có filter jobLevel/jobType/workType/industry + pagination.
    */
   list: (params?: ListSavedJobsQuery) =>
     http.get<ApiResponse<ListSavedJobsResponse['data']> & {
