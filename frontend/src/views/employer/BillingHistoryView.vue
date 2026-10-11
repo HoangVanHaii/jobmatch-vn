@@ -28,6 +28,7 @@ import type { PlanUsage, SubscriptionHistoryItem } from '@/types/billing';
 import type { CountableQuotaKey } from '@/types/billing';
 import type { PaymentWithPlan, PaymentStatus } from '@/types/payment';
 import type { SubscriptionStatus } from '@/types/billing';
+import { formatDate, formatDateTime } from '@/utils/format';
 
 // ============================================================
 // Section 1+2: Plan & Quota
@@ -267,25 +268,6 @@ function formatPrice(v: string): string {
   return Number(v).toLocaleString('vi-VN') + 'đ';
 }
 
-function formatDate(iso: string): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
-}
-
-function formatDateTime(iso: string): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 const subStatusBadge: Record<SubscriptionStatus, { label: string; cls: string }> = {
   active: { label: 'Đang dùng', cls: 'bg-green-50 text-green-700 ring-green-200' },

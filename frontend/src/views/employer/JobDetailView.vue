@@ -25,6 +25,7 @@ import ConfirmModal from '@components/common/ConfirmModal.vue';
 import EditJobModal from '@components/employer/EditJobModal.vue';
 import UpgradePricing from '@components/pricing/UpgradePricing.vue';
 import type { JobDetail, JobStatus } from '@/types/job';
+import { formatDate, formatDateTime } from '@/utils/format';
 import { useSocket } from '@/composables/useSocket';
 import {
   ArrowLeft,
@@ -202,28 +203,6 @@ const FIELD_MAP: Record<string, string> = {
 // =========================================================================
 // FORMATTERS & LABELS
 // =========================================================================
-const formatDateTime = (dateStr?: string | Date): string => {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return String(dateStr);
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${hours}:${minutes} · ${day}/${month}/${year}`;
-};
-
-const formatDate = (dateStr?: string | Date | null): string => {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return String(dateStr);
-  const day = d.getDate();
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const month = months[d.getMonth()];
-  const year = d.getFullYear();
-  return `${day} ${month}, ${year}`;
-};
 
 const calculateDaysRemaining = (deadline?: string | Date | null): number => {
   if (!deadline) return 0;
@@ -905,15 +884,11 @@ const truncate = (s: string | null | undefined, max = 20): string => {
   return v.length > max ? `${v.slice(0, max)}…` : v;
 };
 
-const formatAppDate = (iso: string): string => {
-  const d = dayjs(iso);
-  return d.isValid() ? d.format('D [Thg] M, YYYY') : iso;
-};
-
 const formatAppTime = (iso: string): string => {
   const d = dayjs(iso);
   return d.isValid() ? d.format('HH:mm') : iso;
 };
+
 
 const applicationList = ref<JobApplicationItem[]>([]);
 const appLoading = ref(false);
@@ -2275,7 +2250,7 @@ useSocket('ai-test:ready', (payload: any) => {
             <!-- -------------------------------------------------------------
                  KHU VỰC H: CỘT PHẢI - JOB DETAIL
                  ------------------------------------------------------------- -->
-            <div class="mb-5">
+            <div class="mb-5"> 
               <!-- Tiêu đề Job Detail -->
               <div class="flex items-center gap-1.5 mb-2.5">
                 <BookOpen class="h-4 w-4 text-gray-700" />
@@ -2300,16 +2275,6 @@ useSocket('ai-test:ready', (payload: any) => {
                  KHU VỰC I: CỘT PHẢI - NGƯỜI PHỤ TRÁCH (ASSIGNEE)
                  ------------------------------------------------------------- -->
             <div>
-              <!-- Dải thông báo nội bộ màu tím nhạt -->
-              <div
-                class="rounded-lg bg-[#f6effe] border border-[#ebdcfc] px-3 py-1.5 flex items-center gap-1.5 mb-3"
-              >
-                <Info class="h-3.5 w-3.5 text-[#5b4eea] shrink-0" />
-                <p class="text-[11px] text-[#5b4eea] font-normal leading-tight">
-                  Người phụ trách chỉ hiển thị trong nội bộ doanh nghiệp.
-                </p>
-              </div>
-
               <!-- Tiêu đề + Nút Đổi người phụ trách -->
               <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-1.5">
@@ -2611,7 +2576,7 @@ useSocket('ai-test:ready', (payload: any) => {
               </div>
 
               <!-- Thời gian (Applied time) -->
-              <div class="hidden sm:block text-[12px] text-[#475569]" :title="formatAppDate(a.date)">
+              <div class="hidden sm:block text-[12px] text-[#475569]" :title="formatDate(a.date)">
                 {{ formatAppTime(a.date) }}
               </div>
             </div>

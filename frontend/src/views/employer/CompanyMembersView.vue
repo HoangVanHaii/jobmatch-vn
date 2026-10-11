@@ -25,6 +25,7 @@ import { useSocket } from '@composables/useSocket';
 import { companyApi } from '@services/company.api';
 import CreateCompanyModal from '@components/employer/CreateCompanyModal.vue';
 import ConfirmModal from '@components/common/ConfirmModal.vue';
+import { formatDate } from '@/utils/format';
 import type { Company } from '@/types/company';
 import type {
   CompanyMember,
@@ -745,17 +746,6 @@ const truncateId = (id: string, head = 8, tail = 4): string => {
   return `${id.slice(0, head)}…${id.slice(-tail)}`;
 };
 
-const formatDate = (iso: string): string => {
-  try {
-    return new Date(iso).toLocaleDateString('vi-VN', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-  } catch {
-    return iso;
-  }
-};
 
 const STATUS_LABELS: Record<CompanyMemberStatus, string> = {
   pending: 'Đã mời',

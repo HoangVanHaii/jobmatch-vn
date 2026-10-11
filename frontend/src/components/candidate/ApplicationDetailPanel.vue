@@ -34,6 +34,7 @@ import type {
   ApplicationStatusChangedPayload,
   CandidateApplicationRow,
 } from '@/types/application';
+import { formatDateTime } from '@/utils/format';
 
 dayjs.locale('vi');
 
@@ -516,10 +517,6 @@ const confirmWithdraw = async (): Promise<void> => {
 // ---------------------------------------------------------------------------
 // Formatters
 // ---------------------------------------------------------------------------
-const formatDateTime = (iso: string | null): string => {
-  if (!iso) return '';
-  return dayjs(iso).format('HH:mm DD/MM/YYYY');
-};
 </script>
 
 <template>

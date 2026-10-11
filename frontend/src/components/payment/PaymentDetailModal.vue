@@ -8,6 +8,7 @@ import { extractErrorMessage } from '@services/http';
 import { usePaymentUpdates } from '@composables/usePaymentUpdates';
 import type { PaymentWithPlan } from '@/types/payment';
 import type { PaymentStatus } from '@/types/payment';
+import { formatDateTime } from '@/utils/format';
 
 const props = defineProps<{
     open: boolean;
@@ -213,14 +214,6 @@ async function copyOrderCode(code: string) {
 
 function formatPrice(v: string | number): string {
     return Number(v).toLocaleString('vi-VN') + 'đ';
-}
-
-function formatDateTime(iso: string | null | undefined): string {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleString('vi-VN', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit',
-    });
 }
 
 // Local copy of payStatusBadge (same shape used in BillingHistoryView).

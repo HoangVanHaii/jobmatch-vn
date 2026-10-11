@@ -26,6 +26,7 @@ import { useAuthStore } from '@stores/auth';
 import { connectSocket } from '@services/socket';
 import { usePaymentUpdates } from '@composables/usePaymentUpdates';
 import type { Payment } from '@/types/payment';
+import { formatDate } from '@/utils/format';
 import {
   CircleCheck,
   CircleAlert,
@@ -199,16 +200,7 @@ const formattedAmount = computed<string>(() => {
   return Number(payment.value.amountVnd).toLocaleString('vi-VN') + 'đ';
 });
 
-const formattedDate = computed<string>(() => {
-  if (!payment.value?.createdAt) return '';
-  return new Date(payment.value.createdAt).toLocaleString('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-});
+const formattedDate = computed<string>(() => formatDate(payment.value?.createdAt));
 </script>
 
 <template>

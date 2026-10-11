@@ -42,18 +42,47 @@ export const jobStatusLabel = (status: string): string => {
   }
 };
 
+export type DateInput =
+  | string
+  | number
+  | Date
+  | { createdAt?: string | number | Date | null; updatedAt?: string | number | Date | null }
+  | null
+  | undefined;
+
 /**
- * Format ngày kiểu "07/09/2026" — dùng cho joined/last activity columns.
- * Trả '—' nếu invalid.
+ * Format ngày giờ dùng chung toàn app theo chuẩn "HH:mm · DD/MM/YYYY" (vd: "06:54 · 11/10/2026").
+ * Hỗ trợ string ISO, timestamp, Date, hoặc object chứa createdAt/updatedAt (vd: CV).
+ * Trả về chuỗi rỗng '' (hoặc fallback tuỳ chọn) nếu date không hợp lệ hoặc rỗng.
  */
-export const formatDate = (iso: string | Date | null | undefined): string => {
-  if (!iso) return '—';
-  const d = iso instanceof Date ? iso : new Date(iso);
-  if (isNaN(d.getTime())) return '—';
+export const formatDate = (
+  input: DateInput,
+  fallback = '',
+): string => {
+  if (!input) return fallback;
+
+  let raw: unknown = input;
+  if (typeof input === 'object' && !(input instanceof Date)) {
+    raw =
+      (input as { updatedAt?: unknown; createdAt?: unknown }).updatedAt ||
+      (input as { updatedAt?: unknown; createdAt?: unknown }).createdAt;
+    if (!raw) return fallback;
+  }
+
+  const d = raw instanceof Date ? raw : new Date(raw as string | number);
+  if (Number.isNaN(d.getTime())) return fallback;
+
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   const month = String(d.getMonth() + 1).padStart(2, '0');
-  return `${day}/${month}/${d.getFullYear()}`;
+  const year = d.getFullYear();
+
+  return `${hours}:${minutes} · ${day}/${month}/${year}`;
 };
+
+/** Alias formatDateTime → formatDate để đồng bộ toàn app */
+export const formatDateTime = formatDate;
 
 /**
  * Relative time tiếng Việt — "vừa xong", "5 phút trước", "3 giờ trước",
