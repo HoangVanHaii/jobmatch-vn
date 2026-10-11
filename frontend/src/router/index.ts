@@ -150,7 +150,6 @@ const routes: RouteRecordRaw[] = [
 
       // Mockup test route — xem nhanh UI mockup candidate list/detail, không gọi API.
       // Mockup Upgrade Plan page (static, không gọi API).
-      { path: 'test2', name: 'employer-test-plan', component: () => import('@views/employer/PlanMockupView.vue') },
       // Mockup TechNova landing page (static, không gọi API).
       { path: 'test3', name: 'employer-test-technova', component: () => import('@views/candidate/CompanyJobDetailView.vue') },
       // Mockup Facebook-style profile page (static, không gọi API).

@@ -365,7 +365,7 @@ const startDelayedSkeleton = (): void => {
 
   if (!hasLoadedOnce.value) {
     showSkeleton.value = true;
-  } else {
+  } else if (sortedNotifications.value.length === 0) {
     skeletonDelayTimer = setTimeout(() => {
       showSkeleton.value = true;
     }, 150);
@@ -709,6 +709,9 @@ const handleEnterKey = (item: NotificationItem): void => {
 // Skeleton loading có độ trễ
 const isLoading = computed(() => showSkeleton.value);
 const isWaitingNewData = computed(() => (isSwitchingTab.value || isSearching.value) && !showSkeleton.value);
+const isListFaded = computed(() => {
+  return isPaging.value || ((isSwitchingTab.value || isSearching.value) && hasLoadedOnce.value && sortedNotifications.value.length > 0);
+});
 
 const searchInputRef = ref<HTMLInputElement | null>(null);
 
@@ -758,7 +761,7 @@ onBeforeUnmount(() => {
     <div class="max-w-[1100px] mx-auto space-y-6">
 
     <!-- ================= 1. Tiêu đề trang ================= -->
-    <header class="anim-fade-up anim-delay-1">
+    <header class="nt-rise">
         <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight leading-tight">
         Trung tâm thông báo
         </h1>
@@ -769,7 +772,7 @@ onBeforeUnmount(() => {
 
 
     <!-- ================= 2. Thanh tìm kiếm & Bộ lọc Chips ================= -->
-    <div class="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 anim-fade-up anim-delay-2">
+    <div class="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 nt-rise nt-delay-1">
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:w-auto">
         <!-- Ô tìm kiếm bo góc vừa vặn rounded-lg, pl-9, có nút xóa từ khóa -->
         <div class="relative w-full sm:w-[250px] xl:w-[290px] shrink-0">
@@ -856,7 +859,7 @@ onBeforeUnmount(() => {
       v-if="notificationStore.pendingNew > 0"
       role="status"
       aria-live="polite"
-      class="flex items-center justify-center anim-fade-up"
+      class="flex items-center justify-center nt-rise"
     >
       <button
         type="button"
@@ -869,11 +872,11 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- ================= 3. Card danh sách thông báo ================= -->
-    <div class="bg-white rounded-xl border border-gray-200/90 shadow-2xs overflow-hidden anim-fade-up anim-delay-3">
+    <div class="bg-white rounded-xl border border-gray-200/90 shadow-2xs overflow-hidden nt-panel nt-delay-2">
         <!-- ================= A. Desktop: Table 4 Cột Chuẩn SaaS (Tiêu đề & Nội dung 1 Cột) ================= -->
         <div
           class="hidden lg:block overflow-hidden"
-          :class="{ 'pointer-events-none': isWaitingNewData }"
+          :class="{ 'pointer-events-none': isListFaded }"
         >
         <table class="w-full min-w-[640px] table-fixed text-left border-collapse">
             <!-- Colgroup cố định chính xác độ rộng từng cột, không xê dịch khi đổi nội dung -->
@@ -894,11 +897,11 @@ onBeforeUnmount(() => {
             </tr>
             </thead>
 
-            <!-- Table Body không hiệu ứng, chuyển đổi tức thời -->
+            <!-- Table Body mượt mà với chuyển động hàng và mờ khi phân trang/lọc -->
             <tbody
-              class="divide-y divide-gray-100 text-xs"
-              :class="{ 'pointer-events-none': isWaitingNewData }"
-              :aria-busy="isWaitingNewData ? 'true' : undefined"
+              class="divide-y divide-gray-100 text-xs transition-opacity duration-150"
+              :class="{ 'opacity-60 pointer-events-none': isListFaded }"
+              :aria-busy="isListFaded ? 'true' : undefined"
             >
               <!-- Skeleton Loading (6 dòng, mỗi dòng cố định h-[58px]) -->
               <tr
@@ -927,11 +930,12 @@ onBeforeUnmount(() => {
               <!-- Dữ liệu thông báo thực tế -->
               <template v-else>
                   <tr
-                  v-for="item in paginatedNotifications"
+                  v-for="(item, index) in paginatedNotifications"
                   :key="item.id"
                   tabindex="0"
                   :aria-label="item.title"
-                  class="h-[58px] transition-colors group cursor-pointer hover:bg-gray-100/60 focus-visible:outline-none focus-visible:bg-gray-100/60 focus-visible:ring-1 focus-visible:ring-gray-300"
+                  class="h-[58px] transition-colors group cursor-pointer hover:bg-gray-100/60 focus-visible:outline-none focus-visible:bg-gray-100/60 focus-visible:ring-1 focus-visible:ring-gray-300 nt-row"
+                  :style="{ animationDelay: `${Math.min(300, index * 40)}ms` }"
                   :class="[
                       item.readAt === null
                       ? 'bg-blue-50/20'
@@ -1071,11 +1075,14 @@ onBeforeUnmount(() => {
         <!-- ================= B. Mobile / Tablet: Responsive Notification Card List ================= -->
         <div
           class="block lg:hidden text-xs overflow-hidden"
-          :class="{ 'pointer-events-none': isWaitingNewData }"
-          :aria-busy="isWaitingNewData ? 'true' : undefined"
+          :class="{ 'pointer-events-none': isListFaded }"
+          :aria-busy="isListFaded ? 'true' : undefined"
         >
-          <!-- Khối mobile không hiệu ứng, chuyển đổi tức thời -->
-          <div class="divide-y divide-gray-100">
+          <!-- Khối mobile chuyển động mượt mà, mờ khi chuyển trang/lọc -->
+          <div
+            class="divide-y divide-gray-100 transition-opacity duration-150"
+            :class="{ 'opacity-60': isListFaded }"
+          >
             <!-- Skeleton Loading Mobile (4 cards giảm chiều cao) -->
             <template v-if="isLoading">
               <div
@@ -1120,12 +1127,13 @@ onBeforeUnmount(() => {
             <!-- Danh sách cards mobile / tablet -->
             <template v-else>
                 <div
-                v-for="item in paginatedNotifications"
+                v-for="(item, index) in paginatedNotifications"
                 :key="`m-${item.id}`"
                 tabindex="0"
                 role="button"
                 :aria-label="item.title"
-                class="p-3.5 sm:p-4 transition-colors cursor-pointer hover:bg-gray-100/60 active:bg-gray-100/80 focus-visible:outline-none focus-visible:bg-gray-100/60"
+                class="p-3.5 sm:p-4 transition-colors cursor-pointer hover:bg-gray-100/60 active:bg-gray-100/80 focus-visible:outline-none focus-visible:bg-gray-100/60 nt-row-m"
+                :style="{ animationDelay: `${Math.min(300, index * 40)}ms` }"
                 :class="[
                     item.readAt === null
                     ? 'bg-blue-50/20'
@@ -1203,7 +1211,7 @@ onBeforeUnmount(() => {
         <!-- Vỏ chân card luôn duy trì min-h-[57px] cố định ở mọi trạng thái (skeleton/dữ liệu/empty) -->
         <div
           class="border-t border-gray-100 min-h-[57px] px-3.5 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs bg-white"
-          :class="{ 'pointer-events-none': isWaitingNewData }"
+          :class="{ 'pointer-events-none': isListFaded }"
         >
           <!-- Skeleton thanh chân card khi isLoading -->
           <template v-if="isLoading">
@@ -1293,25 +1301,58 @@ scrollbar-width: none;
 }
 
 /* ============================================================================
-* Animations fade mượt mà, tinh tế (thuần túy opacity, không dùng transform để chống tràn scrollbar)
-* ==========================================================================*/
-@keyframes fadeUp {
-0% {
+ * Animations chuyển động mượt mà SaaS (chỉ transform và opacity)
+ * ==========================================================================*/
+@media (prefers-reduced-motion: no-preference) {
+  .nt-rise {
+    animation: nt-rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .nt-delay-1 { animation-delay: 70ms; }
+  .nt-delay-2 { animation-delay: 140ms; }
+
+  .nt-panel {
+    animation: nt-rise-sm 0.2s ease-out both;
+  }
+
+  .nt-row {
+    animation: nt-fade 0.25s ease-out both;
+  }
+
+  .nt-row-m {
+    animation: nt-rise-sm 0.25s ease-out both;
+  }
+}
+
+@keyframes nt-rise {
+  from {
     opacity: 0;
-}
-100% {
+    transform: translateY(8px);
+  }
+  to {
     opacity: 1;
-}
-}
-
-.anim-fade-up {
-opacity: 0;
-animation: fadeUp 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transform: translateY(0);
+  }
 }
 
-.anim-delay-1 { animation-delay: 15ms; }
-.anim-delay-2 { animation-delay: 35ms; }
-.anim-delay-3 { animation-delay: 55ms; }
+@keyframes nt-rise-sm {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes nt-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 
 /* Modifier highlight dòng thông báo mới (nền #5b4eea/8%, mờ dần sau 1.5s, không animation/transform) */
 .is-new {
@@ -1334,7 +1375,10 @@ animation: fadeUp 0.26s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .anim-fade-up,
+  .nt-rise,
+  .nt-panel,
+  .nt-row,
+  .nt-row-m,
   .anim-empty-fade {
     animation: none !important;
     opacity: 1 !important;
