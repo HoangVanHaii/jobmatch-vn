@@ -41,6 +41,12 @@ import type { Plan } from "@/types/plan";
 import type { CreatePaymentResponse } from "@/types/payment";
 import type { CountableQuotaKey } from "@/types/billing";
 
+type UserRole = "candidate" | "employer";
+
+const props = defineProps<{
+  role?: UserRole;
+}>();
+
 type BillingPeriod = "monthly" | "yearly";
 /** Tier gốc của plan — code BE: free / premium / professional (+ -yearly). */
 type TierCode = "free" | "premium" | "professional";
@@ -59,6 +65,41 @@ const router = useRouter();
 const auth = useAuthStore();
 const planStore = usePlanStore();
 const { plans } = storeToRefs(planStore);
+
+/** Role hiện tại: ưu tiên prop truyền vào, fallback sang user.role trong store (mặc định candidate). */
+const activeRole = computed<UserRole>(() => {
+  if (props.role) return props.role;
+  return auth.user?.role === "employer" ? "employer" : "candidate";
+});
+
+interface RolePricingConfig {
+  heading: string;
+  subtitle: string;
+  featureKeys: CountableQuotaKey[];
+  loginRedirect: string;
+  successRouteName: string;
+}
+
+const ROLE_CONFIG: Record<UserRole, RolePricingConfig> = {
+  candidate: {
+    heading: "Bảng giá đơn giản, phù hợp với bạn",
+    subtitle:
+      "Lựa chọn gói phù hợp với nhu cầu tìm việc của bạn. Tận dụng các công cụ hỗ trợ ứng tuyển và tối ưu CV để nâng cao hiệu quả tìm kiếm việc làm.",
+    featureKeys: ["ai_cv_match", "ai_cv_parsed", "ai_cv_analysis"],
+    loginRedirect: "/candidate/pricing",
+    successRouteName: "billing-success",
+  },
+  employer: {
+    heading: "Mở khóa sức mạnh tuyển dụng",
+    subtitle:
+      "Đăng tin nhiều hơn, sử dụng AI tạo mô tả việc làm và nâng cao hiệu quả tìm kiếm ứng viên chất lượng.",
+    featureKeys: ["job_post", "job_generation"],
+    loginRedirect: "/employer/pricing",
+    successRouteName: "employer-billing-success",
+  },
+};
+
+const roleConfig = computed(() => ROLE_CONFIG[activeRole.value]);
 
 const loading = ref(false);
 const errorMsg = ref("");
@@ -100,7 +141,7 @@ const TIER_META: Record<TierCode, { icon: Component; featured: boolean }> = {
   professional: { icon: Crown, featured: false },
 };
 
-/** Nhãn quota + thứ tự feature hiển thị trên card (candidate). */
+/** Nhãn quota tiếng Việt */
 const QUOTA_LABEL: Record<CountableQuotaKey, string> = {
   job_post: "Lượt đăng việc làm",
   job_generation: "Lượt tạo mô tả việc làm (AI)",
@@ -108,12 +149,6 @@ const QUOTA_LABEL: Record<CountableQuotaKey, string> = {
   ai_cv_analysis: "Chấm điểm CV bằng AI",
   ai_cv_match: "AI match hồ sơ",
 };
-
-const FEATURE_KEYS: CountableQuotaKey[] = [
-  "ai_cv_match",
-  "ai_cv_parsed",
-  "ai_cv_analysis",
-];
 
 /** Nền icon theo tier (mockup: mỗi gói 1 màu). */
 const ICON_CLASS: Record<TierCode, string> = {
@@ -189,6 +224,18 @@ function formatQuota(value: unknown): string {
   return `${value} lượt`;
 }
 
+const resolvePlanDescription = (
+  desc: Record<string, string> | string | null | undefined,
+  role: UserRole,
+): string => {
+  if (!desc) return "";
+  if (typeof desc === "object" && desc !== null) {
+    const map = desc as Record<string, string>;
+    return map[role] || map["candidate"] || "";
+  }
+  return String(desc);
+};
+
 /** Toggle tháng → plans 30 ngày (kèm Free) — 3 thẻ; năm → plans 365 ngày,
  *  ẩn Free — đúng 2 thẻ gói năm. Card 333px, tab năm justify-evenly: khoảng
  *  cách mép↔card = card↔card = card↔mép (~124.7px). */
@@ -205,17 +252,19 @@ const displayPlans = computed<PlanCard[]>(() => {
     const meta = TIER_META[tier] ?? TIER_META.free;
     const isFree = p.code === "free" || Number(p.priceVnd) === 0;
 
-    const features = FEATURE_KEYS.filter((k) => k in p.features).map((k) => ({
-      label: QUOTA_LABEL[k],
-      value: formatQuota(p.features[k]),
-    }));
+    const features = roleConfig.value.featureKeys
+      .filter((k) => k in p.features)
+      .map((k) => ({
+        label: QUOTA_LABEL[k],
+        value: formatQuota(p.features[k]),
+      }));
 
     return {
       plan: p,
       tier,
       icon: meta.icon,
       name: p.name,
-      description: p.description ?? "",
+      description: resolvePlanDescription(p.description, activeRole.value),
       featured: meta.featured,
       isFree,
       isCurrent: currentPlanCode.value === p.code,
@@ -244,7 +293,7 @@ const tryBuy = (card: PlanCard): void => {
   if (!auth.isAuthenticated) {
     router.push({
       name: "login",
-      query: { redirect: "/candidate/pricing" },
+      query: { redirect: roleConfig.value.loginRedirect },
     });
     return;
   }
@@ -326,7 +375,7 @@ const onPaymentSuccess = async (): Promise<void> => {
   qrPaymentData.value = null;
   qrPlan.value = null;
   await router.push({
-    name: "billing-success",
+    name: roleConfig.value.successRouteName,
     query: orderCode ? { orderCode, status: "PAID" } : undefined,
   });
 };
@@ -400,15 +449,13 @@ const DECOR_RIGHT = [
           <h1
             class="text-[22px] leading-[1.2] font-semibold tracking-[-1px] mb-3 min-[481px]:text-[26px] min-[801px]:text-[30px] min-[1051px]:text-[clamp(23px,3.6vh,32px)]"
           >
-            Bảng giá đơn giản, phù hợp với bạn
+            {{ roleConfig.heading }}
           </h1>
 
           <p
             class="max-w-[720px] mx-auto text-[13px] leading-[1.55] text-white/90 min-[481px]:text-sm min-[1051px]:text-[clamp(13px,1.8vh,16px)]"
           >
-            Lựa chọn gói phù hợp với nhu cầu tìm việc của bạn. Tận dụng các công
-            cụ hỗ trợ ứng tuyển và tối ưu CV để nâng cao hiệu quả tìm kiếm việc
-            làm.
+            {{ roleConfig.subtitle }}
           </p>
         </div>
 

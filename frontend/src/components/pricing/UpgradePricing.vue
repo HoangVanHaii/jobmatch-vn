@@ -199,6 +199,17 @@ const isSelectedFree = computed<boolean>(
     Number(currentSelectedPlan.value.priceVnd) === 0,
 );
 
+const selectedPlanDescription = computed<string>(() => {
+  const desc = currentSelectedPlan.value?.description;
+  if (!desc) return "";
+  if (typeof desc === "object" && desc !== null) {
+    const map = desc as Record<string, string>;
+    const role = auth.user?.role === "employer" ? "employer" : "candidate";
+    return map[role] || map["candidate"] || "";
+  }
+  return String(desc);
+});
+
 /* ============================================================================
  * Flow mua & xác nhận (Đồng bộ với PricingComponent.vue)
  * ==========================================================================*/
@@ -570,7 +581,7 @@ watch(
             >
               <!-- Mô tả của gói đang chọn (từ API) -->
               <p class="text-[11px] leading-relaxed text-white/90">
-                {{ currentSelectedPlan?.description }}
+                {{ selectedPlanDescription }}
               </p>
             </div>
           </div>
