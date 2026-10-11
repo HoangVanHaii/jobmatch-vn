@@ -197,8 +197,8 @@ export const jobUpdateSchema = z
     workType: workTypeEnum.optional(),
     experienceYearsMin: z.coerce.number().int().nonnegative().optional(),
     experienceYearsMax: z.coerce.number().int().nonnegative().optional(),
-    requiredSkills: skillsSchema.optional().default([]),
-    niceToHaveSkills: skillsSchema.optional().default([]),
+    requiredSkills: skillsSchema.optional(),
+    niceToHaveSkills: skillsSchema.optional(),
     deadline: z.string().datetime().optional(),
     status: jobStatusEnum.optional(),
     /** Cập nhật badge status — xem createSchema. Optional để không phá patch. */

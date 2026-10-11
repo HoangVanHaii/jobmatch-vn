@@ -54,6 +54,9 @@ export interface JobListItem {
   salaryVisible: boolean | null;
   location: JobLocation | null;
   workType: WorkType;
+  experienceYearsMin?: number | null;
+  experienceYearsMax?: number | null;
+  requiredSkills?: string[];
   deadline: Date | null;
   status: JobStatus;
   /** Badge status cho JobSearchView — mirror DB cột `hiring_status`. */
