@@ -2250,7 +2250,7 @@ useSocket('ai-test:ready', (payload: any) => {
             <!-- -------------------------------------------------------------
                  KHU VỰC H: CỘT PHẢI - JOB DETAIL
                  ------------------------------------------------------------- -->
-            <div class="mb-5">
+            <div class="mb-5"> 
               <!-- Tiêu đề Job Detail -->
               <div class="flex items-center gap-1.5 mb-2.5">
                 <BookOpen class="h-4 w-4 text-gray-700" />
