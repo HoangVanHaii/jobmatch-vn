@@ -26,7 +26,7 @@ import ConfirmModal from '@components/common/ConfirmModal.vue';
 import EditJobModal from '@components/employer/EditJobModal.vue';
 import CreateJobModal from '@components/employer/CreateJobModal.vue';
 import { useToastStore } from '@stores/toast';
-import type { JobLevel, JobStatus, JobType } from '@/types/job';
+import type { JobLevel, JobStatus, JobType, WorkType } from '@/types/job';
 
 const store = useEmployerJobStore();
 const { items, total, page, pageSize, totalPages, loading, error } = storeToRefs(store);
@@ -49,7 +49,7 @@ const clearSearch = (): void => {
 /* ============================================================================
  * Filter dropdowns
  * ==========================================================================*/
-type DropdownKey = 'status' | 'location' | 'jobType' | 'jobLevel' | 'remote' | 'industry';
+type DropdownKey = 'status' | 'location' | 'jobType' | 'jobLevel' | 'workType' | 'industry';
 const openDropdown = ref<DropdownKey | null>(null);
 
 const handleDocClick = (e: MouseEvent): void => {
@@ -130,18 +130,19 @@ const handleJobLevelSelect = (v: JobLevel | null): void => {
   void store.fetchList({ jobLevel: v ?? undefined }, 1);
 };
 
-/* remote */
-type RemoteValue = boolean | null;
-const remoteOptions: Array<{ value: RemoteValue; label: string }> = [
+/* workType */
+type WorkTypeValue = WorkType | null;
+const workTypeOptions: Array<{ value: WorkTypeValue; label: string }> = [
   { value: null, label: 'Tất cả hình thức' },
-  { value: true, label: 'Có thể remote' },
-  { value: false, label: 'Tại văn phòng' },
+  { value: 'onsite', label: 'Tại văn phòng' },
+  { value: 'hybrid', label: 'Hybrid' },
+  { value: 'remote', label: 'Từ xa (Remote)' },
 ];
-const currentRemote = ref<RemoteValue>(null);
-const handleRemoteSelect = (v: RemoteValue): void => {
-  currentRemote.value = v;
+const currentWorkType = ref<WorkTypeValue>(null);
+const handleWorkTypeSelect = (v: WorkTypeValue): void => {
+  currentWorkType.value = v;
   openDropdown.value = null;
-  void store.fetchList({ remoteOk: v ?? undefined }, 1);
+  void store.fetchList({ workType: v ?? undefined }, 1);
 };
 
 /* Industry — fetch distinct từ API (giống JobsView). */
@@ -198,9 +199,9 @@ const activeChips = computed<ActiveChip[]>(() => {
     const opt = jobLevelOptions.find((o) => o.value === currentJobLevel.value);
     chips.push({ key: 'jobLevel', label: opt?.label ?? currentJobLevel.value, onRemove: () => handleJobLevelSelect(null) });
   }
-  if (currentRemote.value !== null) {
-    const opt = remoteOptions.find((o) => o.value === currentRemote.value);
-    chips.push({ key: 'remote', label: opt?.label ?? '', onRemove: () => handleRemoteSelect(null) });
+  if (currentWorkType.value !== null) {
+    const opt = workTypeOptions.find((o) => o.value === currentWorkType.value);
+    chips.push({ key: 'workType', label: opt?.label ?? '', onRemove: () => handleWorkTypeSelect(null) });
   }
   if (currentIndustry.value) {
     chips.push({ key: 'industry', label: currentIndustry.value, onRemove: () => handleIndustrySelect(null) });
@@ -219,7 +220,7 @@ const resetAllFilters = async (): Promise<void> => {
   currentLocationDisplay.value = null;
   currentJobType.value = null;
   currentJobLevel.value = null;
-  currentRemote.value = null;
+  currentWorkType.value = null;
   currentIndustry.value = null;
   store.resetFilters();
   await store.fetchList({}, 1);
@@ -304,7 +305,7 @@ const initFresh = async (): Promise<void> => {
   currentLocationDisplay.value = null;
   currentJobType.value = null;
   currentJobLevel.value = null;
-  currentRemote.value = null;
+  currentWorkType.value = null;
   currentIndustry.value = null;
   store.resetFilters();
   await store.fetchList();
@@ -335,7 +336,7 @@ const triggerLabel = (key: DropdownKey, currentLabel: string | null): string => 
     location: 'Địa điểm',
     jobType: 'Loại hình',
     jobLevel: 'Cấp bậc',
-    remote: 'Hình thức',
+    workType: 'Hình thức',
     industry: 'Ngành nghề',
   };
   return defaults[key];
@@ -353,9 +354,9 @@ const currentTriggerLabel = (key: DropdownKey): string | null => {
     case 'jobLevel':
       if (currentJobLevel.value === null) return null;
       return jobLevelOptions.find((o) => o.value === currentJobLevel.value)?.label ?? null;
-    case 'remote':
-      if (currentRemote.value === null) return null;
-      return remoteOptions.find((o) => o.value === currentRemote.value)?.label ?? null;
+    case 'workType':
+      if (currentWorkType.value === null) return null;
+      return workTypeOptions.find((o) => o.value === currentWorkType.value)?.label ?? null;
     case 'industry':
       return currentIndustry.value;
   }
@@ -628,31 +629,31 @@ const currentTriggerLabel = (key: DropdownKey): string | null => {
           <button
             type="button"
             class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border bg-white transition"
-            :class="currentRemote !== null
+            :class="currentWorkType !== null
               ? 'border-primary-200 bg-primary-50 text-primary-700'
               : 'border-gray-200 text-gray-700 hover:bg-gray-50'"
-            @click="toggleDropdown('remote')"
+            @click="toggleDropdown('workType')"
           >
             <Briefcase class="w-3.5 h-3.5" />
-            {{ triggerLabel('remote', currentTriggerLabel('remote')) }}
+            {{ triggerLabel('workType', currentTriggerLabel('workType')) }}
             <ChevronDown class="w-3 h-3 opacity-60" />
           </button>
           <div
-            v-if="openDropdown === 'remote'"
+            v-if="openDropdown === 'workType'"
             class="absolute left-0 top-full mt-1.5 z-20 w-48 rounded-lg border border-gray-200 bg-white shadow-lg py-1"
             @click.stop
           >
-            <template v-for="(opt, idx) in remoteOptions" :key="opt.label">
+            <template v-for="(opt, idx) in workTypeOptions" :key="opt.label">
               <button
                 type="button"
                 class="w-full px-3 py-1.5 text-xs text-left hover:bg-gray-50 flex items-center justify-between"
-                :class="currentRemote === opt.value ? 'text-primary-700 font-medium' : 'text-gray-700'"
-                @click="handleRemoteSelect(opt.value)"
+                :class="currentWorkType === opt.value ? 'text-primary-700 font-medium' : 'text-gray-700'"
+                @click="handleWorkTypeSelect(opt.value)"
               >
                 {{ opt.label }}
-                <Check v-if="currentRemote === opt.value" class="w-3.5 h-3.5 text-primary-600" />
+                <Check v-if="currentWorkType === opt.value" class="w-3.5 h-3.5 text-primary-600" />
               </button>
-              <div v-if="idx === 0 && remoteOptions.length > 1" class="h-px bg-gray-100 my-1" />
+              <div v-if="idx === 0 && workTypeOptions.length > 1" class="h-px bg-gray-100 my-1" />
             </template>
           </div>
         </div>

@@ -192,10 +192,16 @@ const onApplicants = (e: MouseEvent): void => {
         {{ salaryLabel }}
       </span>
       <span
-        v-if="job.remoteOk"
+        v-if="job.workType === 'remote'"
         class="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700"
       >
-        Remote OK
+        Remote
+      </span>
+      <span
+        v-else-if="job.workType === 'hybrid'"
+        class="inline-flex items-center rounded-md bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700"
+      >
+        Hybrid
       </span>
     </div>
 

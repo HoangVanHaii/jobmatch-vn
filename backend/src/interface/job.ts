@@ -31,15 +31,15 @@ export interface JobLocation {
   lng?: number;
 }
 
+export type WorkType = 'remote' | 'onsite' | 'hybrid';
+
 /** Một job record — DB row đầy đủ (Drizzle inferred).
- *  Lưu ý: salaryCurrency/salaryVisible/remoteOk/featured lý thuyết nullable
- *  vì schema dùng `.default(...)` không `.notNull()`. Mặc dù DB luôn có giá trị
- *  (nhờ default), TS khoan dung null để khớp với Drizzle inferred type.
  *  searchTsv: tsvector GENERATED — không nên lộ ra API (TODO: loại bằng select). */
 export interface Job {
   id: string;
   companyId: string;
   postedBy: string;
+  assignedTo: string | null;
   title: string;
   slug: string | null;
   description: string;
@@ -53,7 +53,7 @@ export interface Job {
   salaryCurrency: string | null;
   salaryVisible: boolean | null;
   location: JobLocation | null;
-  remoteOk: boolean | null;
+  workType: WorkType;
   experienceYearsMin: number | null;
   experienceYearsMax: number | null;
   requiredSkills: string[];
@@ -68,9 +68,25 @@ export interface Job {
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
-  extraData: Record<string, unknown> | null;
+  extraData: JobExtraData | null;
   /** @internal tsvector GENERATED — không nên lộ ra response client. */
   searchTsv: string | null;
+}
+
+export type PaymentCycleType = 'weekly' | 'monthly' | 'contract';
+
+/**
+ * Cấu trúc JSONB linh hoạt lưu trong cột `jobs.extra_data` ở cơ sở dữ liệu.
+ * Dùng cho các trường mở rộng không có cột SQL riêng như Chu kỳ trả lương,
+ * chuyên môn giáo trình, danh sách hội đồng tuyển dụng và kênh đăng tin.
+ */
+export interface JobExtraData {
+  paymentType?: PaymentCycleType;
+  paymentTypeLabel?: string;
+  curriculumSpecialists?: string[];
+  teamMembers?: Array<{ id: string; name: string; email: string; role: string; selected?: boolean }>;
+  shareChannels?: Record<string, boolean>;
+  [key: string]: unknown;
 }
 // src/interface/job.ts — thêm
 export interface JobListItem {
@@ -78,6 +94,8 @@ export interface JobListItem {
   title: string;
   slug: string | null;
   companyId: string;
+  postedBy?: string;
+  assignedTo?: string | null;
   /**
    * Tên + logo công ty — LEFT JOIN từ bảng `companies` trong service để frontend
    * không phải gọi thêm API. NULL nếu job.companyId trỏ tới company đã xoá /
@@ -96,7 +114,7 @@ export interface JobListItem {
   salaryCurrency: string | null;
   salaryVisible: boolean | null;
   location: JobLocation | null;
-  remoteOk: boolean | null;
+  workType: WorkType;
   deadline: Date | null;
   status: JobStatus;
   /** Badge status cho FE — mirror cột `jobs.hiring_status` ở DB. Default
@@ -147,11 +165,29 @@ export interface JobDetailResponse {
  *     hơn list. Tách interface giúp caller biết rõ cost.
  *   - FE có thể check optional `feedbacks` để biết response từ endpoint nào.
  */
+export interface AdjacentJob {
+  id: string;
+  title: string;
+}
+
+export interface AssignedUserInfo {
+  id: string;
+  fullName: string | null;
+  email: string;
+  avatarUrl: string | null;
+}
+
 export interface JobDetailPayload extends Job {
+  /** Thông tin người phụ trách tin tuyển dụng (nếu có). */
+  assignedToUser?: AssignedUserInfo | null;
   /** Danh sách feedback mới nhất trước, cap 200. Empty array nếu chưa có. */
   feedbacks: JobFeedback[];
   /** Aggregate rating — count + average. */
   feedbackStats: JobRatingStats;
+  /** Job liền trước (mới hơn) của cùng công ty. */
+  prevJob?: AdjacentJob | null;
+  /** Job liền sau (cũ hơn) của cùng công ty. */
+  nextJob?: AdjacentJob | null;
 }
 
 /**

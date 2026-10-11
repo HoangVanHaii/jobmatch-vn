@@ -22,7 +22,7 @@ import {
   userProfiles,
   companyMembers,
 } from '../db/schema';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
 import { notificationService } from './notification.service';
@@ -97,13 +97,14 @@ const snapshotCv = async (cvId: string, candidateId: string): Promise<Applicatio
  */
 const assertJobIsApplyable = async (
   jobId: string,
-): Promise<{ companyId: string; postedBy: string }> => {
+): Promise<{ companyId: string; postedBy: string; assignedTo: string | null }> => {
   const [job] = await db
     .select({
       id: jobs.id,
       status: jobs.status,
       companyId: jobs.companyId,
       postedBy: jobs.postedBy,
+      assignedTo: jobs.assignedTo,
       deadline: jobs.deadline,
     })
     .from(jobs)
@@ -127,7 +128,7 @@ const assertJobIsApplyable = async (
     throw new AppError(500, 'JOB_DATA_INVALID', 'Job thiếu companyId — liên hệ admin');
   }
 
-  return { companyId: job.companyId, postedBy: job.postedBy };
+  return { companyId: job.companyId, postedBy: job.postedBy, assignedTo: job.assignedTo };
 };
 
 // ============================================================================
@@ -282,7 +283,7 @@ export const create = async (
   input: CreateApplicationInput,
   candidateId: string,
 ): Promise<{ id: string; status: ApplicationStatusValue }> => {
-  const { postedBy, companyId } = await assertJobIsApplyable(input.jobId);
+  const { postedBy, companyId, assignedTo } = await assertJobIsApplyable(input.jobId);
 
   if (!input.cvId) {
     throw new AppError(400, 'CV_ID_REQUIRED', 'Vui lòng chọn CV để ứng tuyển.');
@@ -290,32 +291,46 @@ export const create = async (
   const cvSnapshot = await snapshotCv(input.cvId, candidateId);
 
   try {
-    const [created] = await db
-      .insert(applications)
-      .values({
-        candidateId,
-        jobId: input.jobId,
-        cvId: input.cvId,
-        cv: cvSnapshot,
-        coverLetter: input.coverLetter ?? null,
-        status: 'pending',
-        stage: 'new',
-        // aiMatchScore + aiMatchReasoning: NULL ban đầu, AI worker sẽ fill sau.
-        isAnonymous: false,
-      })
-      .returning({ id: applications.id, status: applications.status });
+    const created = await db.transaction(async (tx) => {
+      const [app] = await tx
+        .insert(applications)
+        .values({
+          candidateId,
+          jobId: input.jobId,
+          cvId: input.cvId,
+          cv: cvSnapshot,
+          coverLetter: input.coverLetter ?? null,
+          status: 'pending',
+          stage: 'new',
+          // aiMatchScore + aiMatchReasoning: NULL ban đầu, AI worker sẽ fill sau.
+          isAnonymous: false,
+        })
+        .returning({ id: applications.id, status: applications.status });
 
-    if (!created) {
-      throw new AppError(500, 'INSERT_FAILED', 'Không tạo được application');
-    }
+      if (!app) {
+        throw new AppError(500, 'INSERT_FAILED', 'Không tạo được application');
+      }
 
-    void notifyEmployerOfNewApplication({
-      employerId: postedBy,
-      applicationId: created.id,
-      jobId: input.jobId,
-      candidateId,
-      companyId,
+      // Cập nhật nguyên tử: tăng số lượt nộp hồ sơ của job (+1)
+      await tx
+        .update(jobs)
+        .set({ appliesCount: sql`${jobs.appliesCount} + 1` })
+        .where(eq(jobs.id, input.jobId));
+
+      return app;
     });
+
+    const notifyRecipients = new Set<string>([postedBy]);
+    if (assignedTo) notifyRecipients.add(assignedTo);
+    for (const recipientId of notifyRecipients) {
+      void notifyEmployerOfNewApplication({
+        employerId: recipientId,
+        applicationId: created.id,
+        jobId: input.jobId,
+        candidateId,
+        companyId,
+      });
+    }
 
     // Reserve quota AI match của CANDIDATE. Hết lượt KHÔNG chặn nộp hồ sơ
     // (quyết định product): application vẫn tạo OK, service tự ghi reasoning
@@ -553,6 +568,7 @@ export const getById = async (
       jobLocation: jobs.location,
       jobDeadline: jobs.deadline,
       jobPostedBy: jobs.postedBy,
+      jobAssignedTo: jobs.assignedTo,
       companyId: companies.id,
       companyName: companies.name,
       companyLogoUrl: companies.logoUrl,
@@ -579,8 +595,27 @@ export const getById = async (
   if (userRole === 'candidate' && row.candidateId !== userId) {
     throw new AppError(404, 'APPLICATION_NOT_FOUND', 'Application không tồn tại');
   }
-  if (userRole === 'employer' && row.jobPostedBy !== userId) {
-    throw new AppError(404, 'APPLICATION_NOT_FOUND', 'Application không tồn tại');
+  if (userRole === 'employer') {
+    let canAccess = row.jobPostedBy === userId || row.jobAssignedTo === userId;
+    if (!canAccess && row.companyId) {
+      const [membership] = await db
+        .select({ role: companyMembers.role })
+        .from(companyMembers)
+        .where(
+          and(
+            eq(companyMembers.companyId, row.companyId),
+            eq(companyMembers.userId, userId),
+            eq(companyMembers.status, 'active'),
+          ),
+        )
+        .limit(1);
+      if (membership?.role === 'owner') {
+        canAccess = true;
+      }
+    }
+    if (!canAccess) {
+      throw new AppError(404, 'APPLICATION_NOT_FOUND', 'Application không tồn tại');
+    }
   }
  if (userRole !== 'candidate' && row.status === 'pending') {
     const now = new Date();
@@ -600,11 +635,12 @@ export const getById = async (
     }
   }
 
-  // Strip helper field `candidateId` (chỉ dùng cho auth scoping, không
+  // Strip helper fields `candidateId` và `jobAssignedTo` (chỉ dùng cho auth scoping, không
   // nằm trong ApplicationDetail public shape). `jobPostedBy` GIỮ LẠI vì FE
   // dùng để bấm "Liên hệ" → tạo conversation với employer đăng job.
-  const { candidateId: _candidateId, ...rest } = row;
+  const { candidateId: _candidateId, jobAssignedTo: _jobAssignedTo, ...rest } = row;
   void _candidateId;
+  void _jobAssignedTo;
   return rest as unknown as ApplicationDetail;
 };
 
@@ -622,14 +658,46 @@ export const listByJob = async (
   employerRole: 'employer' | 'admin',
   query: ApplicationListQuery,
 ): Promise<{ rows: EmployerApplicationRow[]; total: number; page: number; limit: number }> => {
-  const { companyId, postedBy } = await assertJobIsApplyable(jobId);
+  const [job] = await db
+    .select({
+      id: jobs.id,
+      companyId: jobs.companyId,
+      postedBy: jobs.postedBy,
+      assignedTo: jobs.assignedTo,
+    })
+    .from(jobs)
+    .where(eq(jobs.id, jobId))
+    .limit(1);
 
-  if (employerRole !== 'admin' && postedBy !== employerId) {
-    throw new AppError(
-      403,
-      'JOB_FORBIDDEN',
-      'Bạn không sở hữu job này (chỉ người đăng job hoặc admin mới xem được).',
-    );
+  if (!job) {
+    throw new AppError(404, 'JOB_NOT_FOUND', 'Job không tồn tại hoặc đã bị xoá');
+  }
+
+  if (employerRole !== 'admin') {
+    let canAccess = job.postedBy === employerId || job.assignedTo === employerId;
+    if (!canAccess && job.companyId) {
+      const [membership] = await db
+        .select({ role: companyMembers.role })
+        .from(companyMembers)
+        .where(
+          and(
+            eq(companyMembers.companyId, job.companyId),
+            eq(companyMembers.userId, employerId),
+            eq(companyMembers.status, 'active'),
+          ),
+        )
+        .limit(1);
+      if (membership?.role === 'owner') {
+        canAccess = true;
+      }
+    }
+    if (!canAccess) {
+      throw new AppError(
+        403,
+        'JOB_FORBIDDEN',
+        'Bạn không có quyền quản lý đơn ứng tuyển của tin này (chỉ người tạo, người được gán, hoặc chủ doanh nghiệp mới có quyền).',
+      );
+    }
   }
 
   const { status, page, limit } = normalizeListQuery(query);
@@ -689,7 +757,9 @@ export const listByJob = async (
  *
  * Auth scoping:
  *   - Admin pass luôn (xem tất cả).
- *   - Employer: lấy danh sách companyIds user là active member → query apps theo IN (...).
+ *   - Employer:
+ *     + Owner: thấy tất cả applications của công ty mình làm owner.
+ *     + Member thường: chỉ thấy applications của tin mình tạo (postedBy) hoặc được gán (assignedTo).
  *
  * Nếu user không thuộc công ty nào → trả về [].
  *
@@ -703,14 +773,14 @@ export const listByCompany = async (
 ): Promise<{ rows: EmployerApplicationRow[]; total: number; page: number; limit: number }> => {
   const { status, jobId, page, limit } = normalizeListQuery(query);
 
-  let companyIds: string[] = [];
+  let companyConditions: ReturnType<typeof and> | ReturnType<typeof or> | ReturnType<typeof inArray> | undefined = undefined;
 
   if (employerRole === 'admin') {
     // Admin xem tất cả — skip filter companyIds.
-    companyIds = [];
+    companyConditions = undefined;
   } else {
     const memberships = await db
-      .select({ companyId: companyMembers.companyId })
+      .select({ companyId: companyMembers.companyId, role: companyMembers.role })
       .from(companyMembers)
       .where(
         and(
@@ -718,21 +788,46 @@ export const listByCompany = async (
           eq(companyMembers.status, 'active'),
         ),
       );
-    companyIds = memberships.map((m) => m.companyId);
 
-    if (companyIds.length === 0) {
+    if (memberships.length === 0) {
       return { rows: [], total: 0, page, limit };
+    }
+
+    const ownerCompanyIds = memberships
+      .filter((m) => m.role === 'owner')
+      .map((m) => m.companyId);
+    const memberCompanyIds = memberships
+      .filter((m) => m.role === 'member')
+      .map((m) => m.companyId);
+
+    const scopedConditions = [];
+    if (ownerCompanyIds.length > 0) {
+      scopedConditions.push(inArray(jobs.companyId, ownerCompanyIds));
+    }
+    if (memberCompanyIds.length > 0) {
+      scopedConditions.push(
+        and(
+          inArray(jobs.companyId, memberCompanyIds),
+          or(eq(jobs.postedBy, employerId), eq(jobs.assignedTo, employerId)),
+        ),
+      );
+    }
+
+    if (scopedConditions.length === 1) {
+      companyConditions = scopedConditions[0];
+    } else if (scopedConditions.length > 1) {
+      companyConditions = or(...scopedConditions);
     }
   }
 
   // Build where clause:
   //   - Nếu admin: chỉ filter status + optional jobId.
-  //   - Nếu employer: lọc job.companyId IN companyIds, plus status + optional jobId.
+  //   - Nếu employer: lọc theo scoped company conditions + status + optional jobId.
   const conditions = [];
   if (status) conditions.push(eq(applications.status, status));
   if (jobId) conditions.push(eq(applications.jobId, jobId));
-  if (companyIds.length > 0) {
-    conditions.push(inArray(jobs.companyId, companyIds));
+  if (companyConditions) {
+    conditions.push(companyConditions);
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -930,10 +1025,13 @@ export const recomputeMatch = async (
     throw new AppError(404, 'APPLICATION_NOT_FOUND', 'Application không tồn tại');
   }
 
-  // Ownership check: reuse listByJob (nó đã assertJobIsApplyable + check postedBy).
-  // Lấy thêm postedBy từ job để không cần query riêng.
+  // Lấy thêm postedBy, assignedTo, companyId từ job
   const [job] = await db
-    .select({ postedBy: jobs.postedBy })
+    .select({
+      postedBy: jobs.postedBy,
+      assignedTo: jobs.assignedTo,
+      companyId: jobs.companyId,
+    })
     .from(jobs)
     .where(eq(jobs.id, app.jobId))
     .limit(1);
@@ -942,12 +1040,31 @@ export const recomputeMatch = async (
     throw new AppError(404, 'JOB_NOT_FOUND', 'Job của application này không còn tồn tại');
   }
 
-  if (employerRole !== 'admin' && job.postedBy !== employerId) {
-    throw new AppError(
-      403,
-      'JOB_FORBIDDEN',
-      'Bạn không sở hữu job này (chỉ người đăng job hoặc admin mới recompute được).',
-    );
+  if (employerRole !== 'admin') {
+    let canAccess = job.postedBy === employerId || job.assignedTo === employerId;
+    if (!canAccess && job.companyId) {
+      const [membership] = await db
+        .select({ role: companyMembers.role })
+        .from(companyMembers)
+        .where(
+          and(
+            eq(companyMembers.companyId, job.companyId),
+            eq(companyMembers.userId, employerId),
+            eq(companyMembers.status, 'active'),
+          ),
+        )
+        .limit(1);
+      if (membership?.role === 'owner') {
+        canAccess = true;
+      }
+    }
+    if (!canAccess) {
+      throw new AppError(
+        403,
+        'JOB_FORBIDDEN',
+        'Bạn không có quyền quản lý đơn ứng tuyển của tin này (chỉ người tạo, người được gán, hoặc chủ doanh nghiệp mới có quyền).',
+      );
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -1138,6 +1255,7 @@ const notifyEmployerOfWithdrawal = async (params: {
     const [row] = await db
       .select({
         employerId: jobs.postedBy,
+        assignedTo: jobs.assignedTo,
         candidateName: userProfiles.fullName,
         jobTitle: jobs.title,
         jobSlug: jobs.slug,
@@ -1154,20 +1272,25 @@ const notifyEmployerOfWithdrawal = async (params: {
     const candidateName = row.candidateName ?? 'Một ứng viên';
     const jobTitle = row.jobTitle ?? 'một job';
 
-    await notificationService.create({
-      userId: row.employerId,
-      type: 'application_withdrawn',
-      title: `${candidateName} đã rút đơn ứng tuyển ${jobTitle}`,
-      payload: {
-        applicationId,
-        jobId,
-        jobTitle: row.jobTitle,
-        jobSlug: row.jobSlug,
-        candidateId,
-        candidateName: row.candidateName,
-        withdrawnAt: new Date().toISOString(),
-      },
-    });
+    const notifyRecipients = new Set<string>([row.employerId]);
+    if (row.assignedTo) notifyRecipients.add(row.assignedTo);
+
+    for (const recipientId of notifyRecipients) {
+      await notificationService.create({
+        userId: recipientId,
+        type: 'application_withdrawn',
+        title: `${candidateName} đã rút đơn ứng tuyển ${jobTitle}`,
+        payload: {
+          applicationId,
+          jobId,
+          jobTitle: row.jobTitle,
+          jobSlug: row.jobSlug,
+          candidateId,
+          candidateName: row.candidateName,
+          withdrawnAt: new Date().toISOString(),
+        },
+      });
+    }
   } catch (err) {
     logger.warn(
       { err, applicationId },

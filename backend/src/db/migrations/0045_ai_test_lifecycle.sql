@@ -22,8 +22,15 @@ ALTER TABLE ai_tests ALTER COLUMN total_points DROP NOT NULL;
 ALTER TABLE ai_tests ALTER COLUMN duration_min DROP NOT NULL;
 
 -- FK job — dùng NOT VALID để không khoá bảng lâu nếu data xấu; VALIDATE sau.
-ALTER TABLE ai_tests ADD CONSTRAINT fk_ai_tests_job
-  FOREIGN KEY (job_id) REFERENCES jobs(id) NOT VALID;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_ai_tests_job'
+  ) THEN
+    ALTER TABLE ai_tests ADD CONSTRAINT fk_ai_tests_job
+      FOREIGN KEY (job_id) REFERENCES jobs(id) NOT VALID;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_test_assignments_test ON test_assignments (test_id);
 

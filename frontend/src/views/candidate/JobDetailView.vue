@@ -277,9 +277,14 @@ const salaryLabel = computed((): string => {
   const { salaryMin, salaryMax } = j;
   if (!salaryMin && !salaryMax) return 'Thoả thuận';
   const toM = (s: string): string => `${(Number(s) / 1_000_000).toFixed(0)} triệu`;
-  if (salaryMin && salaryMax) return `${toM(salaryMin)} – ${toM(salaryMax)}`;
-  if (salaryMin) return `Từ ${toM(salaryMin)}`;
-  return `Đến ${toM(salaryMax!)}`;
+
+  const extra = (j as any)?.extraData;
+  const cycle = extra?.paymentType;
+  const cycleSuffix = cycle === 'weekly' ? ' / tuần' : cycle === 'contract' ? ' / dự án' : cycle === 'monthly' ? ' / tháng' : '';
+
+  if (salaryMin && salaryMax) return `${toM(salaryMin)} – ${toM(salaryMax)}${cycleSuffix}`;
+  if (salaryMin) return `Từ ${toM(salaryMin)}${cycleSuffix}`;
+  return `Đến ${toM(salaryMax!)}${cycleSuffix}`;
 });
 
 const experienceLabel = computed((): string => {
@@ -342,7 +347,8 @@ const LOCATION_META = {
 const workApproachLabel = computed((): string => {
   const j = job.value;
   if (!j) return '—';
-  if (j.remoteOk) return 'Remote OK';
+  if (j.workType === 'remote') return 'Remote';
+  if (j.workType === 'hybrid') return j.location?.city ? `Hybrid · ${j.location.city}` : 'Hybrid';
   return j.location?.city ? `Onsite · ${j.location.city}` : 'Onsite';
 });
 

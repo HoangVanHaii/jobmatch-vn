@@ -1,8 +1,11 @@
 import crypto from 'crypto';
 import { db } from '../config/database';
-import { jobs, companies, jobSkills, jobAiScans, jobAiFlags } from '../db/schema';
-import { eq, desc, asc, and, ilike, sql, inArray, type SQL } from 'drizzle-orm';
+import { jobs, companies, jobSkills, jobAiScans, jobAiFlags, companyMembers, users, userProfiles } from '../db/schema';
+import { eq, desc, asc, and, or, ilike, sql, inArray, gt, lt, type SQL } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
+import { logger } from '../config/logger';
+import { notificationService } from './notification.service';
+import { notificationGateway } from '../socket/notificationGateway';
 import { Job, JobListItem, ExportApplicationsJobData, JobStatus, JobDetailPayload } from '@/interface/job';
 import {
   JobListQuery,
@@ -97,6 +100,58 @@ const generateUniqueSlug = async (title: string): Promise<string> => {
   throw new AppError(500, 'SLUG_GENERATION_FAILED', 'Không sinh được slug unique');
 };
 
+/**
+ * Lấy Job liền trước (mới hơn) và liền sau (cũ hơn) của cùng 1 company
+ * dựa trên createdAt để phục vụ nút Next/Previous Job.
+ * Sử dụng SQL subquery trực tiếp để tránh mất độ chính xác microsecond khi map qua JS Date
+ * và loại bỏ hoàn toàn khả năng trùng với job hiện tại.
+ */
+const getAdjacentJobs = async (
+  companyId: string,
+  currentJobId: string,
+): Promise<{
+  prevJob: { id: string; title: string } | null;
+  nextJob: { id: string; title: string } | null;
+}> => {
+  const [prevRes, nextRes] = await Promise.all([
+    // Prev job: mới hơn trong danh sách (createdAt lớn hơn hoặc id lớn hơn nếu trùng createdAt)
+    db.execute<{ id: string; title: string }>(sql`
+      SELECT id, title FROM jobs
+      WHERE company_id = ${companyId}::uuid
+        AND id != ${currentJobId}::uuid
+        AND (
+          created_at > (SELECT created_at FROM jobs WHERE id = ${currentJobId}::uuid)
+          OR (
+            created_at = (SELECT created_at FROM jobs WHERE id = ${currentJobId}::uuid)
+            AND id > ${currentJobId}::uuid
+          )
+        )
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `),
+    // Next job: cũ hơn trong danh sách (createdAt nhỏ hơn hoặc id nhỏ hơn nếu trùng createdAt)
+    db.execute<{ id: string; title: string }>(sql`
+      SELECT id, title FROM jobs
+      WHERE company_id = ${companyId}::uuid
+        AND id != ${currentJobId}::uuid
+        AND (
+          created_at < (SELECT created_at FROM jobs WHERE id = ${currentJobId}::uuid)
+          OR (
+            created_at = (SELECT created_at FROM jobs WHERE id = ${currentJobId}::uuid)
+            AND id < ${currentJobId}::uuid
+          )
+        )
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `),
+  ]);
+
+  return {
+    prevJob: prevRes.rows[0] ?? null,
+    nextJob: nextRes.rows[0] ?? null,
+  };
+};
+
 export const jobService = {
   /**
    * Slim list id + title của job thuộc 1 company — cho dropdown filter
@@ -109,21 +164,33 @@ export const jobService = {
   listJobNames: async (
     companyId: string,
     keyword?: string,
+    userContext?: { userId: string; role: 'owner' | 'member' },
   ): Promise<Array<{ id: string; title: string }>> => {
     const kw = keyword?.trim();
+    const conditions = [eq(jobs.companyId, companyId)];
+    if (kw) conditions.push(ilike(jobs.title, `%${kw}%`));
+
+    if (userContext && userContext.role === 'member') {
+      conditions.push(
+        or(
+          eq(jobs.postedBy, userContext.userId),
+          eq(jobs.assignedTo, userContext.userId),
+        )!,
+      );
+    }
+
     return db
       .select({ id: jobs.id, title: jobs.title })
       .from(jobs)
-      .where(
-        and(
-          eq(jobs.companyId, companyId),
-          kw ? ilike(jobs.title, `%${kw}%`) : undefined,
-        ),
-      )
+      .where(and(...conditions))
       .orderBy(desc(jobs.createdAt));
   },
 
-  list: async (filters: JobListQuery, companyId?: string): Promise<{ data: JobListItem[]; total: number }> => {
+  list: async (
+    filters: JobListQuery,
+    companyId?: string,
+    userContext?: { userId: string; role: 'owner' | 'member' },
+  ): Promise<{ data: JobListItem[]; total: number }> => {
     const conditions = [];
     // Logic filter status tuỳ ngữ cảnh:
     //  - Public `/jobs` (candidate, no companyId) mặc định chỉ trả status='live'
@@ -134,6 +201,18 @@ export const jobService = {
     //    caller truyền `filters.status` thì AND thêm (xem block dưới).
     if (companyId) {
       conditions.push(eq(jobs.companyId, companyId));
+
+      // Phân quyền nội bộ công ty:
+      // - Member thường: Chỉ thấy tin do mình tạo (postedBy) HOẶC được gán (assignedTo)
+      // - Owner: Thấy toàn bộ tin của công ty
+      if (userContext && userContext.role === 'member') {
+        conditions.push(
+          or(
+            eq(jobs.postedBy, userContext.userId),
+            eq(jobs.assignedTo, userContext.userId),
+          )!,
+        );
+      }
     } else if (filters.status && filters.status.length > 0) {
       conditions.push(inArray(jobs.status, filters.status));
     } else {
@@ -184,8 +263,8 @@ export const jobService = {
     } else if (filters.salaryMax != null) {
       conditions.push(sql`${jobs.salaryMin} <= ${String(filters.salaryMax)}`);
     }
-    if (filters.remoteOk != null) {
-      conditions.push(eq(jobs.remoteOk, filters.remoteOk));
+    if (filters.workType) {
+      conditions.push(eq(jobs.workType, filters.workType));
     }
     if (filters.industry) {
       conditions.push(eq(jobs.industry, filters.industry));
@@ -197,6 +276,8 @@ export const jobService = {
         title: jobs.title,
         slug: jobs.slug,
         companyId: jobs.companyId,
+        postedBy: jobs.postedBy,
+        assignedTo: jobs.assignedTo,
         // LEFT JOIN companies — lấy tên + logo để FE render card không cần
         // gọi thêm API. NULL nếu company không tồn tại (job vẫn được trả).
         companyName: companies.name,
@@ -210,7 +291,7 @@ export const jobService = {
         salaryCurrency: jobs.salaryCurrency,
         salaryVisible: jobs.salaryVisible,
         location: jobs.location,
-        remoteOk: jobs.remoteOk,
+        workType: jobs.workType,
         deadline: jobs.deadline,
         status: jobs.status,
         hiringStatus: jobs.hiringStatus,
@@ -362,9 +443,30 @@ export const jobService = {
       .returning();
     if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
 
-    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(id);
+    const [{ data: feedbacks, stats }, { prevJob, nextJob }] = await Promise.all([
+      jobFeedbackService.listForJob(id),
+      getAdjacentJobs(row.companyId, row.id),
+    ]);
 
-    return { ...row, feedbacks, feedbackStats: stats };
+    // Populate thông tin người phụ trách (assignedTo hoặc fallback postedBy)
+    const assigneeUserId = row.assignedTo || row.postedBy;
+    let assignedToUser: { id: string; fullName: string | null; email: string; avatarUrl: string | null } | null = null;
+    if (assigneeUserId) {
+      const [u] = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          fullName: userProfiles.fullName,
+          avatarUrl: userProfiles.avatarUrl,
+        })
+        .from(users)
+        .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+        .where(eq(users.id, assigneeUserId))
+        .limit(1);
+      if (u) assignedToUser = u;
+    }
+
+    return { ...row, assignedToUser, feedbacks, feedbackStats: stats, prevJob, nextJob };
   },
 
   /**
@@ -384,9 +486,29 @@ export const jobService = {
       .returning();
     if (!row) throw new AppError(404, 'NOT_FOUND', 'Job not found');
 
-    const { data: feedbacks, stats } = await jobFeedbackService.listForJob(row.id);
+    const [{ data: feedbacks, stats }, { prevJob, nextJob }] = await Promise.all([
+      jobFeedbackService.listForJob(row.id),
+      getAdjacentJobs(row.companyId, row.id),
+    ]);
 
-    return { ...row, feedbacks, feedbackStats: stats };
+    const assigneeUserId = row.assignedTo || row.postedBy;
+    let assignedToUser: { id: string; fullName: string | null; email: string; avatarUrl: string | null } | null = null;
+    if (assigneeUserId) {
+      const [u] = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          fullName: userProfiles.fullName,
+          avatarUrl: userProfiles.avatarUrl,
+        })
+        .from(users)
+        .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+        .where(eq(users.id, assigneeUserId))
+        .limit(1);
+      if (u) assignedToUser = u;
+    }
+
+    return { ...row, assignedToUser, feedbacks, feedbackStats: stats, prevJob, nextJob };
   },
 
   /**
@@ -435,7 +557,7 @@ export const jobService = {
           salaryCurrency: jobs.salaryCurrency,
           salaryVisible: jobs.salaryVisible,
           location: jobs.location,
-          remoteOk: jobs.remoteOk,
+          workType: jobs.workType,
           deadline: jobs.deadline,
           status: jobs.status,
           viewsCount: jobs.viewsCount,
@@ -625,10 +747,54 @@ generateDraft: async (
 },
 
   create: async (userId: string, data: JobCreateBody) => {
-      const company = await db.query.companies.findFirst({
-        where: eq(companies.id, data.companyId),
-      });
+    const company = await db.query.companies.findFirst({
+      where: eq(companies.id, data.companyId),
+    });
     if (!company) throw new AppError(404, 'COMPANY_NOT_FOUND', 'Company not found');
+
+    // Xác thực membership của người tạo
+    const [membership] = await db
+      .select({ role: companyMembers.role, status: companyMembers.status })
+      .from(companyMembers)
+      .where(
+        and(
+          eq(companyMembers.companyId, data.companyId),
+          eq(companyMembers.userId, userId),
+          eq(companyMembers.status, 'active'),
+        ),
+      )
+      .limit(1);
+
+    if (!membership) {
+      throw new AppError(403, 'FORBIDDEN', 'Bạn không phải thành viên active của công ty này');
+    }
+
+    // Mặc định khi member tạo tin: assignedTo = userId
+    let assignedTo = userId;
+
+    // Nếu Owner tạo tin và có chỉ định assignedTo:
+    if (membership.role === 'owner' && data.assignedTo) {
+      const [targetMember] = await db
+        .select({ id: companyMembers.id })
+        .from(companyMembers)
+        .where(
+          and(
+            eq(companyMembers.companyId, data.companyId),
+            eq(companyMembers.userId, data.assignedTo),
+            eq(companyMembers.status, 'active'),
+          ),
+        )
+        .limit(1);
+
+      if (!targetMember) {
+        throw new AppError(
+          400,
+          'INVALID_ASSIGNEE',
+          'Người được gán phải là thành viên đang hoạt động (active) của công ty',
+        );
+      }
+      assignedTo = data.assignedTo;
+    }
 
     const [row] = await db
       .insert(jobs)
@@ -636,6 +802,7 @@ generateDraft: async (
         ...data,
         slug: await generateUniqueSlug(data.title),
         postedBy: userId,
+        assignedTo,
         publishedAt: data.status === 'live' ? new Date() : null,
         salaryMin: data.salaryMin != null ? String(data.salaryMin) : undefined,
         salaryMax: data.salaryMax != null ? String(data.salaryMax) : undefined,
@@ -643,14 +810,157 @@ generateDraft: async (
         niceToHaveSkills: data.niceToHaveSkills ?? [],
       } as any)
       .returning();
+
+    // Nếu gán cho nhân viên khác, gửi realtime notification
+    if (assignedTo !== userId) {
+      try {
+        await notificationService.create({
+          userId: assignedTo,
+          type: 'company',
+          title: `Bạn được gán phụ trách tin tuyển dụng "${row.title}"`,
+          payload: {
+            jobId: row.id,
+            jobTitle: row.title,
+            assignedBy: userId,
+            message: `Chủ doanh nghiệp đã gán bạn phụ trách tin tuyển dụng "${row.title}".`,
+          },
+        });
+
+        notificationGateway.emitToUser(assignedTo, 'job:assigned', {
+          jobId: row.id,
+          jobTitle: row.title,
+          assignedBy: userId,
+          assignedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        logger.warn({ err, jobId: row.id, assignedTo }, 'create: gửi thông báo gán job thất bại');
+      }
+    }
+
     return row;
+  },
+
+  /**
+   * Owner gán tin tuyển dụng cho nhân viên khác trong cùng công ty
+   * PATCH /jobs/:id/assign
+   */
+  assignJob: async (ownerUserId: string, id: string, newAssignedToUserId: string) => {
+    const [job] = await db
+      .select({
+        id: jobs.id,
+        title: jobs.title,
+        companyId: jobs.companyId,
+        postedBy: jobs.postedBy,
+        assignedTo: jobs.assignedTo,
+      })
+      .from(jobs)
+      .where(eq(jobs.id, id))
+      .limit(1);
+
+    if (!job) {
+      throw new AppError(404, 'JOB_NOT_FOUND', 'Tin tuyển dụng không tồn tại');
+    }
+
+    // 1. Kiểm tra quyền: Người gọi phải là Owner active của công ty sở hữu job
+    const [requesterMember] = await db
+      .select({ role: companyMembers.role, status: companyMembers.status })
+      .from(companyMembers)
+      .where(
+        and(
+          eq(companyMembers.companyId, job.companyId),
+          eq(companyMembers.userId, ownerUserId),
+        ),
+      )
+      .limit(1);
+
+    if (!requesterMember || requesterMember.role !== 'owner' || requesterMember.status !== 'active') {
+      throw new AppError(
+        403,
+        'FORBIDDEN_NOT_OWNER',
+        'Chỉ chủ doanh nghiệp (Owner) của công ty mới có quyền gán tin tuyển dụng.',
+      );
+    }
+
+    // 2. Kiểm tra người nhận việc: Phải là thành viên active trong cùng công ty
+    const [targetMember] = await db
+      .select({ id: companyMembers.id, userId: companyMembers.userId, status: companyMembers.status })
+      .from(companyMembers)
+      .where(
+        and(
+          eq(companyMembers.companyId, job.companyId),
+          eq(companyMembers.userId, newAssignedToUserId),
+          eq(companyMembers.status, 'active'),
+        ),
+      )
+      .limit(1);
+
+    if (!targetMember) {
+      throw new AppError(
+        400,
+        'INVALID_ASSIGNEE',
+        'Người nhận việc phải là thành viên đang hoạt động (active) trong cùng công ty.',
+      );
+    }
+
+    // 3. Cập nhật assigned_to
+    const [updatedJob] = await db
+      .update(jobs)
+      .set({
+        assignedTo: newAssignedToUserId,
+        updatedAt: new Date(),
+      })
+      .where(eq(jobs.id, id))
+      .returning();
+
+    // 4. Gửi thông báo Notification và Realtime Socket tới nhân viên được gán
+    try {
+      await notificationService.create({
+        userId: newAssignedToUserId,
+        type: 'company',
+        title: `Bạn được gán phụ trách tin tuyển dụng "${job.title}"`,
+        payload: {
+          jobId: job.id,
+          jobTitle: job.title,
+          assignedBy: ownerUserId,
+          message: `Chủ doanh nghiệp đã gán bạn phụ trách tin tuyển dụng "${job.title}".`,
+        },
+      });
+
+      notificationGateway.emitToUser(newAssignedToUserId, 'job:assigned', {
+        jobId: job.id,
+        jobTitle: job.title,
+        assignedBy: ownerUserId,
+        assignedAt: new Date().toISOString(),
+      });
+    } catch (notifyErr) {
+      logger.warn({ err: notifyErr, jobId: id, newAssignedToUserId }, 'assignJob: emit socket/notif thất bại');
+    }
+
+    return updatedJob;
   },
 
   update: async (userId: string, id: string, data: JobUpdateBody) => {
     const existing = await db.query.jobs.findFirst({ where: eq(jobs.id, id) });
     if (!existing) throw new AppError(404, 'NOT_FOUND', 'Job not found');
-    if (existing.postedBy !== userId) {
-      throw new AppError(403, 'FORBIDDEN', 'Bạn không sở hữu job này');
+
+    // Quyền sửa tin: Là người tạo (postedBy), hoặc người được gán (assignedTo), hoặc là Owner của công ty
+    const isDirectPerson = existing.postedBy === userId || existing.assignedTo === userId;
+    if (!isDirectPerson) {
+      const [membership] = await db
+        .select({ role: companyMembers.role })
+        .from(companyMembers)
+        .where(
+          and(
+            eq(companyMembers.companyId, existing.companyId),
+            eq(companyMembers.userId, userId),
+            eq(companyMembers.status, 'active'),
+          ),
+        )
+        .limit(1);
+
+      if (!membership || membership.role !== 'owner') {
+        throw new AppError(403, 'FORBIDDEN', 'Bạn không có quyền chỉnh sửa tin tuyển dụng này');
+      }
     }
 
     const patch: Record<string, unknown> = { ...data, updatedAt: new Date() };
@@ -883,8 +1193,8 @@ generateDraft: async (
     if (filters.locationCity) {
       conditions.push(sql`${jobs.location}->>'city' = ${filters.locationCity}`);
     }
-    if (filters.remoteOk !== undefined) {
-      conditions.push(eq(jobs.remoteOk, filters.remoteOk));
+    if (filters.workType) {
+      conditions.push(eq(jobs.workType, filters.workType));
     }
     // Salary range filter (admin) — same overlap semantics as list() public.
     if (filters.salaryMin != null && filters.salaryMax != null) {
@@ -920,7 +1230,7 @@ generateDraft: async (
         salaryCurrency: jobs.salaryCurrency,
         salaryVisible: jobs.salaryVisible,
         location: jobs.location,
-        remoteOk: jobs.remoteOk,
+        workType: jobs.workType,
         deadline: jobs.deadline,
         status: jobs.status,
         viewsCount: jobs.viewsCount,

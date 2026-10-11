@@ -27,7 +27,7 @@ import { useSavedJobStore } from '@stores/savedJob';
 import { useDebounce } from '@composables/useDebounce';
 import { storeToRefs } from 'pinia';
 import ConfirmModal from '@components/common/ConfirmModal.vue';
-import type { JobLevel, JobListItem, JobType } from '@/types/job';
+import type { JobLevel, JobListItem, JobType, WorkType } from '@/types/job';
 import type { SavedJobItem } from '@/types/savedJob';
 
 dayjs.extend(relativeTime);
@@ -49,7 +49,7 @@ const error = ref<string | null>(null);
 
 const currentJobType = ref<JobType | null>(null);
 const currentJobLevel = ref<JobLevel | null>(null);
-const currentRemote = ref<boolean | null>(null);
+const currentWorkType = ref<WorkType | null>(null);
 const currentIndustry = ref<string | null>(null); // dropdown — distinct từ API
 
 /* ============================================================================
@@ -71,7 +71,7 @@ const unsaveConfirmTitle = ref<string>('');
 /* ============================================================================
  * Filter dropdown — đồng bộ pattern với JobsView
  * ==========================================================================*/
-type DropdownKey = 'jobType' | 'jobLevel' | 'remote' | 'industry';
+type DropdownKey = 'jobType' | 'jobLevel' | 'workType' | 'industry';
 const openDropdown = ref<DropdownKey | null>(null);
 
 /** Template refs cho 4 dropdown container — dùng với `onClickOutside` của
@@ -79,13 +79,13 @@ const openDropdown = ref<DropdownKey | null>(null);
  *  `.relative` riêng; ref trỏ vào wrapper đó. */
 const jobTypeRef = useTemplateRef<HTMLElement>('jobTypeRef');
 const jobLevelRef = useTemplateRef<HTMLElement>('jobLevelRef');
-const remoteRef = useTemplateRef<HTMLElement>('remoteRef');
+const workTypeRef = useTemplateRef<HTMLElement>('workTypeRef');
 const industryRef = useTemplateRef<HTMLElement>('industryRef');
 
 onMounted(() => {
   if (jobTypeRef.value) onClickOutside(jobTypeRef, () => { if (openDropdown.value === 'jobType') openDropdown.value = null; });
   if (jobLevelRef.value) onClickOutside(jobLevelRef, () => { if (openDropdown.value === 'jobLevel') openDropdown.value = null; });
-  if (remoteRef.value) onClickOutside(remoteRef, () => { if (openDropdown.value === 'remote') openDropdown.value = null; });
+  if (workTypeRef.value) onClickOutside(workTypeRef, () => { if (openDropdown.value === 'workType') openDropdown.value = null; });
   if (industryRef.value) onClickOutside(industryRef, () => { if (openDropdown.value === 'industry') openDropdown.value = null; });
 });
 
@@ -123,13 +123,14 @@ const handleJobLevelSelect = (v: JobLevel | null): void => {
   void fetchList();
 };
 
-const remoteOptions: Array<{ value: boolean | null; label: string }> = [
+const workTypeOptions: Array<{ value: WorkType | null; label: string }> = [
   { value: null, label: 'Tất cả hình thức' },
-  { value: true, label: 'Có thể remote' },
-  { value: false, label: 'Tại văn phòng' },
+  { value: 'onsite', label: 'Tại văn phòng' },
+  { value: 'hybrid', label: 'Hybrid' },
+  { value: 'remote', label: 'Từ xa (Remote)' },
 ];
-const handleRemoteSelect = (v: boolean | null): void => {
-  currentRemote.value = v;
+const handleWorkTypeSelect = (v: WorkType | null): void => {
+  currentWorkType.value = v;
   openDropdown.value = null;
   void fetchList();
 };
@@ -187,12 +188,12 @@ const activeChips = computed<ActiveChip[]>(() => {
       onRemove: () => handleJobLevelSelect(null),
     });
   }
-  if (currentRemote.value !== null) {
-    const opt = remoteOptions.find((o) => o.value === currentRemote.value);
+  if (currentWorkType.value !== null) {
+    const opt = workTypeOptions.find((o) => o.value === currentWorkType.value);
     chips.push({
-      key: 'remote',
+      key: 'workType',
       label: opt?.label ?? '',
-      onRemove: () => handleRemoteSelect(null),
+      onRemove: () => handleWorkTypeSelect(null),
     });
   }
   if (currentIndustry.value) {
@@ -213,7 +214,7 @@ const resetAllFilters = async (): Promise<void> => {
   searchInput.value = '';
   currentJobType.value = null;
   currentJobLevel.value = null;
-  currentRemote.value = null;
+  currentWorkType.value = null;
   currentIndustry.value = null;
   await fetchList();
 };
@@ -235,7 +236,7 @@ const fetchList = async (pageNum?: number): Promise<void> => {
     const { data } = await savedJobApi.list({
       jobType: currentJobType.value ?? undefined,
       jobLevel: currentJobLevel.value ?? undefined,
-      remoteOk: currentRemote.value ?? undefined,
+      workType: currentWorkType.value ?? undefined,
       industry: currentIndustry.value ?? undefined,
       search: searchInput.value.trim() || undefined,
       page: page.value,
@@ -315,9 +316,9 @@ const currentTriggerLabel = (key: DropdownKey): string | null => {
     case 'jobLevel':
       if (currentJobLevel.value === null) return null;
       return jobLevelOptions.find((o) => o.value === currentJobLevel.value)?.label ?? null;
-    case 'remote':
-      if (currentRemote.value === null) return null;
-      return remoteOptions.find((o) => o.value === currentRemote.value)?.label ?? null;
+    case 'workType':
+      if (currentWorkType.value === null) return null;
+      return workTypeOptions.find((o) => o.value === currentWorkType.value)?.label ?? null;
     case 'industry':
       return currentIndustry.value;
   }
@@ -400,10 +401,10 @@ const toCardData = (entry: SavedJobItem): CardData => {
   if (j.jobType) {
     badges.push({ label: formatJobType(j.jobType), variant: 'responsive' });
   }
-  const workType = j.remoteOk
+  const workType = j.workType === 'remote'
     ? 'Remote'
-    : j.jobType === 'part-time'
-      ? 'Part-time'
+    : j.workType === 'hybrid'
+      ? 'Hybrid'
       : (j.location?.city ?? 'Onsite');
   return {
     id: j.id,
@@ -471,7 +472,7 @@ const initFresh = async (): Promise<void> => {
   searchInput.value = '';
   currentJobType.value = null;
   currentJobLevel.value = null;
-  currentRemote.value = null;
+  currentWorkType.value = null;
   currentIndustry.value = null;
   page.value = 1;
   await fetchList(1);
@@ -686,33 +687,33 @@ const confirmMessage = computed(
         </div>
 
         <!-- Hình thức -->
-        <div ref="remoteRef" class="relative w-full lg:w-auto h-[42px] lg:h-auto">
+        <div ref="workTypeRef" class="relative w-full lg:w-auto h-[42px] lg:h-auto">
           <button
             type="button"
             class="flex items-center gap-2 w-full h-[42px] lg:h-full px-4 bg-white text-[13px] text-[#334155] hover:bg-[#F8FAFC] transition whitespace-nowrap"
-            @click="toggleDropdown('remote')"
+            @click="toggleDropdown('workType')"
           >
             <Building2 class="w-[17px] h-[17px] text-[#64748B]" />
-            <span :class="currentRemote !== null ? 'font-medium text-[#0F172A]' : 'text-[#94A3B8]'">
-              {{ currentTriggerLabel('remote') ?? 'Hình thức' }}
+            <span :class="currentWorkType !== null ? 'font-medium text-[#0F172A]' : 'text-[#94A3B8]'">
+              {{ currentTriggerLabel('workType') ?? 'Hình thức' }}
             </span>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"
               class="w-3.5 h-3.5 text-[#64748B] transition-transform"
-              :class="openDropdown === 'remote' ? 'rotate-180' : ''">
+              :class="openDropdown === 'workType' ? 'rotate-180' : ''">
               <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
             </svg>
           </button>
           <div
-            v-if="openDropdown === 'remote'"
+            v-if="openDropdown === 'workType'"
             class="absolute z-50 left-0 lg:left-auto lg:right-0 mt-1 w-full lg:w-48 bg-white border border-[#E5E7EB] rounded-lg shadow-md"
           >
             <button
-              v-for="opt in remoteOptions"
+              v-for="opt in workTypeOptions"
               :key="opt.label"
               type="button"
               class="w-full text-left px-3 py-2 text-[13px] hover:bg-[#F1F5F9] transition"
-              :class="currentRemote === opt.value ? 'font-semibold text-[#1E40AF]' : 'text-[#0F172A]'"
-              @click="handleRemoteSelect(opt.value)"
+              :class="currentWorkType === opt.value ? 'font-semibold text-[#1E40AF]' : 'text-[#0F172A]'"
+              @click="handleWorkTypeSelect(opt.value)"
             >{{ opt.label }}</button>
           </div>
         </div>

@@ -29,7 +29,7 @@ export const savedJobService = {
     const conditions = [eq(savedJobs.userId, userId)];
     if (filters.jobLevel) conditions.push(eq(jobs.jobLevel, filters.jobLevel));
     if (filters.jobType) conditions.push(eq(jobs.jobType, filters.jobType));
-    if (filters.remoteOk != null) conditions.push(eq(jobs.remoteOk, filters.remoteOk));
+    if (filters.workType) conditions.push(eq(jobs.workType, filters.workType));
     if (filters.industry) conditions.push(eq(jobs.industry, filters.industry));
     if (filters.search) {
       // Free-text search trên job đã lưu: title (qua searchTsv), company name
@@ -64,7 +64,7 @@ export const savedJobService = {
             salaryCurrency: jobs.salaryCurrency,
             salaryVisible: jobs.salaryVisible,
             location: jobs.location,
-            remoteOk: jobs.remoteOk,
+            workType: jobs.workType,
             deadline: jobs.deadline,
             status: jobs.status,
             viewsCount: jobs.viewsCount,

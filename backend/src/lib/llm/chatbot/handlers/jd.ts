@@ -32,7 +32,7 @@ const formatOneJob = (j: HandlerContext['jobs'][number], index: number): string 
 - Loại hình: ${j.jobType ?? 'Không nêu'}
 - Ngành: ${j.industry ?? 'Không nêu'}
 - Lương: ${formatSalary(j)}
-- Địa điểm: ${formatLocation(j)} ${j.remoteOk ? '(remote OK)' : ''}
+- Địa điểm: ${formatLocation(j)} (${j.workType === 'remote' ? 'Remote' : j.workType === 'hybrid' ? 'Hybrid' : 'Onsite'})
 - Kinh nghiệm tối thiểu: ${j.experienceYearsMin ?? 'Không nêu'} năm
 - Kỹ năng bắt buộc: ${j.requiredSkills?.length ? j.requiredSkills.join(', ') : 'Không nêu'}
 - Kỹ năng ưu tiên: ${j.niceToHaveSkills?.length ? j.niceToHaveSkills.join(', ') : 'Không nêu'}
