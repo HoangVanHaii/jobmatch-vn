@@ -19,7 +19,7 @@ export interface AdminJobListParams {
   jobType?: string;
   industry?: string;
   locationCity?: string;
-  remoteOk?: boolean;
+  workType?: string;
   sort?: AdminJobSort;
 }
 
@@ -42,7 +42,7 @@ export const adminJobApi = {
     if (params.jobType) clean.jobType = params.jobType;
     if (params.industry) clean.industry = params.industry;
     if (params.locationCity) clean.locationCity = params.locationCity;
-    if (params.remoteOk !== undefined) clean.remoteOk = String(params.remoteOk);
+    if (params.workType) clean.workType = params.workType;
     if (params.sort) clean.sort = params.sort;
     return http.get<{ data: JobListItem[]; pagination: JobListResponse['pagination'] }>(
       '/admin/jobs',

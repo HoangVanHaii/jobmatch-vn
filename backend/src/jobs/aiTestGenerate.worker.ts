@@ -35,6 +35,7 @@ export interface AiTestGenerateJobData {
   durationMin: number;
   jobTitle: string;
   jobRequirements?: string | null;
+  jobId?: string;
 }
 
 export const aiTestGenerateWorker = new Worker(
@@ -82,6 +83,7 @@ export const aiTestGenerateWorker = new Worker(
       notificationGateway.emitToUser(data.employerId, 'ai-test:ready', {
         testId: data.testId,
         testType: data.testType,
+        jobId: data.jobId,
       });
 
       logger.info(

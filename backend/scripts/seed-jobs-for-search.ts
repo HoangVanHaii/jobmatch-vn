@@ -166,7 +166,7 @@ const seed = async (): Promise<void> => {
         salaryCurrency: 'VND',
         salaryVisible: true,
         location: { city: sample.city },
-        remoteOk: sample.city === 'Remote',
+        workType: sample.city === 'Remote' ? 'remote' : 'onsite',
         experienceYearsMin: sample.level === 'fresher' ? 0 : sample.level === 'mid' ? 1 : sample.level === 'senior' ? 2 : 4,
         status: 'live', // Live luôn để search thấy ngay
         publishedAt: new Date(),

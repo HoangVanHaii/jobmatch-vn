@@ -107,7 +107,10 @@ export const jobController = {
       }
       // ?keyword= optional — filter title (cap 100 ký tự chống query rác).
       const keyword = typeof req.query.keyword === 'string' ? req.query.keyword.slice(0, 100) : undefined;
-      const data = await jobService.listJobNames(membership.companyId, keyword);
+      const data = await jobService.listJobNames(membership.companyId, keyword, {
+        userId,
+        role: membership.role,
+      });
       res.json({ success: true, data });
     } catch (err) { next(err); }
   },
@@ -133,7 +136,10 @@ export const jobController = {
         });
         return;
       }
-      const { data, total } = await jobService.list(filters, membership.companyId);
+      const { data, total } = await jobService.list(filters, membership.companyId, {
+        userId,
+        role: membership.role,
+      });
       res.json({
         success: true,
         data,
@@ -265,6 +271,23 @@ export const jobController = {
       const userId = req.user!.userId;
       const data = await jobService.update(userId, req.params.id as string, req.body);
       res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * PATCH /jobs/:id/assign — Owner gán tin tuyển dụng cho nhân viên trong công ty.
+   */
+  assign: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const ownerUserId = req.user!.userId;
+      const jobId = req.params.id as string;
+      const { assignedTo } = req.body as { assignedTo: string };
+      const data = await jobService.assignJob(ownerUserId, jobId, assignedTo);
+      res.json({
+        success: true,
+        data,
+        message: 'Gán người phụ trách tin tuyển dụng thành công.',
+      });
     } catch (err) { next(err); }
   },
 

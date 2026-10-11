@@ -59,6 +59,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/test6', name: 'test6', component: () => import('@views/candidate/Test6View.vue') },
   // Test route cho Template 7
   { path: '/test7', name: 'test7', component: () => import('@views/candidate/Test7View.vue') },
+  // Mockup Job Detail (API-connected UI with optional :id param)
+  { path: '/mockup-job-detail/:id?', name: 'mockup-job-detail', component: () => import('@views/employer/JobDetailView.vue') },
 
   // Candidate — bao gồm cả /pricing để có sidebar
   {

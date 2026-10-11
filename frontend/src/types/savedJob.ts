@@ -2,11 +2,11 @@
  * Saved job types — mirror backend `src/interface/savedJob.ts` + `src/middleware/savedJob.ts`.
  *
  * Backend `GET /api/v1/saved-jobs` filter:
- *   - jobLevel, jobType, remoteOk, industry (text)
+ *   - jobLevel, jobType, workType, industry (text)
  *   - search (full-text + ILIKE trên title/companyName)
  *   - page, limit (default 20)
  */
-import type { JobListItem, JobLevel, JobType } from './job';
+import type { JobListItem, JobLevel, JobType, WorkType } from './job';
 
 export interface SavedJobItem {
   /** Thời điểm user lưu job. */
@@ -29,7 +29,7 @@ export interface ListSavedJobsResponse {
 export interface ListSavedJobsQuery {
   jobLevel?: JobLevel;
   jobType?: JobType;
-  remoteOk?: boolean;
+  workType?: WorkType;
   industry?: string;
   /** Free-text search trên job title / company name. */
   search?: string;

@@ -247,7 +247,7 @@ async function main(): Promise<void> {
         lat: 10.7717,
         lng: 106.7009,
       },
-      remoteOk: true,
+      workType: 'hybrid',
       experienceYearsMin: 4,
       experienceYearsMax: 8,
       requiredSkills: REQUIRED_SKILLS,

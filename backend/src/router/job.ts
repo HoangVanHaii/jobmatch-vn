@@ -11,6 +11,7 @@ import {
   jobListQuerySchema,
   jobCreateSchema,
   jobUpdateSchema,
+  jobAssignSchema,
   jobIdParamsSchema,
   jobSlugParamsSchema,
   jobGenerateSchema,
@@ -81,6 +82,17 @@ jobRouter.patch(
   validate(jobIdParamsSchema, 'params'),
   validate(jobUpdateSchema),
   jobController.update,
+);
+
+// Owner gán/uỷ quyền tin tuyển dụng cho nhân viên trong cùng công ty
+jobRouter.patch(
+  '/:id/assign',
+  auth,
+  employerOnly,
+  jobWriteRateLimiter,
+  validate(jobIdParamsSchema, 'params'),
+  validate(jobAssignSchema),
+  jobController.assign,
 );
 
 jobRouter.delete(

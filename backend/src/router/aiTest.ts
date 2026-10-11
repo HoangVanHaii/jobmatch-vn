@@ -79,6 +79,14 @@ aiTestRouter.post(
   aiTestController.assign,
 );
 
+aiTestRouter.post(
+  '/:testId/regenerate',
+  auth,
+  employerOnly,
+  validate(z.object({ testId: uuid }), 'params'),
+  aiTestController.regenerate,
+);
+
 // Đặt CUỐI employer group — '/:testId' nuốt mọi segment, các route cụ thể
 // phải khai báo trước.
 aiTestRouter.get(

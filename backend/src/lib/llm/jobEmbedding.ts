@@ -191,7 +191,7 @@ export const searchSimilarJobs = async (
     salary_currency: string | null;
     salary_visible: boolean | null;
     location: JobLocation | null;
-    remote_ok: boolean | null;
+    work_type: string;
     deadline: Date | null;
     status: string;
     hiring_status: string;
@@ -207,7 +207,7 @@ export const searchSimilarJobs = async (
       SELECT
         j.id, j.title, j.slug, j.company_id, j.job_level, j.job_type, j.description, j.hiring_status,
         j.industry, j.salary_min, j.salary_max, j.salary_currency,
-        j.salary_visible, j.location, j.remote_ok, j.deadline,
+        j.salary_visible, j.location, j.work_type, j.deadline,
         j.status, j.views_count, j.applies_count, j.published_at, j.created_at,
         c.name AS company_name, c.logo_url AS company_logo_url,
         e.vector <=> ${vecLiteral}::vector AS distance,
@@ -239,7 +239,7 @@ export const searchSimilarJobs = async (
     salaryCurrency: r.salary_currency,
     salaryVisible: r.salary_visible,
     location: r.location,
-    remoteOk: r.remote_ok,
+    workType: r.work_type as any,
     deadline: r.deadline,
     status: r.status as JobStatus,
     hiringStatus: r.hiring_status as any,
