@@ -32,12 +32,17 @@ import {
   Loader2,
   Building2,
   ExternalLink,
+  Crown,
+  Lock,
 } from 'lucide-vue-next';
 import { jobApi } from '@services/job.api';
 import { companyApi } from '@services/company.api';
+import { companyMemberApi } from '@services/companyMember.api';
+import { useAuthStore } from '@stores/auth';
 import { useToastStore } from '@stores/toast';
 import type { JobLevel, JobType, WorkType, JobExtraData, PaymentCycleType } from '@/types/job';
 import type { MyCompany } from '@/types/company';
+import type { CompanyMember } from '@/types/companyMember';
 
 // ============================================================================
 // Props & Emits
@@ -57,13 +62,17 @@ const emit = defineEmits<{
 }>();
 
 const toast = useToastStore();
+const authStore = useAuthStore();
 
 // ============================================================================
-// State quản lý Công ty (Company)
+// State quản lý Công ty & Thành viên (Company & Members)
 // ============================================================================
 const company = ref<MyCompany | null>(null);
 const companyLoading = ref(false);
 const companyError = ref<string | null>(null);
+
+const membersLoading = ref(false);
+const membersError = ref<string | null>(null);
 
 const fetchCompany = async (): Promise<void> => {
   companyLoading.value = true;
@@ -92,6 +101,21 @@ const submitting = ref<boolean>(false);
 // Toast nội bộ thông báo nhanh
 const toastMessage = ref<string | null>(null);
 const toastType = ref<'success' | 'info' | 'error'>('success');
+
+// ============================================================================
+// Interface Thành viên phụ trách
+// ============================================================================
+export interface AssigneeMemberItem {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  rawRole: 'owner' | 'member';
+  avatarUrl?: string | null;
+  isCurrentUser: boolean;
+  selected: boolean;
+}
 
 // ============================================================================
 // State Dữ liệu Form
@@ -127,12 +151,9 @@ const form = reactive({
   requiredSkills: ['Vue.js', 'TypeScript', 'Tailwind CSS'] as string[],
   niceToHaveSkills: ['Node.js', 'Docker'] as string[],
 
-  // Bước 2: Thành viên phụ trách
-  teamMembers: [
-    { id: '1', name: 'Nguyễn Văn An', email: 'an.nguyen@congty.vn', role: 'Trưởng nhóm tuyển dụng', selected: true },
-    { id: '2', name: 'Trần Thị Mai', email: 'mai.tran@congty.vn', role: 'Chuyên viên nhân sự (HR)', selected: true },
-    { id: '3', name: 'Lê Quốc Huy', email: 'huy.le@congty.vn', role: 'Người phỏng vấn kỹ thuật', selected: false },
-  ],
+  // Bước 2: Thành viên phụ trách (Assignee & Hội đồng tuyển dụng)
+  assignedTo: '' as string,
+  teamMembers: [] as AssigneeMemberItem[],
 
   // Bước 3: Kênh phân phối tin tuyển dụng
   shareChannels: {
@@ -141,6 +162,106 @@ const form = reactive({
     website: true,
   },
 });
+
+/** Row thành viên tương ứng với user hiện tại */
+const currentUserMember = computed<AssigneeMemberItem | null>(() => {
+  const uid = authStore.user?.id;
+  if (!uid) return null;
+  return form.teamMembers.find((m) => m.userId === uid) ?? null;
+});
+
+/** Kiểm tra xem user hiện tại có phải là Owner của công ty không */
+const isOwner = computed<boolean>(() => {
+  // Ưu tiên check role từ danh sách thành viên công ty
+  if (currentUserMember.value) {
+    return currentUserMember.value.rawRole === 'owner';
+  }
+  // Hoặc fallback kiểm tra role employer
+  return false;
+});
+
+/** Load danh sách thành viên công ty và áp dụng phân quyền gán tin */
+const fetchMembers = async (): Promise<void> => {
+  if (!company.value?.id) {
+    form.teamMembers = [];
+    form.assignedTo = '';
+    return;
+  }
+
+  membersLoading.value = true;
+  membersError.value = null;
+  try {
+    const { data } = await companyMemberApi.list(company.value.id);
+    const rawList = Array.isArray(data.data) ? data.data : [];
+    // Chỉ lấy các thành viên đang hoạt động (active)
+    const activeMembers = rawList.filter((m) => m.status === 'active');
+    const currentUserId = authStore.user?.id;
+
+    // Xác định xem user hiện tại là owner hay member
+    const currentMemberRow = activeMembers.find((m) => m.userId === currentUserId);
+    const userIsOwner = currentMemberRow?.role === 'owner';
+
+    form.teamMembers = activeMembers.map((m) => {
+      const isSelf = m.userId === currentUserId;
+      const name = m.user?.fullName || m.user?.email?.split('@')[0] || 'Thành viên';
+      const email = m.user?.email || '';
+      const roleText = m.role === 'owner' ? 'Chủ sở hữu (Owner)' : 'Thành viên (Member)';
+
+      // LOGIC PHÂN QUYỀN ASSIGN:
+      // - Nếu là Member: Tự động tích bản thân, các thành viên khác bỏ tích
+      // - Nếu là Owner: Được tích bất kỳ ai. Mặc định tích bản thân nếu chưa có ai được chọn.
+      let isSelected = false;
+      if (!userIsOwner) {
+        isSelected = isSelf;
+      } else {
+        isSelected = form.assignedTo ? m.userId === form.assignedTo : isSelf;
+      }
+
+      return {
+        id: m.id,
+        userId: m.userId,
+        name,
+        email,
+        role: roleText,
+        rawRole: m.role,
+        avatarUrl: m.user?.avatarUrl ?? null,
+        isCurrentUser: isSelf,
+        selected: isSelected,
+      };
+    });
+
+    // Nếu là Owner và chưa có ai được tích, tích người đầu tiên
+    if (userIsOwner && !form.teamMembers.some((m) => m.selected) && form.teamMembers.length > 0) {
+      form.teamMembers[0].selected = true;
+    }
+
+    // Cập nhật assignedTo
+    const selectedItem = form.teamMembers.find((m) => m.selected);
+    form.assignedTo = selectedItem ? selectedItem.userId : (currentUserId || '');
+  } catch (err) {
+    membersError.value = err instanceof Error ? err.message : 'Không tải được danh sách thành viên công ty';
+    form.teamMembers = [];
+  } finally {
+    membersLoading.value = false;
+  }
+};
+
+/** Chọn người phụ trách tin tuyển dụng (Assign) */
+function selectAssignee(targetMember: AssigneeMemberItem) {
+  // Nếu là Member thường: Không cho click / tích các member khác
+  if (!isOwner.value) {
+    if (!targetMember.isCurrentUser) {
+      showToast('Chỉ Chủ doanh nghiệp (Owner) mới có quyền chỉ định người khác phụ trách tin.', 'info');
+    }
+    return;
+  }
+
+  // Nếu là Owner: Được tích chọn bất kỳ ai
+  form.assignedTo = targetMember.userId;
+  form.teamMembers.forEach((m) => {
+    m.selected = m.userId === targetMember.userId;
+  });
+}
 
 // Validation Errors
 const errors = reactive<Record<string, string>>({});
@@ -484,6 +605,9 @@ function handleNext() {
       showToast('Vui lòng hoàn thành các trường thông tin bắt buộc!', 'error');
       return;
     }
+    if (form.teamMembers.length === 0 && company.value?.id) {
+      void fetchMembers();
+    }
     currentStep.value = 2;
   } else if (currentStep.value === 2) {
     currentStep.value = 3;
@@ -505,6 +629,9 @@ function handleStepClick(stepNumber: number) {
       showToast('Vui lòng hoàn thành các trường bắt buộc ở Bước 1 trước!', 'error');
       return;
     }
+  }
+  if (stepNumber === 2 && form.teamMembers.length === 0 && company.value?.id) {
+    void fetchMembers();
   }
   currentStep.value = stepNumber;
 }
@@ -581,6 +708,8 @@ function buildPayload(): Record<string, unknown> {
     niceToHaveSkills: form.niceToHaveSkills,
     deadline: form.closingDate ? new Date(form.closingDate).toISOString() : undefined,
     status: 'draft',
+    // Gán người phụ trách (assignedTo)
+    assignedTo: form.assignedTo || undefined,
     // Cột JSONB extra_data chính thức:
     extraData,
     // Đồng thời lưu các trường top-level để tương thích ngược:
@@ -705,6 +834,10 @@ function resetForm() {
   form.benefits = '';
   form.requiredSkills = ['Vue.js', 'TypeScript', 'Tailwind CSS'];
   form.niceToHaveSkills = ['Node.js', 'Docker'];
+  form.assignedTo = '';
+  form.teamMembers = [];
+  membersError.value = null;
+  membersLoading.value = false;
   Object.keys(errors).forEach((key) => delete errors[key]);
 }
 
@@ -750,6 +883,7 @@ watch(
       window.addEventListener('keydown', onKeydown);
       resetForm();
       await fetchCompany();
+      await fetchMembers();
       await nextTick();
       const firstInput = dialogEl.value?.querySelector<HTMLElement>('input, select');
       firstInput?.focus();
@@ -1585,42 +1719,164 @@ onBeforeUnmount(() => {
               </div>
 
               <!-- ============================================================ -->
-              <!-- STEP 2: THÀNH VIÊN HỘI ĐỒNG TUYỂN DỤNG                         -->
+              <!-- STEP 2: THÀNH VIÊN HỘI ĐỒNG TUYỂN DỤNG & GÁN VIỆC            -->
               <!-- ============================================================ -->
               <div v-show="currentStep === 2" class="space-y-3.5">
-                <div>
-                  <h3 class="text-[13px] font-semibold text-[#24212D]">
-                    Hội đồng & Thành viên tuyển dụng
-                  </h3>
-                  <p class="text-[10.5px] text-[#777482] mt-0.5">
-                    Phân quyền cho các đồng nghiệp tham gia đánh giá CV, chấm điểm và phỏng vấn ứng viên cho vị trí này.
-                  </p>
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <h3 class="text-[13px] font-semibold text-[#24212D]">
+                        Người phụ trách & Hội đồng tuyển dụng
+                      </h3>
+                      <span
+                        v-if="isOwner"
+                        class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-[#7C22E8] border border-purple-200"
+                      >
+                        <Crown class="w-3 h-3 text-[#7C22E8]" />
+                        <span>Chủ doanh nghiệp (Owner)</span>
+                      </span>
+                      <span
+                        v-else
+                        class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200"
+                      >
+                        <Users class="w-3 h-3 text-slate-600" />
+                        <span>Thành viên (Member)</span>
+                      </span>
+                    </div>
+                    <p class="text-[10.5px] text-[#777482] mt-0.5">
+                      <template v-if="isOwner">
+                        Chỉ định thành viên trong công ty chịu trách nhiệm chính phụ trách tin tuyển dụng và quản lý pipeline ứng viên.
+                      </template>
+                      <template v-else>
+                        Bạn là người phụ trách tin tuyển dụng này. Chỉ Chủ doanh nghiệp (Owner) mới có quyền chỉ định nhân viên khác.
+                      </template>
+                    </p>
+                  </div>
                 </div>
 
-                <div class="border border-[#E5E3E9] rounded-xl overflow-hidden divide-y divide-[#EBE9F0] bg-white">
+                <!-- Banner chú thích cho Member thường -->
+                <div
+                  v-if="!isOwner && !membersLoading && form.teamMembers.length > 0"
+                  class="p-2.5 rounded-lg bg-amber-50/90 border border-amber-200 text-amber-800 flex items-center gap-2 text-[11px]"
+                >
+                  <Lock class="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>
+                    Với vai trò Thành viên, bạn tự động được phân công phụ trách tin tuyển dụng này và không thể chọn người khác.
+                  </span>
+                </div>
+
+                <!-- Trạng thái đang tải -->
+                <div
+                  v-if="membersLoading"
+                  class="py-10 flex flex-col items-center justify-center gap-2.5 text-xs text-[#777482] bg-white border border-[#E5E3E9] rounded-xl"
+                >
+                  <Loader2 class="w-5 h-5 animate-spin text-[#7C22E8]" />
+                  <span>Đang tải danh sách thành viên công ty...</span>
+                </div>
+
+                <!-- Trạng thái lỗi -->
+                <div
+                  v-else-if="membersError"
+                  class="p-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs flex items-center justify-between"
+                >
+                  <div class="flex items-center gap-2">
+                    <AlertCircle class="w-4 h-4 text-rose-600" />
+                    <span>{{ membersError }}</span>
+                  </div>
+                  <button
+                    type="button"
+                    @click="fetchMembers"
+                    class="text-[11px] underline font-semibold hover:text-rose-900 cursor-pointer"
+                  >
+                    Thử lại
+                  </button>
+                </div>
+
+                <!-- Trạng thái trống -->
+                <div
+                  v-else-if="form.teamMembers.length === 0"
+                  class="py-8 text-center text-xs text-[#777482] bg-white border border-[#E5E3E9] rounded-xl"
+                >
+                  Không tìm thấy thành viên đang hoạt động trong công ty.
+                </div>
+
+                <!-- Danh sách thành viên -->
+                <div
+                  v-else
+                  class="border border-[#E5E3E9] rounded-xl overflow-hidden divide-y divide-[#EBE9F0] bg-white"
+                >
                   <div
                     v-for="member in form.teamMembers"
-                    :key="member.id"
-                    class="p-3 flex items-center justify-between hover:bg-[#FAF9FC] transition-colors"
+                    :key="member.userId"
+                    @click="selectAssignee(member)"
+                    class="p-3 flex items-center justify-between transition-colors"
+                    :class="[
+                      isOwner
+                        ? member.selected
+                          ? 'bg-[#FAF8FE]'
+                          : 'hover:bg-[#FAF9FC] cursor-pointer'
+                        : member.isCurrentUser
+                        ? 'bg-[#FAF8FE] cursor-default'
+                        : 'opacity-50 bg-gray-50/50 cursor-not-allowed'
+                    ]"
                   >
-                    <div class="flex items-center gap-2.5">
-                      <div class="w-8 h-8 rounded-full bg-[#EDE8FA] text-[#7C22E8] font-bold text-xs flex items-center justify-center">
-                        {{ member.name.charAt(0) }}
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <!-- Avatar -->
+                      <div
+                        class="w-8 h-8 rounded-full overflow-hidden shrink-0 flex items-center justify-center font-bold text-xs"
+                        :class="member.selected ? 'bg-[#EDE8FA] text-[#7C22E8]' : 'bg-[#F4F3F7] text-[#777482]'"
+                      >
+                        <img
+                          v-if="member.avatarUrl"
+                          :src="member.avatarUrl"
+                          :alt="member.name"
+                          class="w-full h-full object-cover"
+                        />
+                        <span v-else>{{ member.name.charAt(0).toUpperCase() }}</span>
                       </div>
-                      <div>
-                        <h4 class="text-xs font-semibold text-[#24212D] leading-tight">{{ member.name }}</h4>
-                        <p class="text-[10px] text-[#777482] leading-tight">{{ member.email }}</p>
+
+                      <!-- Thông tin tên & email -->
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                          <h4 class="text-xs font-semibold text-[#24212D] leading-tight truncate">
+                            {{ member.name }}
+                          </h4>
+                          <span
+                            v-if="member.isCurrentUser"
+                            class="text-[9.5px] font-medium px-1.5 py-0.5 rounded bg-purple-100 text-[#7C22E8]"
+                          >
+                            (Bạn)
+                          </span>
+                          <span
+                            v-if="member.selected"
+                            class="text-[9.5px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700"
+                          >
+                            Người phụ trách
+                          </span>
+                        </div>
+                        <p class="text-[10px] text-[#777482] leading-tight truncate mt-0.5">
+                          {{ member.email }}
+                        </p>
                       </div>
                     </div>
 
-                    <div class="flex items-center gap-3">
-                      <span class="text-[10.5px] px-2 py-0.5 rounded-[4px] bg-[#F4F3F7] text-[#24212D] font-medium border border-[#EBE9F0]">
+                    <!-- Role badge & Checkbox -->
+                    <div class="flex items-center gap-3 shrink-0 ml-2" @click.stop>
+                      <span
+                        class="text-[10.5px] px-2 py-0.5 rounded-[4px] font-medium border"
+                        :class="member.rawRole === 'owner' ? 'bg-purple-50 text-[#7C22E8] border-purple-200' : 'bg-[#F4F3F7] text-[#24212D] border-[#EBE9F0]'"
+                      >
                         {{ member.role }}
                       </span>
                       <input
                         type="checkbox"
-                        v-model="member.selected"
-                        class="accent-[#7C22E8] w-3.5 h-3.5 rounded-[3px] cursor-pointer"
+                        :checked="member.selected"
+                        :disabled="!isOwner"
+                        @change="selectAssignee(member)"
+                        class="accent-[#7C22E8] w-4 h-4 rounded-[3px]"
+                        :class="[
+                          isOwner ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'
+                        ]"
                       />
                     </div>
                   </div>

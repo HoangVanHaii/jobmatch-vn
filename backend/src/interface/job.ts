@@ -39,6 +39,7 @@ export interface Job {
   id: string;
   companyId: string;
   postedBy: string;
+  assignedTo: string | null;
   title: string;
   slug: string | null;
   description: string;
@@ -93,6 +94,8 @@ export interface JobListItem {
   title: string;
   slug: string | null;
   companyId: string;
+  postedBy?: string;
+  assignedTo?: string | null;
   /**
    * Tên + logo công ty — LEFT JOIN từ bảng `companies` trong service để frontend
    * không phải gọi thêm API. NULL nếu job.companyId trỏ tới company đã xoá /
@@ -167,7 +170,16 @@ export interface AdjacentJob {
   title: string;
 }
 
+export interface AssignedUserInfo {
+  id: string;
+  fullName: string | null;
+  email: string;
+  avatarUrl: string | null;
+}
+
 export interface JobDetailPayload extends Job {
+  /** Thông tin người phụ trách tin tuyển dụng (nếu có). */
+  assignedToUser?: AssignedUserInfo | null;
   /** Danh sách feedback mới nhất trước, cap 200. Empty array nếu chưa có. */
   feedbacks: JobFeedback[];
   /** Aggregate rating — count + average. */

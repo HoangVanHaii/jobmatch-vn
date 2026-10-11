@@ -9,6 +9,7 @@ export const jobs = pgTable('jobs', {
   id: uuid('id').primaryKey().defaultRandom(),
   companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
   postedBy: uuid('posted_by').notNull().references(() => users.id),
+  assignedTo: uuid('assigned_to').references(() => users.id, { onDelete: 'set null' }),
   title: text('title').notNull(),
   slug: text('slug'),
   description: text('description').notNull(),
@@ -46,4 +47,5 @@ export const jobs = pgTable('jobs', {
   statusCreatedIdx: index('idx_jobs_status_created').on(t.status, t.createdAt),
   locationIdx: index('idx_jobs_location').using('gin', t.location),
   extraIdx: index('idx_jobs_extra_data').using('gin', t.extraData),
+  assignedToIdx: index('idx_jobs_assigned_to').on(t.assignedTo),
 }));

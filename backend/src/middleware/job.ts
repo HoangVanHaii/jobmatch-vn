@@ -166,12 +166,19 @@ export const jobCreateSchema = z
      * JobSearchView. Default 'normal' = không badge. Xem HiringStatus + migration 0038.
      */
     hiringStatus: hiringStatusEnum.default('normal'),
+    assignedTo: z.string().uuid().optional(),
     extraData: z.record(z.unknown()).default({}),
   })
   .refine(
     (d) => d.salaryMin === undefined || d.salaryMax === undefined || d.salaryMax >= d.salaryMin,
     { message: 'salaryMax phải >= salaryMin', path: ['salaryMax'] },
   );
+
+// Body PATCH /jobs/:id/assign — Owner gán tin tuyển dụng cho nhân viên
+export const jobAssignSchema = z.object({
+  assignedTo: z.string().uuid({ message: 'assignedTo phải là UUID hợp lệ của nhân viên' }),
+});
+export type JobAssignBody = z.infer<typeof jobAssignSchema>;
 
 // Body PATCH /jobs/:id — không cho đổi companyId
 export const jobUpdateSchema = z

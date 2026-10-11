@@ -106,6 +106,10 @@ export const jobApi = {
   update: (id: string, data: unknown) =>
     http.patch<ApiResponse<JobListItem>>(`/jobs/${id}`, data),
 
+  /** Owner gán/uỷ quyền tin tuyển dụng cho nhân viên khác trong cùng công ty */
+  assign: (id: string, assignedTo: string) =>
+    http.patch<ApiResponse<JobListItem>>(`/jobs/${id}/assign`, { assignedTo }),
+
   delete: (id: string) => http.delete<ApiResponse<{ id: string }>>(`/jobs/${id}`),
 
   reopen: (id: string) =>

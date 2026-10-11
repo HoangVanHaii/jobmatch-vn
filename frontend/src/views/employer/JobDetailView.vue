@@ -5,6 +5,8 @@ import { useToastStore } from '@stores/toast';
 import { useAuthStore } from '@stores/auth';
 import { jobApi } from '@services/job.api';
 import { applicationApi } from '@services/application.api';
+import { companyMemberApi } from '@services/companyMember.api';
+import type { CompanyMember } from '@/types/companyMember';
 import {
   aiTestApi,
   type AiTestSummary,
@@ -30,6 +32,7 @@ import {
   ChevronRight,
   ChevronDown,
   ArrowUpDown,
+  UserCheck,
   ArrowUp,
   ArrowDown,
   Search,
@@ -108,6 +111,14 @@ const reopenOpen = ref(false);
 const showUpgradeModal = ref(false);
 const actionPending = ref(false);
 const showMoreActions = ref(false);
+
+// Company members & Assignee states
+const companyMembers = ref<CompanyMember[]>([]);
+const membersLoading = ref(false);
+const assignModalOpen = ref(false);
+const assigning = ref(false);
+const selectedAssigneeId = ref<string>('');
+const assigneeSearchQuery = ref<string>('');
 
 // State tương tác giao diện
 const activeTab = ref<'information' | 'application' | 'test' | 'feedback'>('information');
@@ -343,29 +354,166 @@ const jobDetailsList = computed(() => [
   },
 ]);
 
-// Hiring manager list (hỗ trợ extraData từ backend nếu có)
-const hiringManagers = computed(() => {
-  const extra = (job.value as any)?.extraData;
-  const list = (job.value as any)?.hiringManagers || extra?.hiringManagers;
-  if (Array.isArray(list) && list.length > 0) return list;
-  return [
-    {
-      id: 1,
-      name: extra?.hiringManagerName || 'Quản lý tuyển dụng',
-      role: 'HR Manager',
-      avatarType: 'initial',
-      initial: (extra?.hiringManagerName || 'Q').charAt(0).toUpperCase(),
-      initialBg: 'bg-[#2563eb]',
-    },
-  ];
+// =========================================================================
+// COMPANY MEMBERS & ASSIGNEE LOGIC
+// =========================================================================
+const fetchCompanyMembers = async (): Promise<void> => {
+  const cId = job.value?.companyId;
+  if (!cId) return;
+  membersLoading.value = true;
+  try {
+    const { data } = await companyMemberApi.list(cId);
+    const rawList = Array.isArray(data.data) ? data.data : [];
+    companyMembers.value = rawList.filter((m) => m.status === 'active');
+  } catch (err) {
+    console.error('Failed to load company members:', err);
+  } finally {
+    membersLoading.value = false;
+  }
+};
+
+const currentUserMember = computed(() => {
+  const myId = auth.user?.id;
+  if (!myId || !companyMembers.value.length) return null;
+  return companyMembers.value.find((m) => m.userId === myId) ?? null;
 });
 
-const visibleManagers = computed(() => {
-  return hiringManagers.value.filter((m: any) => !removedManagerIds.value.includes(m.id));
+const isOwner = computed(() => {
+  return currentUserMember.value?.role === 'owner' && currentUserMember.value?.status === 'active';
 });
 
-const removeManager = (id: number): void => {
-  removedManagerIds.value.push(id);
+const assignedUser = computed(() => {
+  const j = job.value;
+  if (!j) return null;
+  const targetUserId = j.assignedTo || j.postedBy;
+
+  // 1. Tìm trong companyMembers đã nạp
+  if (companyMembers.value.length && targetUserId) {
+    const mem = companyMembers.value.find((m) => m.userId === targetUserId);
+    if (mem) {
+      return {
+        id: mem.userId,
+        name: mem.user?.fullName || mem.user?.email?.split('@')[0] || 'Người phụ trách',
+        email: mem.user?.email || '',
+        avatarUrl: mem.user?.avatarUrl || null,
+        role: mem.role === 'owner' ? 'Chủ sở hữu (Owner)' : 'Thành viên (Member)',
+        rawRole: mem.role,
+        isCurrentUser: mem.userId === auth.user?.id,
+      };
+    }
+  }
+
+  // 2. Fallback từ assignedToUser trả về trực tiếp trong JobDetail API
+  if (j.assignedToUser) {
+    const u = j.assignedToUser;
+    return {
+      id: u.id,
+      name: u.fullName || u.email?.split('@')[0] || 'Người phụ trách',
+      email: u.email || '',
+      avatarUrl: u.avatarUrl || null,
+      role: 'Người phụ trách',
+      rawRole: 'member',
+      isCurrentUser: u.id === auth.user?.id,
+    };
+  }
+
+  // 3. Fallback từ extraData (teamMembers / hiringManagerName)
+  const extra = (j as any)?.extraData;
+  if (extra?.teamMembers && Array.isArray(extra.teamMembers)) {
+    const matched = extra.teamMembers.find((m: any) => m.selected || (targetUserId && m.userId === targetUserId));
+    if (matched) {
+      return {
+        id: matched.userId || matched.id,
+        name: matched.name || 'Người phụ trách',
+        email: matched.email || '',
+        avatarUrl: matched.avatarUrl || null,
+        role: matched.role || 'Người phụ trách',
+        rawRole: matched.rawRole || 'member',
+        isCurrentUser: matched.userId === auth.user?.id,
+      };
+    }
+  }
+
+  if (extra?.hiringManagerName) {
+    return {
+      id: 'default',
+      name: extra.hiringManagerName,
+      email: '',
+      avatarUrl: null,
+      role: 'Quản lý tuyển dụng',
+      rawRole: 'member',
+      isCurrentUser: false,
+    };
+  }
+
+  return null;
+});
+
+const filteredMembers = computed(() => {
+  const q = assigneeSearchQuery.value.trim().toLowerCase();
+  if (!q) return companyMembers.value;
+  return companyMembers.value.filter((m) => {
+    const name = (m.user?.fullName || '').toLowerCase();
+    const email = (m.user?.email || '').toLowerCase();
+    return name.includes(q) || email.includes(q);
+  });
+});
+
+const openAssignModal = (): void => {
+  if (!isOwner.value) {
+    toast.push({
+      variant: 'warning',
+      title: 'Không có quyền thao tác',
+      body: 'Chỉ Chủ sở hữu (Owner) của công ty mới có quyền phân công người phụ trách tin tuyển dụng.',
+    });
+    return;
+  }
+  selectedAssigneeId.value = job.value?.assignedTo || job.value?.postedBy || '';
+  assigneeSearchQuery.value = '';
+  assignModalOpen.value = true;
+};
+
+const handleAssign = async (): Promise<void> => {
+  const currentJob = job.value;
+  if (!currentJob?.id) return;
+  if (!selectedAssigneeId.value) {
+    toast.push({
+      variant: 'warning',
+      title: 'Chưa chọn người phụ trách',
+      body: 'Vui lòng chọn một thành viên trong công ty để phân công.',
+    });
+    return;
+  }
+
+  assigning.value = true;
+  try {
+    await jobApi.assign(currentJob.id, selectedAssigneeId.value);
+    toast.push({
+      variant: 'success',
+      title: 'Phân công thành công',
+      body: 'Đã cập nhật người phụ trách cho tin tuyển dụng.',
+    });
+
+    currentJob.assignedTo = selectedAssigneeId.value;
+    const member = companyMembers.value.find((m) => m.userId === selectedAssigneeId.value);
+    if (member) {
+      currentJob.assignedToUser = {
+        id: member.userId,
+        email: member.user?.email || '',
+        fullName: member.user?.fullName || null,
+        avatarUrl: member.user?.avatarUrl || null,
+      };
+    }
+    assignModalOpen.value = false;
+  } catch (err: any) {
+    toast.push({
+      variant: 'error',
+      title: 'Phân công thất bại',
+      body: err?.response?.data?.message || err?.message || 'Không thể đổi người phụ trách. Vui lòng thử lại.',
+    });
+  } finally {
+    assigning.value = false;
+  }
 };
 
 // =========================================================================
@@ -480,6 +628,9 @@ const loadAll = async (): Promise<void> => {
   error.value = null;
   try {
     await fetchDetail();
+    if (job.value?.companyId) {
+      void fetchCompanyMembers();
+    }
     await fetchScan();
     void fetchJobTests();
   } finally {
@@ -2088,14 +2239,6 @@ useSocket('ai-test:ready', (payload: any) => {
                     Ngày kết thúc nhận đơn
                   </h2>
                 </div>
-                <button
-                  type="button"
-                  @click="onEdit"
-                  class="inline-flex items-center gap-1 text-xs font-semibold text-[#5b4eea] hover:text-[#4a3fd6] transition-colors ml-2 cursor-pointer"
-                >
-                  <Pencil class="h-3 w-3" />
-                  <span>Edit</span>
-                </button>
               </div>
 
               <!-- Danh sách ngày công bố / hạn chót -->
@@ -2154,7 +2297,7 @@ useSocket('ai-test:ready', (payload: any) => {
             </div>
 
             <!-- -------------------------------------------------------------
-                 KHU VỰC I: CỘT PHẢI - HIRING MANAGER
+                 KHU VỰC I: CỘT PHẢI - NGƯỜI PHỤ TRÁCH (ASSIGNEE)
                  ------------------------------------------------------------- -->
             <div>
               <!-- Dải thông báo nội bộ màu tím nhạt -->
@@ -2163,60 +2306,88 @@ useSocket('ai-test:ready', (payload: any) => {
               >
                 <Info class="h-3.5 w-3.5 text-[#5b4eea] shrink-0" />
                 <p class="text-[11px] text-[#5b4eea] font-normal leading-tight">
-                  This hiring manager is for internal use only.
+                  Người phụ trách chỉ hiển thị trong nội bộ doanh nghiệp.
                 </p>
               </div>
 
-              <!-- Tiêu đề + Nút + Assign -->
+              <!-- Tiêu đề + Nút Đổi người phụ trách -->
               <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-1.5">
                   <User class="h-4 w-4 text-gray-700" />
-                  <h2 class="text-sm font-bold text-gray-900 leading-none">Hiring Manager</h2>
+                  <h2 class="text-sm font-bold text-gray-900 leading-none">Người phụ trách</h2>
                 </div>
                 <button
+                  v-if="isOwner"
                   type="button"
-                  class="inline-flex items-center gap-0.5 text-xs font-semibold text-[#5b4eea] hover:text-[#4a3fd6] transition-colors cursor-pointer"
+                  @click="openAssignModal"
+                  class="inline-flex items-center gap-1 text-xs font-semibold text-[#5b4eea] hover:text-[#4a3fd6] transition-colors cursor-pointer bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded-md"
+                  title="Chỉ định hoặc thay đổi người phụ trách tin này"
                 >
-                  <span>+ Assign</span>
+                  <Pencil class="h-3 w-3" />
+                  <span>Đổi người phụ trách</span>
                 </button>
               </div>
 
-              <!-- Danh sách thành viên phụ trách -->
-              <div class="space-y-2.5">
-                <div
-                  v-for="manager in visibleManagers"
-                  :key="manager.id"
-                  class="flex items-center justify-between py-1 group"
-                >
+              <!-- Thẻ thông tin người phụ trách -->
+              <div v-if="assignedUser" class="p-3 bg-gray-50/80 rounded-xl border border-gray-100 space-y-2.5">
+                <div class="flex items-center justify-between">
                   <div class="flex items-center gap-2.5 min-w-0">
+                    <!-- Avatar hoặc chữ cái đầu -->
                     <div
-                      class="w-7 h-7 rounded-full text-white flex items-center justify-center font-bold text-xs shrink-0"
-                      :class="manager.initialBg || 'bg-[#2563eb]'"
+                      v-if="assignedUser.avatarUrl"
+                      class="w-8 h-8 rounded-full overflow-hidden shrink-0 ring-2 ring-purple-100"
                     >
-                      {{ manager.initial || manager.name?.charAt(0)?.toUpperCase() || 'M' }}
+                      <img :src="assignedUser.avatarUrl" :alt="assignedUser.name" class="w-full h-full object-cover" />
+                    </div>
+                    <div
+                      v-else
+                      class="w-8 h-8 rounded-full bg-gradient-to-tr from-[#5b4eea] to-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm"
+                    >
+                      {{ assignedUser.name?.charAt(0)?.toUpperCase() || 'U' }}
                     </div>
 
-                    <!-- Tên & Chức vụ -->
+                    <!-- Tên & Email -->
                     <div class="min-w-0">
-                      <div class="text-xs font-bold text-gray-900 truncate leading-tight">
-                        {{ manager.name }}
+                      <div class="text-xs font-bold text-gray-900 truncate flex items-center gap-1.5">
+                        <span class="truncate">{{ assignedUser.name }}</span>
+                        <span
+                          v-if="assignedUser.isCurrentUser"
+                          class="px-1.5 py-0.2 text-[9px] font-semibold bg-emerald-100 text-emerald-700 rounded shrink-0"
+                        >
+                          Bạn
+                        </span>
                       </div>
-                      <div class="text-[10px] text-gray-400 truncate leading-tight mt-0.5">
-                        {{ manager.role }}
+                      <div class="text-[11px] text-gray-400 truncate leading-tight mt-0.5">
+                        {{ assignedUser.email || assignedUser.role }}
                       </div>
                     </div>
                   </div>
-
-                  <!-- Nút remove -->
-                  <button
-                    type="button"
-                    class="text-gray-300 hover:text-red-500 transition-colors p-1 cursor-pointer"
-                    title="Gỡ người quản lý"
-                    @click="removeManager(manager.id)"
-                  >
-                    <MinusCircle class="h-4 w-4" />
-                  </button>
                 </div>
+
+                <!-- Footer thẻ phụ trách: Vai trò & Quyền hạn -->
+                <div class="pt-2 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500">
+                  <span class="flex items-center gap-1 text-[11px] text-gray-600">
+                    <UserCheck class="h-3.5 w-3.5 text-[#5b4eea]" />
+                    <span>{{ assignedUser.role }}</span>
+                  </span>
+                  <span v-if="!isOwner" class="text-[10px] text-gray-400 italic">
+                    Chỉ Owner có quyền đổi
+                  </span>
+                </div>
+              </div>
+
+              <!-- Trạng thái chưa có người phụ trách -->
+              <div v-else class="text-center py-4 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                <User class="h-6 w-6 text-gray-300 mx-auto mb-1" />
+                <p class="text-xs text-gray-500">Chưa chỉ định người phụ trách</p>
+                <button
+                  v-if="isOwner"
+                  type="button"
+                  @click="openAssignModal"
+                  class="mt-2 text-xs text-[#5b4eea] font-semibold hover:underline cursor-pointer"
+                >
+                  + Chỉ định ngay
+                </button>
               </div>
             </div>
           </aside>
@@ -2233,9 +2404,34 @@ useSocket('ai-test:ready', (payload: any) => {
         <!-- Top bar: Tiêu đề + Bộ lọc trạng thái + Tìm kiếm -->
         <div class="mb-5 flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h2 class="text-base font-semibold text-gray-900 tracking-tight">
-              Danh sách đơn ứng tuyển ({{ appTotal }})
-            </h2>
+            <div class="flex items-center gap-2.5 flex-wrap">
+              <h2 class="text-base font-semibold text-gray-900 tracking-tight">
+                Danh sách đơn ứng tuyển ({{ appTotal }})
+              </h2>
+              <!-- Pill người phụ trách -->
+              <div
+                v-if="assignedUser"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200/60"
+              >
+                <UserCheck class="h-3.5 w-3.5 text-[#5b4eea]" />
+                <span>Phụ trách: <strong class="font-semibold">{{ assignedUser.name }}</strong></span>
+                <span
+                  v-if="assignedUser.isCurrentUser"
+                  class="px-1 py-0.2 text-[9px] font-semibold bg-emerald-100 text-emerald-700 rounded"
+                >
+                  Bạn
+                </span>
+                <button
+                  v-if="isOwner"
+                  type="button"
+                  @click="openAssignModal"
+                  class="ml-1 text-[11px] font-semibold text-[#5b4eea] hover:text-purple-800 underline cursor-pointer"
+                  title="Thay đổi người phụ trách"
+                >
+                  Đổi
+                </button>
+              </div>
+            </div>
             <p class="text-[12px] text-gray-500 mt-0.5">
               Quản lý các đơn ứng tuyển và duy trì quy trình tuyển dụng cho vị trí <strong class="text-gray-700 font-medium">{{ job.title }}</strong>.
             </p>
@@ -2955,23 +3151,6 @@ useSocket('ai-test:ready', (payload: any) => {
         </div>
       </section>
     </div>
-
-    <!-- ===================================================================
-         KHU VỰC J: FLOATING CHAT BUTTON (NÚT CHAT NỔI MÀU TÍM)
-         =================================================================== -->
-    <button
-      type="button"
-      class="absolute bottom-5 right-5 z-20 w-11 h-11 rounded-full bg-[#5b4eea] hover:bg-[#4b3fd0] text-white shadow-[0_6px_20px_rgba(91,78,234,0.38)] flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-      title="Hỗ trợ trực tuyến"
-      aria-label="Mở cửa sổ chat hỗ trợ"
-    >
-      <svg class="h-5 w-5 fill-current" viewBox="0 0 24 24">
-        <path
-          d="M12 2C6.477 2 2 6.03 2 11c0 2.214.887 4.244 2.375 5.812L3.06 20.94a.75.75 0 00.97.94l4.242-1.767c1.173.57 2.478.887 3.728.887 5.523 0 10-4.03 10-9s-4.477-9-10-9zm-4 10a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zm4 0a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zm4 0a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5z"
-        />
-      </svg>
-    </button>
-
     <!-- ============ Delete confirm modal ============ -->
     <ConfirmModal
       :open="deleteOpen"
@@ -3033,6 +3212,154 @@ useSocket('ai-test:ready', (payload: any) => {
       :loading="reviewLoading"
       @close="reviewModalOpen = false"
     />
+
+    <!-- ============ Phân công người phụ trách (Assign Job Modal) ============ -->
+    <Teleport to="body">
+      <div
+        v-if="assignModalOpen"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-all"
+        @click.self="assignModalOpen = false"
+      >
+        <div
+          class="w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200"
+        >
+          <!-- Modal Header -->
+          <div class="border-gray-100 flex items-center justify-between">
+            <div>
+              <h3 class="text-base font-bold text-white flex items-center gap-2">
+                <UserCheck class="h-5 w-5 text-white" />
+                Phân công người phụ trách
+              </h3>
+              <p class="text-xs text-gray-500 mt-0.5">
+                Chỉ định thành viên quản lý tin tuyển dụng và hồ sơ ứng viên
+              </p>
+            </div>
+           <button
+              type="button"
+              class="px-4 py-2 text-xs font-semibold text-white bg-[#5b4eea] hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              @click="handleAssign"
+              :disabled="assigning || !selectedAssigneeId"
+            >
+              <Loader2 v-if="assigning" class="h-3.5 w-3.5 animate-spin" />
+              <span>{{ assigning ? '...' : 'Lưu' }}</span>
+            </button>
+          </div>
+
+          <!-- Modal Body -->
+          <div class="flex-1 overflow-y-auto space-y-4 bg-white rounded-xl rounded-tr-xl">
+            <!-- Search bar -->
+            <div class="relative">
+              <Search class="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                v-model="assigneeSearchQuery"
+                type="text"
+                placeholder="Tìm thành viên theo tên hoặc email..."
+                class="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-[#5b4eea] bg-gray-50/40 hover:bg-white transition-all"
+              />
+            </div>
+
+            <!-- Loading members -->
+            <div v-if="membersLoading" class="py-8 flex flex-col items-center justify-center text-gray-400">
+              <Loader2 class="h-6 w-6 animate-spin text-[#5b4eea] mb-2" />
+              <span class="text-xs">Đang tải danh sách thành viên...</span>
+            </div>
+
+            <!-- Members list -->
+            <div v-else-if="filteredMembers.length > 0" class="">
+              <div
+                v-for="member in filteredMembers"
+                :key="member.id"
+                @click="selectedAssigneeId = member.userId"
+                class="p-3 border transition-all cursor-pointer flex items-center justify-between gap-3"
+                
+              >
+                <div class="flex items-center gap-3 min-w-0">
+                  <!-- Avatar -->
+                  <div
+                    v-if="member.user?.avatarUrl"
+                    class="w-9 h-9 rounded-full overflow-hidden shrink-0 border border-gray-100"
+                  >
+                    <img :src="member.user.avatarUrl" :alt="member.user?.fullName || 'Avatar'" class="w-full h-full object-cover" />
+                  </div>
+                  <div
+                    v-else
+                    class="w-9 h-9 rounded-full bg-gradient-to-tr from-purple-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm"
+                  >
+                    {{ (member.user?.fullName || member.user?.email || 'M').charAt(0).toUpperCase() }}
+                  </div>
+
+                  <!-- Name and Email -->
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="text-xs font-semibold text-gray-900 truncate">
+                        {{ member.user?.fullName || member.user?.email?.split('@')[0] || 'Thành viên' }}
+                      </span>
+                      <span
+                        v-if="member.userId === auth.user?.id"
+                        class="px-1.5 py-0.2 text-[9px] font-semibold bg-emerald-100 text-emerald-700 rounded"
+                      >
+                        Bạn
+                      </span>
+                      <span
+                        class="px-1.5 py-0.2 text-[9px] font-medium rounded"
+                        :class="member.role === 'owner' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'"
+                      >
+                        {{ member.role === 'owner' ? 'Owner' : 'Member' }}
+                      </span>
+                    </div>
+                    <div class="text-[11px] text-gray-500 truncate mt-0.5">
+                      {{ member.user?.email }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Radio / Check icon -->
+                <div class="shrink-0 flex items-center">
+                  <div
+                    class="w-5 h-5 rounded-full border flex items-center justify-center transition-all"
+                    :class="
+                      selectedAssigneeId === member.userId
+                        ? 'border-[#5b4eea] bg-[#5b4eea] text-white'
+                        : 'border-gray-300 bg-white'
+                    "
+                  >
+                    <Check v-if="selectedAssigneeId === member.userId" class="h-3 w-3 stroke-[3]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Empty search state -->
+            <div v-else class="py-8 text-center text-gray-400">
+              <Users class="h-8 w-8 mx-auto mb-2 text-gray-300" />
+              <p class="text-xs">Không tìm thấy thành viên nào phù hợp</p>
+            </div>
+          </div>
+
+          <!-- Modal Footer -->
+          <!-- <div class="px-6 py-3.5 border-t border-gray-100 bg-slate-50/50 flex items-center justify-end gap-2.5">
+            <button
+              type="button"
+              class="px-4 py-2 text-xs font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer"
+              @click="assignModalOpen = false"
+              :disabled="assigning"
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              class="px-4 py-2 text-xs font-semibold text-white bg-[#5b4eea] hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              @click="handleAssign"
+              :disabled="assigning || !selectedAssigneeId"
+            >
+              <Loader2 v-if="assigning" class="h-3.5 w-3.5 animate-spin" />
+              <UserCheck v-else class="h-3.5 w-3.5" />
+              <span>{{ assigning ? 'Đang cập nhật...' : 'Xác nhận phân công' }}</span>
+            </button>
+          </div> -->
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 

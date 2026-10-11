@@ -80,6 +80,8 @@ export interface JobListItem {
    * có → marked optional. FE dùng để tạo conversation qua `chatApi.createOrGet`.
    */
   postedBy?: string | null;
+  /** User id của người phụ trách tin tuyển dụng. */
+  assignedTo?: string | null;
 }
 
 /**
@@ -111,7 +113,16 @@ export interface JobExtraData {
   [key: string]: unknown;
 }
 
+export interface AssignedUserInfo {
+  id: string;
+  fullName: string | null;
+  email: string;
+  avatarUrl: string | null;
+}
+
 export interface JobDetail extends JobListItem {
+  /** Thông tin người phụ trách tin tuyển dụng (nếu có). */
+  assignedToUser?: AssignedUserInfo | null;
   description: string;
   requirements: string | null;
   benefits: string | null;
