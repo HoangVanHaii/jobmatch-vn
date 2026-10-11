@@ -34,7 +34,17 @@ export const notificationApi = {
   /** PATCH /notifications/:id/read — đánh dấu 1 notification là đã đọc */
   markRead: (id: string) => http.patch<ApiResponse<Notification>>(`/notifications/${id}/read`),
 
+  /** PATCH /notifications/read-all — đánh dấu tất cả notification là đã đọc */
+  markAllRead: () => http.patch<ApiResponse<{ count: number }>>('/notifications/read-all'),
+
+  /** GET /notifications/unread-count — lấy riêng số lượng thông báo chưa đọc (nhẹ, tối ưu tốc độ) */
+  getUnreadCount: () => http.get<ApiResponse<{ unreadCount: number }>>('/notifications/unread-count'),
+
   /** POST /notifications — admin tạo notification (system message) */
   create: (data: CreateNotificationPayload) =>
     http.post<ApiResponse<Notification>>('/notifications', data),
+
+  /** DELETE /notifications/:id — xoá 1 notification */
+  remove: (id: string) =>
+    http.delete<ApiResponse<{ id: string; totalUnread: number }>>(`/notifications/${id}`),
 };

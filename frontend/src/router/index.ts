@@ -101,6 +101,7 @@ const routes: RouteRecordRaw[] = [
     //   { path: 'applications', name: 'my-applications', component: () => import('@views/candidate/AppliedJobsView.vue') },
     //   { path: 'saved', name: 'saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
     //   { path: 'cv-score', name: 'cv-score', component: () => import('@views/candidate/CVScoringView.vue') },
+      { path: 'notifications', name: 'candidate-notifications', component: () => import('@views/NotificationsView.vue') },
       { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
       { path: 'test5', name: 'candidate-test5', component: () => import('@views/candidate/MockupResumeView.vue') },
       { path: 'test6', name: 'candidate-test6', component: () => import('@views/candidate/Test6View.vue') },
@@ -137,6 +138,8 @@ const routes: RouteRecordRaw[] = [
 
       // Hỗ trợ
       { path: 'chat/:id?', name: 'e-chat', component: ChatView },
+      //{ path: 'notifications', name: 'employer-notifications', component: () => import('@views/notifications/NotificationsView.vue') },
+      { path: 'notifications', name: 'employer-notifications', component: () => import('@views/NotificationsView.vue') },
       { path: 'settings', name: 'employer-settings', component: () => import('@views/employer/SettingsView.vue') },
 
       // Gói dịch vụ / billing
@@ -197,6 +200,19 @@ const routes: RouteRecordRaw[] = [
     ],
   },
 
+  // Notifications — route dùng chung, tự động redirect theo role
+  {
+    path: '/notifications',
+    name: 'notifications',
+    meta: { auth: true },
+    redirect: () => {
+      const auth = useAuthStore();
+      if (auth.user?.role === 'employer') return { name: 'employer-notifications' };
+      if (auth.user?.role === 'admin') return { name: 'admin-dashboard' };
+      return { name: 'candidate-notifications' };
+    },
+  },
+
   // Errors
   { path: '/403', name: 'forbidden', component: () => import('@views/errors/Forbidden.vue') },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@views/errors/PageNotFound.vue') },
@@ -205,6 +221,12 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHistory(),
   routes,
+  scrollBehavior(_to, _from, savedPosition) {
+    if (savedPosition) {
+      return savedPosition;
+    }
+    return { top: 0 };
+  },
 });
 
 // Guards

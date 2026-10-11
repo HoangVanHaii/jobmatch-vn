@@ -6,7 +6,6 @@ import { useEmployerJobStore } from '@stores/employerJob';
 import { useToastStore } from '@stores/toast';
 import { useCvStore } from '@stores/cv';
 import { useSocket } from '@composables/useSocket';
-import NotificationBell from '@components/notify/NotificationBell.vue';
 import ToastContainer from '@components/notify/ToastContainer.vue';
 import UpgradePricing from '@components/pricing/UpgradePricing.vue';
 
@@ -185,7 +184,6 @@ useSocket(
 
 <template>
   <RouterView />
-  <NotificationBell />
   <!-- Toast container — render hàng đợi toast toàn cục. Teleport tới body.
    *  - <ToastContainer /> : simple toasts (success/info/warning/error) với icon + title.
    *  - <ToastHost />     : chat realtime variant (avatar + click → /chat).
