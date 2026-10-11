@@ -30,14 +30,13 @@ export const jobIdParamsSchema = z.object({
 });
 
 // Slug params — URL-friendly identifier dùng cho route `/jobs/by-slug/:slug`.
-// Ràng buộc: chỉ chấp nhận `[a-z0-9-]`, độ dài 3-120. Không nhận UUID ở đây
-// để tránh nhầm lẫn giữa 2 endpoint.
+// Hỗ trợ cả slug thông thường lẫn UUID.
 export const jobSlugParamsSchema = z.object({
   slug: z
     .string()
-    .min(3)
+    .min(1)
     .max(120)
-    .regex(/^[a-z0-9-]+$/, 'slug không hợp lệ'),
+    .regex(/^[a-zA-Z0-9_-]+$/, 'slug không hợp lệ'),
 });
 
 /**
