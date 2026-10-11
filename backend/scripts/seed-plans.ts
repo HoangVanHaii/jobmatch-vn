@@ -69,7 +69,7 @@ interface PlanSeed {
     | 'premium-yearly'
     | 'professional-yearly';
   name: string;
-  description: string;
+  description: { candidate: string; employer: string };
   /** Drizzle `numeric(15,0)` chỉ nhận string ở type-level — pg driver convert
    *  sang decimal/string khi bind. Truyền số cũng work runtime nhưng TS reject. */
   priceVnd: string;
@@ -81,12 +81,25 @@ interface PlanSeed {
 /** Mô tả marketing dùng chung cho gói tháng và gói năm cùng tier. */
 type TierCode = 'free' | 'premium' | 'professional';
 
-const DESCRIPTIONS: Record<TierCode, string> = {
-  free: 'Phù hợp với người mới bắt đầu tìm việc, cung cấp các công cụ cần thiết để hỗ trợ quá trình ứng tuyển và cải thiện CV.',
-  premium:
-    'Phù hợp với người tìm việc thường xuyên, hỗ trợ bạn sử dụng các công cụ ứng tuyển và tối ưu CV hiệu quả hơn.',
-  professional:
-    'Phù hợp với người đang tích cực tìm việc và cần sử dụng thường xuyên các công cụ hỗ trợ ứng tuyển và phân tích CV.',
+const DESCRIPTIONS: Record<TierCode, { candidate: string; employer: string }> = {
+  free: {
+    candidate:
+      'Phù hợp với người mới bắt đầu tìm việc, cung cấp các công cụ cần thiết để hỗ trợ quá trình ứng tuyển và cải thiện CV.',
+    employer:
+      'Phù hợp với nhà tuyển dụng trải nghiệm đăng tin, làm quen với quy trình tuyển dụng và quản lý hồ sơ ứng viên.',
+  },
+  premium: {
+    candidate:
+      'Phù hợp với người tìm việc thường xuyên, hỗ trợ bạn sử dụng các công cụ ứng tuyển và tối ưu CV hiệu quả hơn.',
+    employer:
+      'Phù hợp với doanh nghiệp vừa và nhỏ, hỗ trợ đăng việc làm định kỳ, tạo JD bằng AI và tìm ứng viên chất lượng.',
+  },
+  professional: {
+    candidate:
+      'Phù hợp với người đang tích cực tìm việc và cần sử dụng thường xuyên các công cụ hỗ trợ ứng tuyển và phân tích CV.',
+    employer:
+      'Phù hợp với doanh nghiệp tuyển dụng liên tục, tối ưu quy trình tuyển dụng với lượng tin đăng lớn và hỗ trợ AI toàn diện.',
+  },
 };
 
 // ⚠️ GIÁ TEST — giảm 4x so với giá production để tiện test payment.

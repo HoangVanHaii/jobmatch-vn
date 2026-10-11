@@ -6,7 +6,7 @@ export const plans = pgTable('plans', {
   id: uuid('id').primaryKey().defaultRandom(),
   code: text('code').notNull().unique(),
   name: text('name').notNull(),
-  description: text('description'),
+  description: jsonb('description').$type<Record<string, string> | string>(),
   priceVnd: numeric('price_vnd', { precision: 15, scale: 0 }).notNull(),
   durationDays: integer('duration_days').notNull(),
   features: jsonb('features').$type<Record<string, unknown>>().notNull(),

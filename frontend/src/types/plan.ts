@@ -7,7 +7,7 @@ export interface Plan {
   id: string;
   code: string;
   name: string;
-  description?: string | null;
+  description?: Record<string, string> | string | null;
   priceVnd: string;
   durationDays: number;
   features: Record<string, unknown>;
@@ -40,6 +40,7 @@ export interface PlanListParams {
 export interface PlanCreatePayload {
   code: string;
   name: string;
+  description?: Record<string, string> | string;
   priceVnd: number;
   durationDays: number;
   features: Record<string, unknown>;
