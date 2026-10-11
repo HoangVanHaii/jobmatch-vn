@@ -6,15 +6,25 @@ export type NewNotification = typeof notifications.$inferInsert;
 export type NotificationType = Notification['type'];
 export type NotificationPayload = Record<string, unknown>;
 
-export interface CreateNotificationInput{
+export interface CreateNotificationInput {
     userId: string;
     type: NotificationType;
     title: string;
-    payload: NotificationPayload;
+    message?: string;
+    payload?: NotificationPayload;
+}
+
+export interface AdminCreateNotificationInput {
+    userId: string;
+    type: NotificationType;
+    title: string;
+    message?: string;
+    payload?: NotificationPayload;
 }
 
 export interface ListNotificationsQuery{
     unread?: boolean;
+    search?: string;
     cursor?: string;
     limit: number;
 }

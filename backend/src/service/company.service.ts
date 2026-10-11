@@ -175,23 +175,21 @@ export const companyService = {
 
       for (const row of cancelledRows) {
         if (!row.invitedBy) continue; // invite không có inviter thì skip
-        const [notif] = await tx
-          .insert(notifications)
-          .values({
-            userId: row.invitedBy,
-            type: 'system',
-            title: `Lời mời của bạn đã bị huỷ — user đã tạo công ty riêng`,
-            payload: {
-              kind: 'invite_auto_cancelled_on_create_company',
-              // companyId = company bị ảnh hưởng (cancelled invite thuộc company nào)
-              // → FE listener dùng để match với currentCompanyId và reload list.
-              companyId: row.companyId,
-              cancelledUserId: userId,
-              cancelledCompanyId: row.companyId,
-              reason: 'invited_user_created_their_own_company',
-            },
-          })
-          .returning();
+        const notif = await notificationService.createInTx(tx, {
+          userId: row.invitedBy,
+          type: 'system',
+          title: 'Lời mời tham gia công ty đã bị huỷ',
+          message: 'Lời mời tham gia công ty của bạn đã tự động huỷ do thành viên đã tạo doanh nghiệp riêng',
+          payload: {
+            kind: 'invite_auto_cancelled_on_create_company',
+            // companyId = company bị ảnh hưởng (cancelled invite thuộc company nào)
+            // → FE listener dùng để match với currentCompanyId và reload list.
+            companyId: row.companyId,
+            cancelledUserId: userId,
+            cancelledCompanyId: row.companyId,
+            reason: 'invited_user_created_their_own_company',
+          },
+        });
         if (notif) emittedNotifs.push(notif);
       }
 

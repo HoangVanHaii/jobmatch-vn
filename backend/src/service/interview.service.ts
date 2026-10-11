@@ -18,6 +18,7 @@ import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
 import { notificationService } from './notification.service';
 import { notificationGateway } from '../socket/notificationGateway';
+import { sanitizeCandidateName, sanitizeJobTitle } from './notificationMessage.builder';
 import type { CreateInterviewBody, UpdateInterviewBody } from '../middleware/interview';
 import type { CandidateInterviewRow, EmployerInterviewRow, InterviewDetail } from '../interface/interview';
 
@@ -35,7 +36,7 @@ const assertApplicationBelongsToHR = async (
   applicationId: string,
   hrId: string,
   hrRole: 'employer' | 'admin',
-): Promise<{ candidateId: string; jobId: string; companyId: string | null }> => {
+): Promise<{ candidateId: string; jobId: string; companyId: string | null; jobTitle?: string }> => {
   const [app] = await db
     .select({
       id: applications.id,
@@ -43,6 +44,7 @@ const assertApplicationBelongsToHR = async (
       jobId: applications.jobId,
       jobPostedBy: jobs.postedBy,
       companyId: jobs.companyId,
+      jobTitle: jobs.title,
     })
     .from(applications)
     .leftJoin(jobs, eq(applications.jobId, jobs.id))
@@ -64,7 +66,7 @@ const assertApplicationBelongsToHR = async (
     }
   }
 
-  return { candidateId: app.candidateId, jobId: app.jobId, companyId: app.companyId };
+  return { candidateId: app.candidateId, jobId: app.jobId, companyId: app.companyId, jobTitle: app.jobTitle ?? undefined };
 };
 
 /**
@@ -75,7 +77,7 @@ const assertInterviewBelongsToHR = async (
   interviewId: string,
   hrId: string,
   hrRole: 'employer' | 'admin',
-): Promise<{ id: string; applicationId: string; interviewerId: string; status: string | null; candidateId: string; jobId: string | null; companyId: string | null }> => {
+): Promise<{ id: string; applicationId: string; interviewerId: string; status: string | null; candidateId: string; jobId: string | null; companyId: string | null; jobTitle: string | null }> => {
   const [row] = await db
     .select({
       id: interviews.id,
@@ -86,6 +88,7 @@ const assertInterviewBelongsToHR = async (
       jobId: applications.jobId,
       jobPostedBy: jobs.postedBy,
       companyId: jobs.companyId,
+      jobTitle: jobs.title,
     })
     .from(interviews)
     .innerJoin(applications, eq(interviews.applicationId, applications.id))
@@ -111,21 +114,127 @@ const assertInterviewBelongsToHR = async (
   return row;
 };
 
-/** Best-effort: notify candidate khi co lich phong van moi. */
-const notifyScheduled = async (candidateId: string, interviewId: string, applicationId: string, scheduledAt: Date): Promise<void> => {
-  await notificationService.create({ userId: candidateId, type: 'interview_scheduled', title: 'New interview scheduled', payload: { interviewId, applicationId, scheduledAt: scheduledAt.toISOString() } });
+/** Format giờ phỏng vấn theo múi giờ Asia/Ho_Chi_Minh: 14:30 ngày 12/10/2026 */
+export const formatVietnamDateTime = (date: Date | string): string => {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return '';
+  const formatter = new Intl.DateTimeFormat('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hourCycle: 'h23',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  });
+  const parts = formatter.formatToParts(d);
+  const find = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  const hour = find('hour');
+  const minute = find('minute');
+  const day = find('day');
+  const month = find('month');
+  const year = find('year');
+  return `${hour}:${minute} ngày ${day}/${month}/${year}`;
+};
+
+/** Cắt ngắn cancelReason tối đa 100 ký tự (thêm "…" nếu bị cắt), trả về null nếu rỗng */
+export const formatCancelReasonSnippet = (reason?: string): string | null => {
+  if (!reason) return null;
+  const trimmed = reason.trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= 100) return trimmed;
+  return trimmed.slice(0, 100) + '…';
+};
+
+/** Best-effort: thông báo cho ứng viên khi có lịch phỏng vấn mới. */
+export const notifyScheduled = async (
+  candidateId: string,
+  interviewId: string,
+  applicationId: string,
+  scheduledAt: Date,
+  jobTitle?: string,
+): Promise<void> => {
+  const cleanJobTitle = sanitizeJobTitle(jobTitle);
+  const timeText = formatVietnamDateTime(scheduledAt);
+  let message = 'Lịch phỏng vấn mới đã được thiết lập';
+  if (cleanJobTitle && timeText) {
+    message = `Lịch phỏng vấn mới cho vị trí ${cleanJobTitle} đã được lên lịch vào lúc ${timeText}`;
+  } else if (cleanJobTitle) {
+    message = `Lịch phỏng vấn mới cho vị trí ${cleanJobTitle} đã được thiết lập`;
+  } else if (timeText) {
+    message = `Lịch phỏng vấn mới của bạn đã được lên lịch vào lúc ${timeText}`;
+  }
+
+  await notificationService.create({
+    userId: candidateId,
+    type: 'interview_scheduled',
+    title: 'Lịch phỏng vấn mới',
+    message,
+    payload: {
+      interviewId,
+      applicationId,
+      scheduledAt: scheduledAt.toISOString(),
+      ...(jobTitle ? { jobTitle } : {}),
+    },
+  });
   notificationGateway.emitToUser(candidateId, 'interview:scheduled', { interviewId, applicationId, scheduledAt: scheduledAt.toISOString() });
 };
 
-/** Best-effort: notify candidate khi lich phong van duoc cap nhat. */
-const notifyUpdated = async (candidateId: string, interviewId: string): Promise<void> => {
-  await notificationService.create({ userId: candidateId, type: 'interview_updated', title: 'Your interview schedule has been updated', payload: { interviewId } });
+/** Best-effort: thông báo cho ứng viên khi lịch phỏng vấn được cập nhật. */
+export const notifyUpdated = async (
+  candidateId: string,
+  interviewId: string,
+  jobTitle?: string,
+): Promise<void> => {
+  const cleanJobTitle = sanitizeJobTitle(jobTitle);
+  const message = cleanJobTitle
+    ? `Lịch phỏng vấn cho vị trí ${cleanJobTitle} đã được cập nhật`
+    : 'Lịch phỏng vấn của bạn đã được cập nhật thông tin mới';
+
+  await notificationService.create({
+    userId: candidateId,
+    type: 'interview_updated',
+    title: 'Lịch phỏng vấn đã thay đổi',
+    message,
+    payload: {
+      interviewId,
+      ...(jobTitle ? { jobTitle } : {}),
+    },
+  });
   notificationGateway.emitToUser(candidateId, 'interview:updated', { interviewId });
 };
 
-/** Best-effort: notify candidate khi lich phong van bi huy. */
-const notifyCancelled = async (candidateId: string, interviewId: string, cancelReason: string | undefined): Promise<void> => {
-  await notificationService.create({ userId: candidateId, type: 'interview_cancelled', title: 'Your interview schedule has been cancelled', payload: { interviewId, cancelReason } });
+/** Best-effort: thông báo cho ứng viên khi lịch phỏng vấn bị huỷ. */
+export const notifyCancelled = async (
+  candidateId: string,
+  interviewId: string,
+  cancelReason: string | undefined,
+  jobTitle?: string,
+): Promise<void> => {
+  const cleanJobTitle = sanitizeJobTitle(jobTitle);
+  const reasonSnippet = formatCancelReasonSnippet(cancelReason);
+
+  let message = 'Lịch phỏng vấn của bạn đã bị huỷ';
+  if (cleanJobTitle) {
+    message = reasonSnippet
+      ? `Lịch phỏng vấn cho vị trí ${cleanJobTitle} đã bị huỷ với lý do: "${reasonSnippet}"`
+      : `Lịch phỏng vấn cho vị trí ${cleanJobTitle} đã bị huỷ`;
+  } else if (reasonSnippet) {
+    message = `Lịch phỏng vấn của bạn đã bị huỷ với lý do: "${reasonSnippet}"`;
+  }
+
+  await notificationService.create({
+    userId: candidateId,
+    type: 'interview_cancelled',
+    title: 'Lịch phỏng vấn đã bị huỷ',
+    message,
+    payload: {
+      kind: 'interview_cancelled_by_hr',
+      interviewId,
+      cancelReason,
+      ...(jobTitle ? { jobTitle } : {}),
+    },
+  });
   notificationGateway.emitToUser(candidateId, 'interview:cancelled', { interviewId, cancelReason });
 };
 
@@ -145,7 +254,7 @@ export const interviewService = {
    * 3. Notify candidate (best-effort).
    */
   create: async (body: CreateInterviewBody, hrId: string, hrRole: 'employer' | 'admin'): Promise<{ id: string; status: string }> => {
-    const { candidateId } = await assertApplicationBelongsToHR(body.applicationId, hrId, hrRole);
+    const { candidateId, jobTitle } = await assertApplicationBelongsToHR(body.applicationId, hrId, hrRole);
 
     const [created] = await db
       .insert(interviews)
@@ -162,7 +271,7 @@ export const interviewService = {
 
     if (!created) throw new AppError(500, 'INSERT_FAILED', 'Failed to create interview');
 
-    void notifyScheduled(candidateId, created.id, body.applicationId, new Date(body.scheduledAt))
+    void notifyScheduled(candidateId, created.id, body.applicationId, new Date(body.scheduledAt), jobTitle)
       .catch((err) => logger.warn({ err, interviewId: created.id }, 'create: notify candidate failed (non-fatal)'));
 
     return { id: created.id, status: created.status ?? 'pending' };
@@ -305,7 +414,7 @@ export const interviewService = {
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to update interview');
 
-    void notifyUpdated(existing.candidateId, updated.id)
+    void notifyUpdated(existing.candidateId, updated.id, existing.jobTitle ?? undefined)
       .catch((err) => logger.warn({ err, interviewId }, 'update: notify candidate failed (non-fatal)'));
 
     return { id: updated.id, status: updated.status ?? 'pending' };
@@ -329,7 +438,7 @@ export const interviewService = {
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to cancel interview');
 
-    void notifyCancelled(existing.candidateId, updated.id, cancelReason)
+    void notifyCancelled(existing.candidateId, updated.id, cancelReason, existing.jobTitle ?? undefined)
       .catch((err) => logger.warn({ err, interviewId }, 'cancel: notify candidate failed (non-fatal)'));
 
     return { id: updated.id, status: updated.status ?? 'cancelled' };
@@ -501,9 +610,9 @@ export const interviewService = {
   },
 
   /**
-   * Candidate tu choi tham gia phong van — PUT /interviews/candidate/:id/reject.
-   * Chi reject duoc khi status='pending' hoac 'confirmed'.
-   * Notify HR (best-effort).
+   * Ứng viên từ chối tham gia phỏng vấn — PUT /interviews/candidate/:id/reject.
+   * Chỉ từ chối được khi status='pending' hoặc 'confirmed'.
+   * Thông báo cho HR (best-effort).
    */
   reject: async (interviewId: string, candidateId: string, reason?: string): Promise<{ id: string; status: string }> => {
     const [row] = await db
@@ -512,9 +621,14 @@ export const interviewService = {
         status: interviews.status,
         candidateId: applications.candidateId,
         interviewerId: interviews.interviewerId,
+        jobTitle: jobs.title,
+        candidateName: userProfiles.fullName,
       })
       .from(interviews)
       .innerJoin(applications, eq(interviews.applicationId, applications.id))
+      .leftJoin(jobs, eq(applications.jobId, jobs.id))
+      .leftJoin(users, eq(applications.candidateId, users.id))
+      .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
       .where(eq(interviews.id, interviewId))
       .limit(1);
 
@@ -531,13 +645,35 @@ export const interviewService = {
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to reject interview');
 
-    // Notify HR (interviewer) best-effort
-    void notificationService.create({
-      userId: row.interviewerId,
-      type: 'interview_cancelled',
-      title: 'Candidate declined the interview',
-      payload: { interviewId, reason },
-    }).catch((err) => logger.warn({ err, interviewId }, 'reject: notify interviewer failed (non-fatal)'));
+    try {
+      const cleanJobTitle = sanitizeJobTitle(row.jobTitle);
+      const cleanCandidate = sanitizeCandidateName(row.candidateName);
+      let message = 'Ứng viên đã từ chối lịch phỏng vấn';
+      if (cleanCandidate && cleanJobTitle) {
+        message = `Ứng viên ${cleanCandidate} đã từ chối lịch phỏng vấn cho vị trí ${cleanJobTitle}`;
+      } else if (cleanCandidate) {
+        message = `Ứng viên ${cleanCandidate} đã từ chối lịch phỏng vấn`;
+      } else if (cleanJobTitle) {
+        message = `Ứng viên đã từ chối lịch phỏng vấn cho vị trí ${cleanJobTitle}`;
+      }
+
+      // Thông báo cho HR (interviewer) theo cơ chế best-effort
+      void notificationService.create({
+        userId: row.interviewerId,
+        type: 'interview_cancelled',
+        title: 'Ứng viên từ chối phỏng vấn',
+        message,
+        payload: {
+          kind: 'interview_declined_by_candidate',
+          interviewId,
+          reason,
+          jobTitle: row.jobTitle ?? undefined,
+          candidateName: row.candidateName ?? undefined,
+        },
+      }).catch((err) => logger.warn({ err, interviewId }, 'reject: notify interviewer failed (non-fatal)'));
+    } catch (notifyErr) {
+      logger.warn({ notifyErr, interviewId }, 'reject: build notification message failed (non-fatal)');
+    }
 
     void notificationGateway.emitToUser(row.interviewerId, 'interview:rejected', { interviewId, reason });
 

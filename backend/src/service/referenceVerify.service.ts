@@ -26,6 +26,7 @@ import { applications, jobs, referenceVerifications, userProfiles, users, compan
 import { n8nService } from './n8n.service';
 import { notificationService } from './notification.service';
 import { notificationGateway } from '../socket/notificationGateway';
+import { sanitizeCandidateName, sanitizeJobTitle, sanitizeText } from './notificationMessage.builder';
 
 /** Shape referee trong cvs.parsed_data.references (khớp type trong schema cvs.ts). */
 interface CvReferenceSource {
@@ -402,12 +403,33 @@ export const submitByToken = async (
   // ---------------------------------------------------------------------------
   try {
     if (ctx?.postedBy) {
+      const cleanReferee = sanitizeText(row.refereeName) ?? 'Người tham chiếu';
+      const cleanCandidate = sanitizeCandidateName(ctx.candidateName);
+      const cleanJobTitle = sanitizeJobTitle(ctx.jobTitle);
+
+      let message = confirmed
+        ? `${cleanReferee} đã xác nhận thông tin tham chiếu`
+        : `${cleanReferee} đã từ chối xác nhận thông tin tham chiếu`;
+
+      if (cleanCandidate && cleanJobTitle) {
+        message = confirmed
+          ? `${cleanReferee} đã xác nhận tham chiếu cho ứng viên ${cleanCandidate} ứng tuyển vị trí ${cleanJobTitle}`
+          : `${cleanReferee} đã từ chối xác nhận tham chiếu cho ứng viên ${cleanCandidate} ứng tuyển vị trí ${cleanJobTitle}`;
+      } else if (cleanCandidate) {
+        message = confirmed
+          ? `${cleanReferee} đã xác nhận tham chiếu cho ứng viên ${cleanCandidate}`
+          : `${cleanReferee} đã từ chối xác nhận tham chiếu cho ứng viên ${cleanCandidate}`;
+      } else if (cleanJobTitle) {
+        message = confirmed
+          ? `${cleanReferee} đã xác nhận tham chiếu cho vị trí ${cleanJobTitle}`
+          : `${cleanReferee} đã từ chối xác nhận tham chiếu cho vị trí ${cleanJobTitle}`;
+      }
+
       await notificationService.create({
         userId: ctx.postedBy,
         type: 'reference_verified',
-        title: confirmed
-          ? `${row.refereeName} đã XÁC NHẬN tham chiếu của ${ctx.candidateName ?? 'ứng viên'}`
-          : `${row.refereeName} đã TỪ CHỐI xác nhận tham chiếu của ${ctx.candidateName ?? 'ứng viên'}`,
+        title: confirmed ? 'Tham chiếu được xác nhận' : 'Tham chiếu bị từ chối',
+        message,
         payload: {
           applicationId: row.applicationId,
           referenceId: row.id,
