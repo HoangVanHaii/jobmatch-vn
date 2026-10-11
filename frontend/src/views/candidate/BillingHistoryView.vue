@@ -44,6 +44,7 @@ import type {
     SubscriptionStatus,
 } from '@/types/billing';
 import type { PaymentWithPlan, PaymentStatus } from '@/types/payment';
+import { formatDate, formatDateTime } from '@/utils/format';
 
 // ============================================================
 // Section 1+2: Plan & Quota (gọi API thật)
@@ -389,14 +390,6 @@ function formatPrice(v: string): string {
     return Number(v).toLocaleString('vi-VN') + 'đ';
 }
 
-function formatDate(iso: string): string {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleDateString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-    });
-}
 
 function formatTime(iso: string): string {
     if (!iso) return '';
@@ -406,16 +399,6 @@ function formatTime(iso: string): string {
     });
 }
 
-function formatDateTime(iso: string): string {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-}
 
 /**
  * Cờ đang tải trang MỚI trong khi đã có data trang hiện tại — dùng để áp

@@ -56,6 +56,7 @@ import type {
 } from '@/types/company';
 import { useCompanyMemberStore } from '@stores/companyMember';
 import { useLocations } from '@composables/useLocations';
+import { formatDate } from '@/utils/format';
 
 /* ============================================================================
  * Stores
@@ -589,16 +590,6 @@ const save = async (): Promise<void> => {
  * ==========================================================================*/
 const SIZE_RANGE_OPTIONS = ['1-10', '11-50', '51-200', '201-500', '501-1000', '1000+'];
 
-const formatJoinedDate = (iso: string | undefined): string => {
-  if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch {
-    return '';
-  }
-};
-
 const formatJobLocation = (loc: Record<string, unknown> | null | undefined): string => {
   if (!loc) return '';
   const city = (loc as { city?: string }).city;
@@ -1036,7 +1027,7 @@ const jobsPath = { name: 'employer-jobs' as const };
               <div class="min-w-0 flex flex-col gap-2">
                 <p class="text-[11px] uppercase tracking-wider font-semibold text-gray-500">Ngày tạo công ty</p>
                 <p class="text-lg md:text-xl font-bold text-gray-900 truncate">
-                  <span v-if="formatJoinedDate(current.createdAt)">{{ formatJoinedDate(current.createdAt) }}</span>
+                  <span v-if="formatDate(current.createdAt)">{{ formatDate(current.createdAt) }}</span>
                   <span v-else class="text-gray-400 italic text-base font-normal">—</span>
                 </p>
                 <p class="text-xs text-gray-500">trên JobMatch</p>
@@ -1349,7 +1340,7 @@ const jobsPath = { name: 'employer-jobs' as const };
                         <CalendarDays class="w-3 h-3" />Ngày tạo công ty
                       </dt>
                       <dd class="text-sm text-gray-900">
-                        <span v-if="formatJoinedDate(current.createdAt)">{{ formatJoinedDate(current.createdAt) }}</span>
+                        <span v-if="formatDate(current.createdAt)">{{ formatDate(current.createdAt) }}</span>
                         <span v-else class="text-gray-400 italic">—</span>
                       </dd>
                     </div>

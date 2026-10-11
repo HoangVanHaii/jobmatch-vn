@@ -39,6 +39,7 @@ import { getAiScore } from '@/types/cv'
 import { scoreLabel } from '@/utils/aiScore'
 import type { CvLanguage } from '@/utils/cvLabels'
 import { clampTemplateId } from '@/utils/cvTemplates'
+import { formatDate } from '@/utils/format'
 import CvThumbnail from '@components/cv/thumbnails/CvThumbnail.vue'
 import UploadFilesDialog from '@components/upload/UploadFilesDialog.vue'
 import type { UploadItem } from '@components/upload/UploadFilesDialog.vue'
@@ -94,14 +95,6 @@ const onUploadAttach = async (files: UploadItem[]): Promise<void> => {
   } else {
     toast.error(lastError ?? 'Không tạo được CV. Vui lòng thử lại.')
   }
-}
-
-const formatDate = (cv: Cv): string => {
-  const raw = cv.updatedAt || cv.createdAt
-  if (!raw) return ''
-  const d = new Date(raw)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
 onMounted(async () => {

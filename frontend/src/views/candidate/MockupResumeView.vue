@@ -36,6 +36,7 @@ import CvAiAnalysisView from '@components/cv/CvAiAnalysisView.vue';
 import type { CvSource, CvStatus, Cv, CvFailureReason } from '@/types/cv';
 import { getAiScore } from '@/types/cv';
 import { scoreLabel } from '@/utils/aiScore';
+import { formatDate } from '@/utils/format';
 import { useSocket } from '@composables/useSocket';
 
 const router = useRouter();
@@ -259,18 +260,6 @@ const getSubtitle = (cv: Cv): string => {
     return 'CV tạo trực tiếp';
   }
   return `Tải lên — ${fileTypeLabel(cv)}`;
-};
-
-const formatDate = (cv: Cv): string => {
-  const raw = cv.updatedAt || cv.createdAt;
-  if (!raw) return '';
-  try {
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch {
-    return '';
-  }
 };
 
 /* ============================================================================

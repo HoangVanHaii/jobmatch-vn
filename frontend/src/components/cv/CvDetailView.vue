@@ -43,6 +43,7 @@ import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue'
 import { buildRenderData } from '@/composables/cvRenderData'
 import { scoreLabel } from '@/utils/aiScore'
 import { clampTemplateId } from '@/utils/cvTemplates'
+import { formatDate } from '@/utils/format'
 import type { Cv } from '@/types/cv'
 import type { CvLanguage } from '@/utils/cvLabels'
 
@@ -156,13 +157,7 @@ const mimeLabel = computed<string>(
   () => MIME_LABELS[mime.value] ?? (props.cv?.fileType ? props.cv.fileType : '—'),
 )
 
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime())
-    ? '—'
-    : d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
-}
+const fmtDate = (iso: string | null): string => formatDate(iso, '—');
 
 /**
  * Build URL xem PDF trong tab "Chi tiết" — nối fragment để ẩn toolbar,

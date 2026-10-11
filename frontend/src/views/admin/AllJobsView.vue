@@ -855,7 +855,7 @@ const isEmpty = computed(() => !loading.value && paged.value.length === 0);
           </div>
           <div>
             <p class="text-xs font-semibold uppercase tracking-wider" style="color: var(--admin-text-muted);">Hạn nộp</p>
-            <p class="mt-1 tabular-nums" style="color: var(--admin-text);">{{ formatDate(viewJob.deadline) }}</p>
+            <p class="mt-1 tabular-nums" style="color: var(--admin-text);">{{ formatDate(viewJob.deadline) || '—' }}</p>
           </div>
           <div>
             <p class="text-xs font-semibold uppercase tracking-wider" style="color: var(--admin-text-muted);">Lượt xem / Ứng tuyển</p>

@@ -49,6 +49,7 @@ import CVTemplateRenderer from '@components/cv/templates/CVTemplateRenderer.vue'
 import CvDetailView from '@components/cv/CvDetailView.vue';
 import { buildRenderData } from '@/composables/cvRenderData';
 import { clampTemplateId } from '@/utils/cvTemplates';
+import { formatDate } from '@/utils/format';
 import type { Cv } from '@/types/cv';
 import type {
   ApplicationDetail,
@@ -96,14 +97,6 @@ const avatarInitial = (name: string): string => {
   return t ? t.charAt(0).toLocaleUpperCase('vi-VN') : '?';
 };
 
-/**
- * Format ISO date string → "D Thg M, YYYY" tiếng Việt (vd "9 Thg 9, 2026").
- * Dùng cho tooltip + detail panel. Locale `vi` đã set global ở đầu file.
- */
-const formatDate = (iso: string): string => {
-  const d = dayjs(iso);
-  return d.isValid() ? d.format('D [Thg] M, YYYY') : iso;
-};
 
 /**
  * Format ISO date → "HH:mm" (vd "14:30") — compact cho list row.
