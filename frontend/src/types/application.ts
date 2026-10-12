@@ -37,6 +37,7 @@ export interface CreatedApplication {
 export interface ListApplicationQuery {
   status?: ApplicationStatus;
   jobId?: string;
+  scope?: 'company' | 'me';
   page?: number;
   limit?: number;
 }

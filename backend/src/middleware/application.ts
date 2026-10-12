@@ -43,6 +43,7 @@ const APPLICATION_STATUSES = [
 export const listApplicationQuerySchema = z.object({
   status: z.enum(APPLICATION_STATUSES).optional(),
   jobId: z.string().uuid().optional(),
+  scope: z.enum(['company', 'me']).optional().default('company'),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });

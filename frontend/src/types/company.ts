@@ -91,6 +91,7 @@ export interface MyCompany {
   id: string;
   name: string;
   logoUrl: string | null;
+  role?: 'owner' | 'member';
 }
 
 /**

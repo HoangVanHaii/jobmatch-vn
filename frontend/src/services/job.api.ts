@@ -31,8 +31,9 @@ export interface JobNameItem {
 
 export const jobApi = {
   /** GET /jobs/names — slim list job của company employer (dropdown filter
-   *  trang Applications). ?keyword= optional — filter title ILIKE. */
-  listNames: (params?: { keyword?: string }) =>
+   *  trang Applications). ?keyword= optional — filter title ILIKE.
+   *  ?scope= 'company' | 'me' (khi me, chỉ lấy job do user tạo hoặc được gán). */
+  listNames: (params?: { keyword?: string; scope?: 'company' | 'me' }) =>
     http.get<ApiResponse<JobNameItem[]>>('/jobs/names', { params }),
 
   list: (params?: ListJobQuery) =>

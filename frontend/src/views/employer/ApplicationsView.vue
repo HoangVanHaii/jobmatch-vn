@@ -2,7 +2,6 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   Filter,
-  MoreHorizontal,
   Briefcase,
   ChevronLeft,
   ChevronRight,
@@ -27,8 +26,10 @@ import {
   ShieldCheck,
   X as CloseIcon,
   Box as BoxIcon,
+  Building2,
 } from 'lucide-vue-next';
 import { applicationApi } from '@services/application.api';
+import { companyApi } from '@services/company.api';
 import { jobApi, type JobNameItem } from '@services/job.api';
 import { cvApi } from '@services/cv.api';
 import { getSocket } from '@services/socket';
@@ -110,6 +111,25 @@ const formatTime = (iso: string): string => {
 const applications = ref<Application[]>([]);
 const toast = useToastStore();
 
+/**
+ * Vai trò của user trong công ty ('owner' | 'member' | null).
+ * Được lấy từ `companyApi.getMyCompany()`.
+ */
+const userRole = ref<'owner' | 'member' | null>(null);
+
+/**
+ * Tab phạm vi đơn ứng tuyển:
+ * - 'company': Tất cả đơn ứng tuyển của công ty (chỉ Owner có quyền chọn)
+ * - 'me': Chỉ các đơn thuộc tin tuyển dụng do user tạo hoặc phụ trách
+ * Mặc định 'company' cho Owner; Member không có tab và luôn cố định 'me'.
+ */
+const activeScopeTab = ref<'company' | 'me'>('company');
+
+const currentEffectiveScope = computed<'company' | 'me'>(() => {
+  if (userRole.value === 'member') return 'me';
+  return activeScopeTab.value;
+});
+
 // ---------------------------------------------------------------------------
 // Job filter dropdown — list job (id + title) từ GET /jobs/names, mặc định
 // "Tất cả" (value ''). Chọn job → fetchPage(1) truyền ?jobId= cho BE filter.
@@ -126,11 +146,21 @@ const jobSelectRoot = ref<HTMLElement | null>(null);
 
 const loadJobNames = async (): Promise<void> => {
   try {
-    const { data } = await jobApi.listNames();
+    const { data } = await jobApi.listNames({ scope: currentEffectiveScope.value });
     jobOptions.value = data.data;
   } catch {
     // Dropdown trống — không chặn trang; "Tất cả" vẫn hoạt động.
   }
+};
+
+const switchScopeTab = (scope: 'company' | 'me'): void => {
+  if (activeScopeTab.value === scope) return;
+  activeScopeTab.value = scope;
+  // Reset filter job khi đổi tab
+  selectedJobId.value = '';
+  jobKeyword.value = '';
+  void loadJobNames();
+  void fetchPage(1);
 };
 
 const filteredJobOptions = computed(() => {
@@ -745,6 +775,8 @@ const fetchPage = async (pageNum?: number): Promise<void> => {
     const { data } = await applicationApi.listByCompany({
       page: page.value,
       limit: limit.value,
+      // Phạm vi đơn: 'company' (toàn công ty) hoặc 'me' (tin của tôi)
+      scope: currentEffectiveScope.value,
       // Filter theo job đang chọn trong dropdown ('' = tất cả → undefined).
       jobId: selectedJobId.value || undefined,
       // Filter theo trạng thái đơn ('' = tất cả → undefined).
@@ -927,7 +959,19 @@ const onStatusChanged = (payload: {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const { data } = await companyApi.getMyCompany();
+    if (data.data?.role) {
+      userRole.value = data.data.role;
+      if (userRole.value === 'member') {
+        activeScopeTab.value = 'me';
+      }
+    }
+  } catch {
+    // best-effort
+  }
+
   void fetchPage(1);
   void loadJobNames();
   document.addEventListener('mousedown', onDocClick, true);
@@ -1166,12 +1210,41 @@ onUnmounted(() => {
     >
       <!-- ============ Main: list ============ -->
       <main class="min-w-0 flex-1 p-4 sm:p-5 lg:p-6 overflow-y-auto lg:overflow-y-hidden scrollbar-thin">
-        <div class="mb-5 flex items-start justify-between gap-2 flex-wrap">
+        <div class="mb-5 flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h1 class="text-xl font-semibold text-gray-900 tracking-tight">Danh sách ứng tuyển</h1>
             <p class="text-[12px] text-[#8190a5]">Quản lý các đơn ứng tuyển và duy trì quy trình tuyển dụng của bạn.</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
+            <!-- 2 Tabs chỉ hiển thị khi Owner đăng nhập: 'Của công ty' và 'Của tôi' -->
+            <div
+              v-if="userRole === 'owner'"
+              class="inline-flex h-10 items-center gap-1 p-1 bg-[#f1f5f9] rounded-lg border border-[#e2e8f0]"
+            >
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 px-3 h-full text-[12px] rounded-md transition-all duration-200"
+                :class="activeScopeTab === 'company'
+                  ? 'bg-white text-[#1769e8] font-semibold shadow-sm border border-black/[0.04]'
+                  : 'text-[#64748b] hover:text-[#1e293b] hover:bg-white/50'"
+                @click="switchScopeTab('company')"
+              >
+                <Building2 class="h-3.5 w-3.5" />
+                <span>Của công ty</span>
+              </button>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 px-3 h-full text-[12px] rounded-md transition-all duration-200"
+                :class="activeScopeTab === 'me'
+                  ? 'bg-white text-[#1769e8] font-semibold shadow-sm border border-black/[0.04]'
+                  : 'text-[#64748b] hover:text-[#1e293b] hover:bg-white/50'"
+                @click="switchScopeTab('me')"
+              >
+                <User class="h-3.5 w-3.5" />
+                <span>Của tôi</span>
+              </button>
+            </div>
+
             <!-- Combobox chọn job — gõ thẳng trong ô để filter options
                  (client-side), click option → filter list ứng tuyển. -->
             <div ref="jobSelectRoot" class="relative w-full sm:w-[260px]">
@@ -1257,15 +1330,14 @@ onUnmounted(() => {
                 </button>
               </div>
             </div>
-            <button type="button" class="grid h-10 w-10 place-items-center rounded-lg border border-[#e3e8ef]">
-              <MoreHorizontal class="h-4 w-4" />
-            </button>
           </div>
         </div>
 
         <section class="overflow-hidden rounded-xl border border-[#e7ebf1] bg-white">
           <div class="px-2 pb-2 pt-2">
-            <h2 class="text-[15px] font-semibold">Tất cả các đơn ứng tuyển</h2>
+            <h2 class="text-[15px] font-semibold">
+              {{ currentEffectiveScope === 'me' ? 'Đơn ứng tuyển của tôi' : 'Tất cả các đơn ứng tuyển của công ty' }}
+            </h2>
           </div>
 
           <!-- Column headers -->

@@ -64,6 +64,7 @@ export interface CreateApplicationInput {
 export interface ApplicationListQuery {
   status?: ApplicationStatusValue;
   jobId?: string;
+  scope?: 'company' | 'me';
   page?: number;
   limit?: number;
 }

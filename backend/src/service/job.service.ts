@@ -164,19 +164,21 @@ export const jobService = {
   listJobNames: async (
     companyId: string,
     keyword?: string,
-    userContext?: { userId: string; role: 'owner' | 'member' },
+    userContext?: { userId: string; role: 'owner' | 'member'; scope?: 'company' | 'me' },
   ): Promise<Array<{ id: string; title: string }>> => {
     const kw = keyword?.trim();
     const conditions = [eq(jobs.companyId, companyId)];
     if (kw) conditions.push(ilike(jobs.title, `%${kw}%`));
 
-    if (userContext && userContext.role === 'member') {
-      conditions.push(
-        or(
-          eq(jobs.postedBy, userContext.userId),
-          eq(jobs.assignedTo, userContext.userId),
-        )!,
-      );
+    if (userContext) {
+      if (userContext.role === 'member' || userContext.scope === 'me') {
+        conditions.push(
+          or(
+            eq(jobs.postedBy, userContext.userId),
+            eq(jobs.assignedTo, userContext.userId),
+          )!,
+        );
+      }
     }
 
     return db

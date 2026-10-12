@@ -50,10 +50,11 @@ const OFFSET = (page: number, limit: number): number => (page - 1) * limit;
 /** Chuẩn hoá list query: clamp limit, default page/limit. */
 const normalizeListQuery = (
   q: ApplicationListQuery,
-): { status: ApplicationStatusValue | undefined; jobId: string | undefined; page: number; limit: number } => {
+): { status: ApplicationStatusValue | undefined; jobId: string | undefined; scope: 'company' | 'me'; page: number; limit: number } => {
   const limit = q.limit ?? 20;
   const page = q.page ?? 1;
-  return { status: q.status, jobId: q.jobId, page, limit };
+  const scope = q.scope ?? 'company';
+  return { status: q.status, jobId: q.jobId, scope, page, limit };
 };
 
 /**
@@ -802,7 +803,7 @@ export const listByCompany = async (
   employerRole: 'employer' | 'admin',
   query: ApplicationListQuery,
 ): Promise<{ rows: EmployerApplicationRow[]; total: number; page: number; limit: number }> => {
-  const { status, jobId, page, limit } = normalizeListQuery(query);
+  const { status, jobId, scope, page, limit } = normalizeListQuery(query);
 
   let companyConditions: ReturnType<typeof and> | ReturnType<typeof or> | ReturnType<typeof inArray> | undefined = undefined;
 
@@ -833,7 +834,16 @@ export const listByCompany = async (
 
     const scopedConditions = [];
     if (ownerCompanyIds.length > 0) {
-      scopedConditions.push(inArray(jobs.companyId, ownerCompanyIds));
+      if (scope === 'me') {
+        scopedConditions.push(
+          and(
+            inArray(jobs.companyId, ownerCompanyIds),
+            or(eq(jobs.postedBy, employerId), eq(jobs.assignedTo, employerId)),
+          ),
+        );
+      } else {
+        scopedConditions.push(inArray(jobs.companyId, ownerCompanyIds));
+      }
     }
     if (memberCompanyIds.length > 0) {
       scopedConditions.push(
