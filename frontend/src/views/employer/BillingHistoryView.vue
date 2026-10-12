@@ -562,8 +562,9 @@ onMounted(() => {
 </script>
 
 <template>
-    <div class="font-poppins max-w-6xl mx-auto px-4 py-5 space-y-6 bg-slate-50 min-h-screen">
-        <!-- Root element duy nhất bọc toàn bộ nội dung và modal để <transition mode="out-in"> hoạt động trơn tru -->
+    <div class="w-full bg-white min-h-screen">
+        <div class="font-poppins max-w-6xl mx-auto px-4 py-5 space-y-6">
+            <!-- Root element duy nhất bọc toàn bộ nội dung và modal để <transition mode="out-in"> hoạt động trơn tru -->
         <!-- ============ HEADER ============ -->
         <header class="mb-6 bm-rise">
             <h1 class="text-xl font-semibold tracking-tight text-slate-900">
@@ -1353,6 +1354,7 @@ onMounted(() => {
             @cancelled="refreshBillingData"
             @status-changed="refreshBillingData"
         />
+        </div>
     </div>
 </template>
 
