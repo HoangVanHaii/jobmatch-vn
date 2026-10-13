@@ -33,12 +33,20 @@ interface ProfileAboutItem {
 // ===== Wire API — lấy thông tin user hiện tại từ auth store =====
 const auth = useAuthStore()
 
+/** Trạng thái tải profile ban đầu — tránh pop-in layout trước khi metadata sẵn sàng. */
+const isProfileLoading = ref<boolean>(true)
+let isProfileMounted = true
+
 const profileName = computed(() => auth.user?.fullName?.trim() || 'Người dùng')
 const profileAvatar = computed(() => auth.user?.avatarUrl || '')
 const profileInitial = computed(() => profileName.value.charAt(0).toUpperCase())
 const profileEmail = computed(() => auth.user?.email ?? '')
 
-/** Cover photo + metadata load từ candidate profile (sau khi loadSavedAddress). */
+// ===== Cover photo default =====
+const DEFAULT_COVER =
+  'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1400&q=80'
+
+/** Cover photo load từ candidate profile (sau khi loadSavedAddress), fallback về DEFAULT_COVER. */
 const profileCoverUrl = computed(() => savedProfile.value?.coverUrl ?? null)
 const profileSchool = ref<string>('')
 const profileWork = ref<string>('')
@@ -632,6 +640,22 @@ const pickedLng = ref<number | null>(null)
 const previewBbox = ref<string | null>(null)
 const previewMarker = ref<string | null>(null)
 
+const DEFAULT_MAP_BBOX = '106.65,10.73,106.78,10.82'
+const DEFAULT_MAP_MARKER = '10.775,10.775'
+
+/**
+ * URL embed iframe OpenStreetMap.
+ * Chỉ render khi initial profile loading hoàn tất để tránh nạp tọa độ mặc định
+ * rồi reload lại tọa độ thật của ứng viên, gây chớp nháy và double request.
+ */
+const mapEmbedUrl = computed<string | null>(() => {
+  if (isProfileLoading.value) return null
+  if (previewBbox.value && previewMarker.value) {
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${previewBbox.value}&layer=mapnik&marker=${previewMarker.value}`
+  }
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${DEFAULT_MAP_BBOX}&layer=mapnik&marker=${DEFAULT_MAP_MARKER}`
+})
+
 // useLocations: fetch provinces + districts qua API provinces.open-api.vn
 const {
   items: provinces,
@@ -689,6 +713,38 @@ const onProvinceChange = (): void => {
   draftDistrictCode.value = null
 }
 
+/** Controller theo dõi và hủy request Geocoding khi component unmount hoặc khi user gọi lại */
+let activeGeocodingController: AbortController | null = null
+
+/** Tạo signal có timeout 8s, kết hợp hủy khi unmount hoặc retry nếu có */
+const createGeocodingSignal = (controller: AbortController, timeoutMs = 8000): AbortSignal => {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs)
+    if (typeof AbortSignal.any === 'function') {
+      return AbortSignal.any([controller.signal, timeoutSignal])
+    }
+    timeoutSignal.addEventListener(
+      'abort',
+      () => {
+        if (!controller.signal.aborted) {
+          controller.abort(timeoutSignal.reason)
+        }
+      },
+      { once: true },
+    )
+    return controller.signal
+  }
+
+  const timer = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      controller.abort(new DOMException('The operation timed out.', 'TimeoutError'))
+    }
+  }, timeoutMs)
+
+  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
+  return controller.signal
+}
+
 /** Gọi Photon Geocoding API để kiểm tra địa chỉ và lấy tọa độ chính xác */
 const previewAddressOnMap = async (): Promise<void> => {
   if (!draftProvinceCode.value) {
@@ -712,12 +768,27 @@ const previewAddressOnMap = async (): Promise<void> => {
     [province, 'Vietnam'].filter(Boolean).join(', '),
   ].filter((q) => q.length > 0)
 
+  // Hủy request geocoding trước đó nếu đang chạy (tránh race condition khi user retry nhanh)
+  if (activeGeocodingController) {
+    activeGeocodingController.abort(new DOMException('Request replaced.', 'AbortError'))
+  }
+  const controller = new AbortController()
+  activeGeocodingController = controller
+
   geocodingLoading.value = true
+  let hasHttpError = false
+  let lastHttpStatus = 200
+
   try {
     for (const q of queries) {
       const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1`
-      const res = await fetch(url)
-      if (!res.ok) continue
+      const signal = createGeocodingSignal(controller, 8000)
+      const res = await fetch(url, { signal })
+      if (!res.ok) {
+        hasHttpError = true
+        lastHttpStatus = res.status
+        continue
+      }
       const data = (await res.json()) as {
         features?: Array<{
           geometry: { coordinates: [number, number] }
@@ -726,6 +797,11 @@ const previewAddressOnMap = async (): Promise<void> => {
       }
       const features = data.features ?? []
       if (features.length === 0) continue
+
+      // Request đã bị hủy hoặc thay thế bởi request mới hơn -> hủy bỏ ngay
+      if (!isProfileMounted || activeGeocodingController !== controller) {
+        return
+      }
 
       const f = features[0]
       const [lon, lat] = f.geometry.coordinates
@@ -753,19 +829,50 @@ const previewAddressOnMap = async (): Promise<void> => {
       return
     }
 
+    if (!isProfileMounted || activeGeocodingController !== controller) return
+
+    if (hasHttpError) {
+      toast.push({
+        variant: 'error',
+        title: 'Máy chủ định vị gặp sự cố',
+        body: `Máy chủ định vị phản hồi mã lỗi HTTP ${lastHttpStatus}. Vui lòng thử lại sau.`,
+      })
+      return
+    }
+
     toast.push({
       variant: 'error',
       title: 'Không tìm thấy tọa độ chính xác',
       body: 'Không thể định vị được địa chỉ này trên bản đồ. Bạn có thể kiểm tra lại tên đường hoặc quận/huyện.',
     })
   } catch (err: unknown) {
+    // Không hiện toast nếu component đã unmount hoặc request bị thay thế bởi request mới hơn
+    if (!isProfileMounted || activeGeocodingController !== controller) {
+      return
+    }
+
+    const isTimeout =
+      (err instanceof DOMException && (err.name === 'TimeoutError' || err.code === 23)) ||
+      (err instanceof Error &&
+        (err.name === 'TimeoutError' ||
+          err.message.toLowerCase().includes('timeout') ||
+          err.message.toLowerCase().includes('timed out')))
+
     toast.push({
       variant: 'error',
-      title: 'Lỗi định vị bản đồ',
-      body: err instanceof Error ? err.message : 'Vui lòng thử lại sau',
+      title: isTimeout ? 'Hết thời gian phản hồi' : 'Lỗi định vị bản đồ',
+      body: isTimeout
+        ? 'Quá thời gian phản hồi từ máy chủ định vị (8s). Vui lòng thử lại sau.'
+        : err instanceof Error
+          ? err.message
+          : 'Vui lòng thử lại sau',
     })
   } finally {
-    geocodingLoading.value = false
+    // Chỉ tắt loading và dọn dẹp controller nếu request này vẫn là request active hiện tại
+    if (activeGeocodingController === controller) {
+      geocodingLoading.value = false
+      activeGeocodingController = null
+    }
   }
 }
 
@@ -908,10 +1015,13 @@ const loadSavedAddress = async (): Promise<void> => {
     }
   } catch (err) {
     console.warn('[ProfileMockup] loadSavedAddress failed:', err)
+  } finally {
+    isProfileLoading.value = false
   }
 }
 
 onMounted(() => {
+  isProfileMounted = true
   void loadSavedAddress()
 })
 
@@ -924,8 +1034,6 @@ const profileRoleLabel = computed(() => {
 })
 
 // ===== Cover image upload =====
-const DEFAULT_COVER =
-  'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1400&q=80'
 const coverInputEl = ref<HTMLInputElement | null>(null)
 const uploadingCover = ref(false)
 
@@ -1397,9 +1505,9 @@ const completionPercentage = computed(() => {
 })
 
 /** Tone màu theo mức hoàn thiện: <30 đỏ, 30-69 cam, 70-89 vàng, ≥90 xanh lá.
- *  Bám theo displayedCompletion (số đang chạy) để đổi màu mượt khi count-up đi qua ngưỡng. */
+ *  Dùng target completionPercentage khi count-up từ 0% để tránh flash màu đỏ gắt ngoài ý muốn. */
 const completionColorClass = computed(() => {
-  const p = displayedCompletion.value
+  const p = isProfileLoading.value ? 0 : Math.max(displayedCompletion.value, completionPercentage.value)
   if (p < 30) {
     return { text: 'text-rose-600', bar: 'bg-rose-500' }
   }
@@ -1437,11 +1545,28 @@ const animateCompletion = (from: number, to: number): void => {
   completionRafId = requestAnimationFrame(tick)
 }
 
+const hasAnimatedInitialCompletion = ref(false)
+
 watch(completionPercentage, (next, prev) => {
-  animateCompletion(prev ?? 0, next)
+  if (isProfileLoading.value) return
+  if (hasAnimatedInitialCompletion.value) {
+    animateCompletion(prev ?? 0, next)
+  }
+})
+
+watch(isProfileLoading, (loading) => {
+  if (!loading && !hasAnimatedInitialCompletion.value) {
+    hasAnimatedInitialCompletion.value = true
+    animateCompletion(0, completionPercentage.value)
+  }
 })
 
 onBeforeUnmount(() => {
+  isProfileMounted = false
+  if (activeGeocodingController) {
+    activeGeocodingController.abort(new DOMException('Component unmounted.', 'AbortError'))
+    activeGeocodingController = null
+  }
   if (completionRafId !== null) {
     cancelAnimationFrame(completionRafId)
     completionRafId = null
@@ -1455,15 +1580,18 @@ onBeforeUnmount(() => {
     <main class="mx-auto border border-slate-200 max-w-[1200px]">
       <!-- ===== Cover + Profile card ===== -->
       <div class="border-b border-slate-200 bg-white shadow-sm">
-        <!-- Cover image container -->
-        <div class="relative h-72">
-          <!-- Background cover image (clipped to top rounded corners) -->
-          <div
-            class="absolute inset-0 overflow-hidden bg-cover bg-center"
-            :style="{
-              backgroundImage: `url('${profileCoverUrl || DEFAULT_COVER}')`,
-            }"
-          >
+        <!-- Cover image container: cố định h-72, nền bg-slate-100 trung tính nhẹ nhàng -->
+        <div class="relative h-72 bg-slate-100">
+          <!-- Ảnh bìa hiển thị với thẻ img eager/high priority, giữ cố định chống nháy/chớp nền -->
+          <div class="absolute inset-0 overflow-hidden">
+            <img
+              :src="profileCoverUrl || DEFAULT_COVER"
+              alt="Ảnh bìa hồ sơ"
+              class="h-full w-full object-cover"
+              loading="eager"
+              decoding="async"
+              fetchpriority="high"
+            />
             <!-- Bottom fade overlay -->
             <div class="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/70 to-transparent" />
           </div>
@@ -1486,24 +1614,25 @@ onBeforeUnmount(() => {
             <div class="pointer-events-auto" style="transform: translateY(30%);">
               <button
                 type="button"
-                class="group relative h-28 w-28 sm:h-36 sm:w-36 shrink-0 cursor-pointer rounded-full border-2 border-white bg-white shadow-lg transition hover:brightness-95"
+                class="group relative h-28 w-28 sm:h-36 sm:w-36 shrink-0 cursor-pointer overflow-hidden rounded-full border-2 border-white bg-slate-100 shadow-lg transition hover:brightness-95"
                 aria-label="Đổi ảnh đại diện"
                 @click="onPickAvatar"
               >
+                <!-- Base initial letter: luôn hiển thị làm placeholder nền để chống flash lỗ tròn trắng -->
                 <div
-                  v-if="profileAvatar"
-                  class="h-full w-full rounded-full bg-cover bg-center object-cover"
-                  :style="{
-                    backgroundImage: `url('${profileAvatar}')`,
-                  }"
-                />
-
-                <div
-                  v-else
                   class="flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br from-pink-300 via-purple-300 to-blue-300 text-2xl sm:text-3xl font-bold text-white"
                 >
                   {{ profileInitial }}
                 </div>
+
+                <!-- Avatar image lớp trên (nếu có) -->
+                <div
+                  v-if="profileAvatar"
+                  class="absolute inset-0 h-full w-full rounded-full bg-cover bg-center object-cover"
+                  :style="{
+                    backgroundImage: `url('${profileAvatar}')`,
+                  }"
+                />
 
                 <!-- Hover overlay -->
                 <div
@@ -1532,7 +1661,7 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Profile header: tabs + More button -->
-        <div class="relative px-4 sm:px-6 pt-12 sm:pt-0">
+        <div class="relative px-4 sm:px-6 pt-12 sm:pt-0 pf-rise">
           <!-- Tabs container: spacer bên trái chừa chỗ cho avatar trên desktop, danh sách tab căn ra gần giữa -->
           <div class="flex items-center justify-between gap-3 sm:gap-0">
             <!-- Left spacer chừa chỗ cho Avatar trên desktop (w-48 = 192px) -->
@@ -1574,6 +1703,12 @@ onBeforeUnmount(() => {
                   Hoàn thiện hồ sơ
                 </span>
                 <span
+                  v-if="isProfileLoading"
+                  class="shrink-0 inline-block h-3.5 w-6 rounded bg-slate-100 animate-pulse"
+                  aria-hidden="true"
+                />
+                <span
+                  v-else
                   class="shrink-0 text-[11px] sm:text-xs font-bold tabular-nums transition-colors duration-700 ease-out"
                   :class="completionColorClass.text"
                 >
@@ -1583,15 +1718,15 @@ onBeforeUnmount(() => {
               <div
                 class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200"
                 role="progressbar"
-                :aria-valuenow="completionPercentage"
+                :aria-valuenow="isProfileLoading ? undefined : completionPercentage"
                 aria-valuemin="0"
                 aria-valuemax="100"
-                :aria-label="`Mức độ hoàn thiện hồ sơ ${completionPercentage}%`"
+                :aria-label="`Mức độ hoàn thiện hồ sơ ${isProfileLoading ? 'đang tải' : completionPercentage + '%'}`"
               >
                 <div
                   class="h-full rounded-full transition-[width,background-color] duration-700 ease-out"
-                  :class="completionColorClass.bar"
-                  :style="{ width: displayedCompletion + '%' }"
+                  :class="isProfileLoading ? 'bg-slate-200' : completionColorClass.bar"
+                  :style="{ width: isProfileLoading ? '0%' : displayedCompletion + '%' }"
                 />
               </div>
             </div>
@@ -1600,11 +1735,14 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- ===== Tab content ===== -->
-      <!-- Thông tin tab -->
-      <section
-        v-if="activeProfileTab === 'Thông tin'"
-        class="bg-white p-6"
-      >
+      <div class="pf-rise pf-delay-1 min-h-[480px]">
+        <Transition name="profile-tab-fade" mode="out-in">
+        <!-- Thông tin tab -->
+        <section
+          v-if="activeProfileTab === 'Thông tin'"
+          key="tab-thong-tin"
+          class="bg-white p-6"
+        >
         <h2 class="text-2xl font-bold text-slate-900">
           Thông tin cá nhân
         </h2>
@@ -1676,9 +1814,16 @@ onBeforeUnmount(() => {
                         <Pencil :size="12" class="text-slate-400" />
                       </button>
                     </template>
-                    <!-- Chưa có → + Thêm (ẩn khi đang trong add mode) -->
+                    <!-- Đang tải metadata profile → placeholder nhỏ giữ kích thước -->
+                    <div
+                      v-else-if="isProfileLoading && idx > 0"
+                      class="mt-2 flex items-center"
+                    >
+                      <span class="inline-block h-4 w-28 rounded bg-slate-100 animate-pulse" aria-hidden="true" />
+                    </div>
+                    <!-- Chưa có sau khi tải xong → + Thêm (ẩn khi đang trong add mode) -->
                     <button
-                      v-if="!item.subtitle && item.actionIcon === 'plus' && addingItemKey !== `left-${idx}`"
+                      v-else-if="!item.subtitle && item.actionIcon === 'plus' && addingItemKey !== `left-${idx}`"
                       type="button"
                       class="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
                       aria-label="Add"
@@ -1761,6 +1906,14 @@ onBeforeUnmount(() => {
                   >
                     <Pencil :size="12" />
                   </button>
+                </div>
+
+                <!-- Đang tải metadata profile (SĐT idx=1, Ngày sinh idx=2) → placeholder nhỏ giữ kích thước -->
+                <div
+                  v-else-if="isProfileLoading && idx > 0 && editingItemKey !== `right-${idx}`"
+                  class="mt-0.5 flex items-center"
+                >
+                  <span class="inline-block h-3.5 w-24 rounded bg-slate-100 animate-pulse" aria-hidden="true" />
                 </div>
 
                 <div v-if="item.links" class="mt-1 space-y-0.5">
@@ -1859,8 +2012,9 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
 
+                  <!-- Chỉ hiện nút Thêm khi profile đã tải xong và chưa có giá trị -->
                   <button
-                    v-else-if="item.actionIcon === 'plus' && editingItemKey !== `right-${idx}`"
+                    v-else-if="!isProfileLoading && item.actionIcon === 'plus' && editingItemKey !== `right-${idx}`"
                     type="button"
                     class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
                     aria-label="Add"
@@ -1879,6 +2033,7 @@ onBeforeUnmount(() => {
       <!-- Địa chỉ tab (tương tự pattern tab Thông tin & Mạng xã hội) -->
       <section
         v-else-if="activeProfileTab === 'Địa chỉ'"
+        key="tab-dia-chi"
         class="bg-white p-6"
       >
         <div class="flex items-center justify-between">
@@ -1975,6 +2130,9 @@ onBeforeUnmount(() => {
                         <Pencil :size="12" />
                       </button>
                     </template>
+                    <div v-else-if="isProfileLoading" class="flex items-center">
+                      <span class="inline-block h-4 w-28 rounded bg-slate-100 animate-pulse" aria-hidden="true" />
+                    </div>
                     <button
                       v-else
                       type="button"
@@ -2015,6 +2173,9 @@ onBeforeUnmount(() => {
                         <Pencil :size="12" />
                       </button>
                     </template>
+                    <div v-else-if="isProfileLoading" class="flex items-center">
+                      <span class="inline-block h-4 w-32 rounded bg-slate-100 animate-pulse" aria-hidden="true" />
+                    </div>
                     <button
                       v-else
                       type="button"
@@ -2044,6 +2205,9 @@ onBeforeUnmount(() => {
                   <p v-if="fullAddressString" class="mt-0.5 text-xs text-slate-600 leading-relaxed font-medium">
                     {{ fullAddressString }}
                   </p>
+                  <div v-else-if="isProfileLoading" class="mt-0.5 flex items-center">
+                    <span class="inline-block h-3.5 w-48 rounded bg-slate-100 animate-pulse" aria-hidden="true" />
+                  </div>
                   <p v-else class="mt-0.5 text-xs text-slate-400">
                     Chưa thiết lập địa chỉ
                   </p>
@@ -2207,20 +2371,29 @@ onBeforeUnmount(() => {
                 </button>
               </div>
 
-              <!-- Map iframe -->
-              <div class="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-inner">
+              <!-- Map iframe container: kích thước cố định h-64 w-full để chống layout shift -->
+              <div class="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-inner h-64 w-full">
                 <!-- Location badge overlay on map -->
                 <div
-                  v-if="fullAddressString"
+                  v-if="fullAddressString && mapEmbedUrl"
                   class="pointer-events-none absolute left-2 top-2 z-10 max-w-[85%] truncate rounded-md bg-white/95 px-2 py-1 text-[11px] font-medium text-slate-800 shadow backdrop-blur-sm"
                 >
                   📍 {{ fullAddressString }}
                 </div>
 
+                <!-- Placeholder khi đang tải profile: giữ layout ổn định, chống double-load iframe -->
+                <div
+                  v-if="!mapEmbedUrl"
+                  class="flex h-full w-full flex-col items-center justify-center gap-2 bg-slate-50 text-slate-400"
+                >
+                  <Loader2 :size="20" class="animate-spin text-blue-500" />
+                  <span class="text-xs font-medium text-slate-500">Đang tải bản đồ...</span>
+                </div>
+
+                <!-- Iframe bản đồ: chỉ render khi mapEmbedUrl đã sẵn sàng -->
                 <iframe
-                  :src="previewBbox
-                    ? `https://www.openstreetmap.org/export/embed.html?bbox=${previewBbox}&layer=mapnik&marker=${previewMarker}`
-                    : 'https://www.openstreetmap.org/export/embed.html?bbox=106.65,10.73,106.78,10.82&layer=mapnik&marker=10.775,10.775'"
+                  v-else
+                  :src="mapEmbedUrl"
                   class="h-64 w-full"
                   style="border: 0"
                   loading="lazy"
@@ -2230,6 +2403,7 @@ onBeforeUnmount(() => {
 
                 <!-- Overlay che watermark OSM ở góc dưới-phải -->
                 <div
+                  v-if="mapEmbedUrl"
                   class="pointer-events-none absolute bottom-0 right-0 h-6 w-24 bg-white"
                   aria-hidden="true"
                 />
@@ -2253,6 +2427,7 @@ onBeforeUnmount(() => {
       <!-- Mạng xã hội tab (tương tự pattern tab Thông tin) -->
       <section
         v-else-if="activeProfileTab === 'Mạng xã hội'"
+        key="tab-mang-xa-hoi"
         class="bg-white p-6"
       >
         <div>
@@ -2552,6 +2727,7 @@ onBeforeUnmount(() => {
       <!-- Đổi mật khẩu tab -->
       <section
         v-else-if="activeProfileTab === 'Đổi mật khẩu'"
+        key="tab-doi-mat-khau"
         class="bg-white p-6"
       >
         <div>
@@ -2770,6 +2946,7 @@ onBeforeUnmount(() => {
       <!-- Hồ sơ nghề nghiệp tab -->
       <section
         v-else-if="activeProfileTab === 'Hồ sơ nghề nghiệp'"
+        key="tab-ho-so-nghe-nghiep"
         class="bg-white p-6"
       >
         <h2 class="text-2xl font-bold text-slate-900">
@@ -2786,6 +2963,8 @@ onBeforeUnmount(() => {
           Tính năng đang phát triển. Vui lòng quay lại sau.
         </p>
       </section>
+      </Transition>
+      </div>
     </main>
 
     <!-- Hidden inputs cho upload — click vào avatar/cover mới trigger -->
@@ -2807,3 +2986,73 @@ onBeforeUnmount(() => {
     />
   </div>
 </template>
+
+<style scoped>
+/* ============================================================================
+ * Hiệu ứng chuyển động SaaS khi tải trang (F5 reload / Staggered rise)
+ * Đồng bộ với NotificationsView (.nt-rise) và BillingHistoryView (.bm-rise)
+ * ==========================================================================*/
+@media (prefers-reduced-motion: no-preference) {
+  .pf-rise {
+    animation: pf-rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .pf-delay-1 {
+    animation-delay: 70ms;
+  }
+}
+
+@keyframes pf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================================================
+ * Hiệu ứng chuyển giữa 5 tab trong Profile (Linear / SaaS Style)
+ * Nội dung cũ mờ đi nhanh (70ms ease-out), nội dung mới trượt nhẹ 5px từ dưới lên
+ * với easing cubic-bezier(0.22, 1, 0.36, 1) trong 200ms tạo cảm giác dứt khoát,
+ * liền mạch, không giật vị trí và giữ thanh cuộn ổn định.
+ * ==========================================================================*/
+.profile-tab-fade-enter-active {
+  transition:
+    opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.profile-tab-fade-leave-active {
+  transition: opacity 70ms ease-out;
+}
+
+.profile-tab-fade-enter-from {
+  opacity: 0;
+  transform: translateY(5px);
+}
+
+.profile-tab-fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-rise {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .profile-tab-fade-enter-active,
+  .profile-tab-fade-leave-active {
+    transition: none !important;
+  }
+  .profile-tab-fade-enter-from,
+  .profile-tab-fade-leave-to {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+</style>

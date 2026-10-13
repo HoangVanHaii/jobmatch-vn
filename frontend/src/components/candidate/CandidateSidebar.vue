@@ -71,13 +71,10 @@ watch(
 );
 
 /** Thu nhỏ / m� rộng sidebar — lưu vào localStorage để giữ qua reload. */
-const collapsed = ref<boolean>(false);
 const SIDEBAR_KEY = 'candidate-sidebar-collapsed';
-
-onMounted(() => {
-  const saved = localStorage.getItem(SIDEBAR_KEY);
-  if (saved !== null) collapsed.value = saved === 'true';
-});
+const collapsed = ref<boolean>(
+  typeof window !== 'undefined' ? localStorage.getItem(SIDEBAR_KEY) === 'true' : false,
+);
 watch(collapsed, (v) => {
   localStorage.setItem(SIDEBAR_KEY, String(v));
 });
