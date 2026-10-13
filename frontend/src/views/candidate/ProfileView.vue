@@ -37,8 +37,8 @@ const auth = useAuthStore()
 const isProfileLoading = ref<boolean>(true)
 let isProfileMounted = true
 
-const profileName = computed(() => auth.user?.fullName?.trim() || 'Người dùng')
-const profileAvatar = computed(() => auth.user?.avatarUrl || '')
+const profileName = computed(() => auth.user?.fullName?.trim() || savedProfile.value?.fullName?.trim() || 'Người dùng')
+const profileAvatar = computed(() => auth.user?.avatarUrl || savedProfile.value?.avatarUrl || '')
 const profileInitial = computed(() => profileName.value.charAt(0).toUpperCase())
 const profileEmail = computed(() => auth.user?.email ?? '')
 
@@ -46,8 +46,46 @@ const profileEmail = computed(() => auth.user?.email ?? '')
 const DEFAULT_COVER =
   'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1400&q=80'
 
-/** Cover photo load từ candidate profile (sau khi loadSavedAddress), fallback về DEFAULT_COVER. */
-const profileCoverUrl = computed(() => savedProfile.value?.coverUrl ?? null)
+/** Trạng thái tải của ảnh bìa */
+const isCoverImageLoaded = ref<boolean>(false)
+const coverImageRef = ref<HTMLImageElement | null>(null)
+
+/** Cover photo load từ candidate profile (sau khi loadSavedAddress), fallback về DEFAULT_COVER.
+ *  Chỉ xác định khi profile metadata đã hoàn tất tải để tránh đổi src nhiều lần gây nháy. */
+const resolvedCoverUrl = computed<string | null>(() => {
+  if (isProfileLoading.value) return null
+  return savedProfile.value?.coverUrl || DEFAULT_COVER
+})
+
+const onCoverImageLoad = (): void => {
+  isCoverImageLoaded.value = true
+}
+
+const onCoverImageError = (): void => {
+  isCoverImageLoaded.value = true
+}
+
+watch(
+  resolvedCoverUrl,
+  (newUrl) => {
+    if (newUrl) {
+      const img = new Image()
+      img.src = newUrl
+      img.onload = () => {
+        isCoverImageLoaded.value = true
+      }
+      img.onerror = () => {
+        isCoverImageLoaded.value = true
+      }
+      nextTick(() => {
+        if (coverImageRef.value?.complete && coverImageRef.value.naturalWidth > 0) {
+          isCoverImageLoaded.value = true
+        }
+      })
+    }
+  },
+  { immediate: true },
+)
 const profileSchool = ref<string>('')
 const profileWork = ref<string>('')
 /** Số điện thoại liên hệ của ứng viên (lấy từ candidate profile / user). */
@@ -1581,16 +1619,33 @@ onBeforeUnmount(() => {
       <!-- ===== Cover + Profile card ===== -->
       <div class="border-b border-slate-200 bg-white shadow-sm">
         <!-- Cover image container: cố định h-72, nền bg-slate-100 trung tính nhẹ nhàng -->
-        <div class="relative h-72 bg-slate-100">
+        <div class="relative h-72 bg-slate-100 overflow-hidden">
+          <!-- Skeleton cho ảnh bìa khi đang tải profile hoặc ảnh bìa đang tải dữ liệu -->
+          <div
+            v-if="isProfileLoading || !isCoverImageLoaded"
+            class="absolute inset-0 z-0 bg-slate-200/90 animate-pulse"
+            aria-hidden="true"
+          >
+            <!-- Lớp gradient shimmer tạo cảm giác tải mượt mà -->
+            <div class="h-full w-full bg-gradient-to-r from-slate-200 via-slate-100/60 to-slate-200" />
+          </div>
+
           <!-- Ảnh bìa hiển thị với thẻ img eager/high priority, giữ cố định chống nháy/chớp nền -->
-          <div class="absolute inset-0 overflow-hidden">
+          <div
+            class="absolute inset-0 overflow-hidden transition-opacity duration-300"
+            :class="!isProfileLoading && isCoverImageLoaded ? 'opacity-100' : 'opacity-0'"
+          >
             <img
-              :src="profileCoverUrl || DEFAULT_COVER"
+              v-if="resolvedCoverUrl"
+              ref="coverImageRef"
+              :src="resolvedCoverUrl"
               alt="Ảnh bìa hồ sơ"
               class="h-full w-full object-cover"
               loading="eager"
               decoding="async"
               fetchpriority="high"
+              @load="onCoverImageLoad"
+              @error="onCoverImageError"
             />
             <!-- Bottom fade overlay -->
             <div class="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/70 to-transparent" />
@@ -1601,7 +1656,7 @@ onBeforeUnmount(() => {
             type="button"
             class="absolute bottom-4 right-4 z-10 flex items-center gap-2 rounded-md bg-black/60 px-3 py-2 text-sm font-medium text-white transition hover:bg-black/80 shadow"
             aria-label="Đổi ảnh bìa"
-            :disabled="uploadingCover"
+            :disabled="uploadingCover || isProfileLoading"
             @click="onPickCover"
           >
             <Camera :size="16" />
@@ -1612,9 +1667,18 @@ onBeforeUnmount(() => {
           <div class="absolute inset-x-0 bottom-0 flex items-end gap-3 sm:gap-5 px-4 sm:px-8 z-20 pointer-events-none">
             <!-- Avatar wrapper: translateY(30%) để 70% nằm trên cover, 30% nằm dưới -->
             <div class="pointer-events-auto" style="transform: translateY(30%);">
+              <!-- Skeleton Avatar khi đang tải hồ sơ: hình tròn phẳng đơn giản, không có vòng tròn lồng bên trong -->
+              <div
+                v-if="isProfileLoading"
+                class="relative h-28 w-28 sm:h-36 sm:w-36 shrink-0 rounded-full border-2 border-white bg-slate-200/90 shadow-lg overflow-hidden animate-pulse"
+                aria-label="Đang tải ảnh đại diện..."
+              />
+
+              <!-- Avatar thật khi đã tải xong -->
               <button
+                v-else
                 type="button"
-                class="group relative h-28 w-28 sm:h-36 sm:w-36 shrink-0 cursor-pointer overflow-hidden rounded-full border-2 border-white bg-slate-100 shadow-lg transition hover:brightness-95"
+                class="group relative h-28 w-28 sm:h-36 sm:w-36 shrink-0 cursor-pointer overflow-hidden rounded-full border-2 border-white bg-slate-100 shadow-lg transition hover:brightness-95 duration-300"
                 aria-label="Đổi ảnh đại diện"
                 @click="onPickAvatar"
               >
@@ -1653,7 +1717,16 @@ onBeforeUnmount(() => {
 
             <!-- Profile Name nằm trên cover -->
             <div class="pointer-events-auto mb-2 sm:mb-3 min-w-0 flex-1 sm:flex-initial">
-              <h1 class="text-xl sm:text-3xl font-semibold text-white drop-shadow-md truncate">
+              <!-- Skeleton Name khi đang tải hồ sơ -->
+              <div
+                v-if="isProfileLoading"
+                class="h-7 sm:h-9 w-44 sm:w-60 rounded-lg bg-white/30 backdrop-blur-sm animate-pulse"
+                aria-label="Đang tải tên..."
+              />
+              <h1
+                v-else
+                class="text-xl sm:text-3xl font-semibold text-white drop-shadow-md truncate transition-opacity duration-300"
+              >
                 {{ profileName }}
               </h1>
             </div>
