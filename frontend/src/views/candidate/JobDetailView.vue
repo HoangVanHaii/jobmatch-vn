@@ -619,6 +619,21 @@ const hasChartData = computed(() => {
   return series.length > 0 && series.some((p) => p.count > 0);
 });
 
+/**
+ * Chuỗi dữ liệu cho biểu đồ:
+ * - Khi có dữ liệu (hasChartData = true): trả về applicantsChartData.series.
+ * - Khi chưa có dữ liệu: trả về 10 ngày gần nhất với count = 0.
+ */
+const displaySeries = computed<ApplicantsOverTimePoint[]>(() => {
+  if (hasChartData.value) {
+    return applicantsChartData.value.series;
+  }
+  return Array.from({ length: 10 }, (_, i) => ({
+    date: dayjs().subtract(9 - i, 'day').format('DD/MM'),
+    count: 0,
+  }));
+});
+
 /** viewBox constants — dùng cho cả path generator và template. */
 const CHART_W = 720;
 const CHART_H = 210;
@@ -628,14 +643,17 @@ const CHART_Y_TOP = 20;    // y đỉnh chart
 const CHART_Y_BOT = 190;   // y đáy chart
 const CHART_PAD_LEFT = 32; // gridline trái
 
-/** Max count trong series — dùng scale trục Y. Fallback 100 tránh chia 0. */
+/** Max count trong series — dùng scale trục Y. Khi rỗng trả về 4 thay vì 100. */
 const chartMax = computed(() => {
   const m = applicantsChartData.value.series.reduce((acc, p) => Math.max(acc, p.count), 0);
-  return m > 0 ? m : 100;
+  return m > 0 ? m : 4;
 });
 
-/** Y-axis tick values (4 ticks, chia đều từ 0 → max). */
+/** Y-axis tick values (khi rỗng trả về [4, 3, 2, 1, 0]; khi có dữ liệu giữ logic cũ). */
 const chartYTicks = computed<number[]>(() => {
+  if (!hasChartData.value) {
+    return [4, 3, 2, 1, 0];
+  }
   const m = chartMax.value;
   return [m, Math.round(m * 0.5), Math.round(m * 0.25), Math.round(m * 0.1)];
 });
@@ -654,7 +672,7 @@ const chartXFor = (i: number, n: number): number => {
 
 /** Tính path "M ... C ..." cubic-bezier cho area/line, fit series. */
 const chartPath = computed(() => {
-  const series = applicantsChartData.value.series;
+  const series = displaySeries.value;
   const n = series.length;
   if (!n) return { line: '', area: '' };
   const pts = series.map((p, i) => ({ x: chartXFor(i, n), y: chartYFor(p.count) }));
@@ -1370,9 +1388,9 @@ const cancelEditFeedback = (): void => {
                   Đăng vào: {{ publishedLabel }}
                 </div>
               </div>
-              <!-- Chart SVG — render dynamic từ `applicantsChartData` nếu có data, hoặc hiện empty state -->
+              <!-- Chart SVG — luôn render biểu đồ (chạy ngang ở mức 0 khi chưa có đơn) -->
               <div class="h-[210px] w-full mt-1">
-                <svg v-if="hasChartData" viewBox="0 0 720 210" class="w-full h-full" preserveAspectRatio="none">
+                <svg viewBox="0 0 720 210" class="w-full h-full" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stop-color="#1677FF" stop-opacity="0.28" />
@@ -1416,23 +1434,21 @@ const cancelEditFeedback = (): void => {
                   <!-- Area -->
                   <path :d="chartPath.area" fill="url(#areaFill)" />
                   <!-- Line -->
-                  <path :d="chartPath.line" fill="none" stroke="#1677FF" stroke-width="2"
-                    stroke-linejoin="round" stroke-linecap="round" />
+                  <path
+                    :d="chartPath.line"
+                    fill="none"
+                    stroke="#1677FF"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                    stroke-linecap="round"
+                  />
                   <!-- X-axis labels -->
                   <g font-size="10" fill="#94A3B8" font-family="Inter" text-anchor="middle">
-                    <text v-for="(p, i) in applicantsChartData.series" :key="`x-${p.date}-${i}`"
-                      :x="chartXFor(i, applicantsChartData.series.length)"
+                    <text v-for="(p, i) in displaySeries" :key="`x-${p.date}-${i}`"
+                      :x="chartXFor(i, displaySeries.length)"
                       y="204">{{ p.date }}</text>
                   </g>
                 </svg>
-                <div
-                  v-else
-                  class="h-full flex flex-col items-center justify-center text-center rounded-lg border border-dashed border-[#EEF1F5] bg-[#F8FAFB]"
-                >
-                  <BarChart3 class="w-8 h-8 text-[#94A3B8] mb-1.5" />
-                  <p class="text-xs font-medium text-[#64748B]">Chưa có dữ liệu ứng tuyển</p>
-                  <p class="text-[11px] text-[#94A3B8] mt-0.5">Biểu đồ sẽ hiển thị khi có ứng viên nộp hồ sơ</p>
-                </div>
               </div>
             </section>
 
