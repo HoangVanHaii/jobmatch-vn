@@ -6,7 +6,6 @@ import { useAuthStore } from '@stores/auth';
 import {
   Briefcase,
   FileText,
-  Plus,
   Home,
   Bookmark,
   Send,
@@ -20,7 +19,6 @@ import {
   CreditCard,
   History,
   X,
-    UserRound,
 } from 'lucide-vue-next';
 import { useNotificationStore } from '@stores/notification';
 
@@ -73,13 +71,10 @@ watch(
 );
 
 /** Thu nhỏ / m� rộng sidebar — lưu vào localStorage để giữ qua reload. */
-const collapsed = ref<boolean>(false);
 const SIDEBAR_KEY = 'candidate-sidebar-collapsed';
-
-onMounted(() => {
-  const saved = localStorage.getItem(SIDEBAR_KEY);
-  if (saved !== null) collapsed.value = saved === 'true';
-});
+const collapsed = ref<boolean>(
+  typeof window !== 'undefined' ? localStorage.getItem(SIDEBAR_KEY) === 'true' : false,
+);
 watch(collapsed, (v) => {
   localStorage.setItem(SIDEBAR_KEY, String(v));
 });
@@ -132,6 +127,18 @@ const initials = computed<string>(() => {
   return n ? n.charAt(0).toUpperCase() : '?';
 });
 
+/** Avatar URL từ user profile trong auth store — tự động cập nhật reactive khi đổi avatar. */
+const avatarUrl = computed<string>(() => user.value?.avatarUrl?.trim() || '');
+const imageError = ref<boolean>(false);
+
+watch(avatarUrl, () => {
+  imageError.value = false;
+});
+
+const onAvatarError = (): void => {
+  imageError.value = true;
+};
+
 /** Role label — Candidate sidebar luôn hiển thị "Ứng viên".
  *  (Map theo `user.role` để khớp thực tế, fallback nếu backend trả role khác.) */
 const roleLabel = computed<string>(() => {
@@ -141,15 +148,6 @@ const roleLabel = computed<string>(() => {
   if (role === 'admin') return 'Quản trị viên';
   return 'Ứng viên';
 });
-
-/* ============================================================================
- * Settings page: mở từ menu "Cài đặt" → /candidate/settings (SettingsView).
- *
- * SettingsView là 1 trang duy nhất chứa 2 section: thông tin tài khoản + đổi
- * mật khẩu. Menu item chỉ navigate route — không cần state/action phức tạp.
- * ==========================================================================*/
-
-// (Không cần state/action cho modal — SettingsView là page thật, navigate bằng `to`.)
 
 /* ============================================================================
  * Confirm modal: bấm "Đăng xuất" → hỏi xác nhận trước khi gọi logout.
@@ -235,12 +233,6 @@ const groups: MenuGroup[] = [
         to: '/candidate/resumes',
         activeOn: ['/candidate/resumes'],
       },
-      {
-        label: 'Tạo CV',
-        icon: Plus,
-        to: '/candidate/resumes/new',
-        activeOn: ['/candidate/resumes/new'],
-      },
     ],
   },
   {
@@ -278,17 +270,6 @@ const groups: MenuGroup[] = [
       }
     ],
   },
-  {
-    title: 'Cài đặt',
-    items: [
-        {
-            label: 'Tài khoản',
-            icon: UserRound,
-            to: '/candidate/settings',
-            activeOn: ['/candidate/settings'],
-        },
-    ],
-  },
 ];
 
 /** Tính điểm match cho 1 item:
@@ -310,10 +291,8 @@ const matchScore = (item: MenuItem): number => {
   return -1;
 };
 
-/** Item active = item có matchScore lớn nhất.
- *  Ví dụ: ở `/candidate/resumes/new` thì "CV của tôi" (prefix `/candidate/resumes`, độ dài 19)
- *  và "Tạo CV" (prefix `/candidate/resumes/new`, độ dài 23) đều match — nhưng "Tạo CV"
- *  dài hơn nên thắng → chỉ 1 item active tại 1 thời điểm, không bị "highlight kép". */
+/** Item active = item có matchScore lớn nhất (match prefix dài hơn sẽ thắng
+ *  để đảm bảo chỉ 1 item active tại 1 thời điểm, không bị highlight kép). */
 const allItems = computed<MenuItem[]>(() => groups.flatMap((g) => g.items));
 const activeItem = computed<MenuItem | null>(() => {
   let best: MenuItem | null = null;
@@ -476,9 +455,17 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
         <div class="flex items-center gap-2.5">
           <div
             :title="displayName"
-            class="w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-semibold shrink-0"
+            class="w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden"
           >
-            {{ initials }}
+            <img
+              v-if="avatarUrl && !imageError"
+              :key="avatarUrl"
+              :src="avatarUrl"
+              :alt="displayName"
+              class="w-full h-full object-cover"
+              @error="onAvatarError"
+            />
+            <span v-else>{{ initials }}</span>
           </div>
           <div class="flex-1 min-w-0">
             <p class="text-sm font-medium text-gray-900 truncate leading-tight">{{ displayName }}</p>
@@ -499,9 +486,17 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
       <div v-else class="px-2 py-3 flex flex-col items-center gap-2">
         <div
           :title="displayName"
-          class="w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-semibold hover:bg-gray-300 transition cursor-default"
+          class="w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-semibold hover:bg-gray-300 transition cursor-default overflow-hidden"
         >
-          {{ initials }}
+          <img
+            v-if="avatarUrl && !imageError"
+            :key="avatarUrl"
+            :src="avatarUrl"
+            :alt="displayName"
+            class="w-full h-full object-cover"
+            @error="onAvatarError"
+          />
+          <span v-else>{{ initials }}</span>
         </div>
         <button
           type="button"
@@ -550,7 +545,5 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
         </div>
       </div>
     </Teleport>
-
-    <!-- Settings là 1 trang thật (SettingsView.vue) — không cần mount modal ở đây. -->
   </aside>
 </template>

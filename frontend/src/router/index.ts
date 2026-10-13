@@ -55,10 +55,6 @@ const routes: RouteRecordRaw[] = [
   // token trong query string (BE cấp, TTL 120s, scope 1 cvId).
   // KHÔNG có parent layout → page trống, chỉ render CV content, không header/nav.
   { path: '/print/cv/:cvId', name: 'cv-print', component: () => import('@views/print/CvPrintView.vue') },
-  // Test route cho Template 6
-  { path: '/test6', name: 'test6', component: () => import('@views/candidate/Test6View.vue') },
-  // Test route cho Template 7
-  { path: '/test7', name: 'test7', component: () => import('@views/candidate/Test7View.vue') },
   // Mockup Job Detail (API-connected UI with optional :id param)
   { path: '/mockup-job-detail/:id?', name: 'mockup-job-detail', component: () => import('@views/employer/JobDetailView.vue') },
 
@@ -76,11 +72,6 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: { name: 'candidate-jobs' } },
       { path: 'profile', name: 'candidate-profile', component: () => import('@views/candidate/ProfileView.vue') },
       { path: 'resumes', name: 'my-resumes', component: () => import('@views/candidate/MyResumesView.vue') },
-      { path: 'resumes/new', name: 'create-resume', component: () => import('@views/candidate/CreateResumeView.vue') },
-      // Edit CV direct — dùng CÙNG component CreateResumeView (dual-mode:
-      // detect cvId từ route param → prefill form → submit PATCH thay vì POST).
-      // Nav từ MyResumesView (menu "Sửa") → /resumes/:cvId/edit.
-      { path: 'resumes/:cvId/edit', name: 'edit-resume', component: () => import('@views/candidate/CreateResumeView.vue'), props: true },
       { path: 'viec-lam', name: 'candidate-jobs', component: () => import('@views/candidate/JobsView.vue') },
       { path: 'viec-lam/:slug', name: 'candidate-job-detail', component: () => import('@views/candidate/JobDetailView.vue') },
       { path: 'saved-jobs', name: 'candidate-saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
@@ -102,11 +93,6 @@ const routes: RouteRecordRaw[] = [
     //   { path: 'saved', name: 'saved-jobs', component: () => import('@views/candidate/SavedJobsView.vue') },
     //   { path: 'cv-score', name: 'cv-score', component: () => import('@views/candidate/CVScoringView.vue') },
       { path: 'notifications', name: 'candidate-notifications', component: () => import('@views/NotificationsView.vue') },
-      { path: 'settings', name: 'candidate-settings', component: () => import('@views/candidate/SettingsView.vue') },
-      { path: 'test5', name: 'candidate-test5', component: () => import('@views/candidate/MockupResumeView.vue') },
-      { path: 'test6', name: 'candidate-test6', component: () => import('@views/candidate/Test6View.vue') },
-      { path: 'test7', name: 'candidate-test7', component: () => import('@views/candidate/Test7View.vue') },
-
     ],
   },
   
