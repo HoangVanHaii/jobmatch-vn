@@ -12,18 +12,24 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [250, 300],
+      "position": [
+        250,
+        300
+      ],
       "webhookId": "auto-reject-webhook"
     },
     {
       "parameters": {
-        "functionCode": "// Build email content\nconst applicationId = $input.item.json.applicationId;\nconst reason = $input.item.json.reason || 'Hồ sơ chưa phù hợp với yêu cầu công việc';\nconst candidateEmail = $input.item.json.candidateEmail || $input.item.json.body?.candidateEmail || '';\n\nreturn {\n  json: {\n    subject: 'Thông báo kết quả ứng tuyển - JobMatch VN',\n    body: `Xin chào,\n\nCảm ơn bạn đã quan tâm và ứng tuyển vào vị trí tại công ty chúng tôi.\n\nSau khi xem xét kỹ lưỡng hồ sơ của bạn qua hệ thống ATS, chúng tôi nhận thấy rằng:\n${reason}\n\nRất tiếc hồ sơ của bạn chưa phù hợp với yêu cầu của vị trí này. Tuy nhiên, chúng tôi sẽ lưu hồ sơ của bạn vào talent pool và có thể liên hệ khi có cơ hội phù hợp hơn.\n\nChúc bạn sớm tìm được công việc ưng ý!\n\nTrân trọng,\nĐội ngũ JobMatch VN`,\n    applicationId,\n    candidateEmail,\n  }\n};"
+        "functionCode": "// Build email content based on reject type\nconst data = $input.item.json.body || $input.item.json;\nconst applicationId = data.applicationId;\nconst candidateEmail = data.candidateEmail || '';\nconst candidateName = data.candidateName || 'bạn';\nconst jobTitle = data.jobTitle || 'vị trí ứng tuyển';\nconst type = data.type || 'cv_match';\nconst score = data.score != null ? data.score : null;\nconst reason = data.reason || 'Hồ sơ chưa phù hợp với yêu cầu công việc';\n\nlet subject = `[JobMatch] Thông báo kết quả ứng tuyển - ${jobTitle}`;\nlet body = '';\n\nif (type === 'ai_test') {\n  subject = `[JobMatch] Kết quả bài kiểm tra đánh giá năng lực - ${jobTitle}`;\n  body = `Xin chào ${candidateName},\n\nCảm ơn bạn đã dành thời gian hoàn thành bài kiểm tra đánh giá năng lực cho vị trí ${jobTitle} tại công ty chúng tôi.\n\nSau khi tổng hợp kết quả làm bài của bạn${score != null ? ` (Điểm đạt được: ${score}%)` : ''}, chúng tôi rất tiếc phải thông báo kết quả này chưa đạt mức điểm yêu cầu tối thiểu theo tiêu chuẩn đánh giá của vòng kiểm tra năng lực.\n\nVì vậy, chúng tôi chưa thể tiếp tục quy trình tuyển dụng với bạn cho vị trí này. Tuy nhiên, thông tin hồ sơ của bạn vẫn sẽ được lưu trữ trong hệ thống và chúng tôi sẽ chủ động liên hệ khi có cơ hội việc làm khác phù hợp hơn.\n\nChúc bạn luôn gặt hái nhiều thành công trên con đường sự nghiệp!\n\nTrân trọng,\nĐội ngũ Tuyển dụng JobMatch VN`;\n} else if (type === 'manual') {\n  subject = `[JobMatch] Thông báo kết quả ứng tuyển - ${jobTitle}`;\n  body = `Xin chào ${candidateName},\n\nCảm ơn bạn đã quan tâm và ứng tuyển vào vị trí ${jobTitle} tại công ty chúng tôi.\n\nSau khi xem xét kỹ lưỡng hồ sơ, Nhà tuyển dụng đã quyết định không tiếp tục tiến trình tuyển dụng với hồ sơ của bạn ở thời điểm hiện tại.\n\nGhi chú từ Nhà tuyển dụng:\n${reason}\n\nHồ sơ của bạn đã được lưu vào hệ thống dữ liệu ứng viên để chúng tôi có thể liên hệ khi có vị trí khác phù hợp hơn với định hướng của bạn.\n\nChúc bạn sớm tìm được công việc như ý!\n\nTrân trọng,\nĐội ngũ Tuyển dụng JobMatch VN`;\n} else {\n  // cv_match (sàng lọc qua hệ thống ATS)\n  subject = `[JobMatch] Kết quả sàng lọc hồ sơ - ${jobTitle}`;\n  body = `Xin chào ${candidateName},\n\nCảm ơn bạn đã quan tâm và nộp hồ sơ ứng tuyển vào vị trí ${jobTitle} tại công ty chúng tôi.\n\nSau khi hệ thống ATS đối soát hồ sơ của bạn với các tiêu chuẩn yêu cầu công việc${score != null ? ` (Độ phù hợp: ${score}%)` : ''}, chúng tôi nhận thấy rằng:\n${reason}\n\nRất tiếc hồ sơ của bạn chưa thực sự tương thích với yêu cầu của vị trí này. Tuy nhiên, chúng tôi sẽ lưu hồ sơ của bạn vào talent pool và ưu tiên liên hệ khi có cơ hội phù hợp hơn.\n\nChúc bạn sớm tìm được công việc ưng ý!\n\nTrân trọng,\nĐội ngũ Tuyển dụng JobMatch VN`;\n}\n\nreturn {\n  json: {\n    subject,\n    body,\n    applicationId,\n    candidateEmail,\n  }\n};"
       },
       "id": "build-email",
       "name": "Build Email",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [450, 300]
+      "position": [
+        450,
+        300
+      ]
     },
     {
       "parameters": {
@@ -32,7 +38,7 @@
         "subject": "={{$json.subject}}",
         "text": "={{$json.body}}",
         "options": {
-          "host": "localhost",
+          "host": "mailhog",
           "port": 1025,
           "secure": false
         }
@@ -41,14 +47,17 @@
       "name": "Send Email",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 1,
-      "position": [650, 300],
+      "position": [
+        650,
+        300
+      ],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
     },
     {
       "parameters": {
-        "url": "http://backend:5000/api/v1/applications/{{$json.applicationId}}/reject",
+        "url": "http://backend:5000/api/v1/applications/{{$json.applicationId}}/reject-email-sent",
         "method": "POST",
         "options": {}
       },
@@ -56,18 +65,45 @@
       "name": "Callback Backend",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
-      "position": [850, 300]
+      "position": [
+        850,
+        300
+      ]
     }
   ],
   "connections": {
     "Webhook": {
-      "main": [[{"node": "Build Email", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Build Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Email": {
-      "main": [[{"node": "Send Email", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Send Email": {
-      "main": [[{"node": "Callback Backend", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Callback Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,

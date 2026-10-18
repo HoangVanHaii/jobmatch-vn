@@ -16,7 +16,7 @@ import type { ApplicationStatus } from '@/types/application';
 export const STATUS_STAGE_PRESETS: Partial<Record<ApplicationStatus, readonly string[]>> = {
   viewed: ['cv-review'],
   screening: ['iq-test', 'english-test', 'reference-check'],
-  interview: ['tech-round', 'hr-round', 'final-round'],
+  interview: ['pending_schedule', 'tech-round', 'hr-round', 'final-round'],
   offered: ['negotiating', 'awaiting-response'],
   // pending: chưa có gì để làm; hired/rejected/withdrawn: terminal → không preset
 };

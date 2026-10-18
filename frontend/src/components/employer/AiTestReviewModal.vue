@@ -12,12 +12,18 @@ import { computed } from 'vue'
 import { X, Loader2, Send, CheckCircle2, Clock, HelpCircle } from 'lucide-vue-next'
 import type { AiTestDetail } from '@/services/aiTest.api'
 
-const props = defineProps<{
-  open: boolean
-  test: AiTestDetail | null
-  loading?: boolean
-  assigning?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    test: AiTestDetail | null
+    loading?: boolean
+    assigning?: boolean
+    canAssign?: boolean
+  }>(),
+  {
+    canAssign: true,
+  },
+)
 
 const emit = defineEmits<{ close: []; assign: [] }>()
 
@@ -64,9 +70,9 @@ const testTypeLabel = computed(() =>
             <div class="flex shrink-0 items-center gap-2">
               <button
                 type="button"
-                :disabled="assigning || !test || test.status !== 'ready'"
+                :disabled="assigning || !test || test.status !== 'ready' || !canAssign"
                 class="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5b4eea] px-3.5 text-[12px] font-medium text-white shadow-sm transition-colors hover:bg-[#4a3ed1] disabled:cursor-not-allowed disabled:opacity-50"
-                title="Gửi link bài test qua email cho ứng viên"
+                :title="canAssign ? 'Gửi link bài test qua email cho ứng viên' : 'Chỉ có thể gửi bài test khi đơn ở trạng thái Sàng lọc'"
                 @click="emit('assign')"
               >
                 <Loader2 v-if="assigning" :size="12" class="animate-spin" />

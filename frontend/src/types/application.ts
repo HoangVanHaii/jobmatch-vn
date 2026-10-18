@@ -134,6 +134,18 @@ export interface UpdatedStatus {
   stage: string | null;
 }
 
+/** Application item hiển thị trong bảng danh sách đơn ứng tuyển của Employer. */
+export interface ApplicationItem {
+  name: string;
+  avatarUrl?: string | null;
+  email: string;
+  position: string;
+  status: ApplicationStatus;
+  match: number | null;
+  date: string;
+  applicationId?: string;
+}
+
 /**
  * Full detail 1 application — dùng cho `GET /applications/:id`.
  *

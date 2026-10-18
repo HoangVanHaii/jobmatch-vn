@@ -945,8 +945,10 @@ export const updateStatus = async (
       currentStatus: applications.status,
       candidateEmail: users.email,
       candidateName: userProfiles.fullName,
+      jobTitle: jobs.title,
     })
     .from(applications)
+    .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .innerJoin(users, eq(users.id, applications.candidateId))
     .leftJoin(userProfiles, eq(userProfiles.userId, applications.candidateId))
     .where(eq(applications.id, applicationId))
@@ -1015,6 +1017,8 @@ export const updateStatus = async (
     n8nService
       .trigger('auto_reject', {
         applicationId,
+        type: 'manual',
+        jobTitle: app.jobTitle,
         candidateEmail: app.candidateEmail,
         candidateName: app.candidateName,
         // Manual reject không có rationale từ LLM — dùng thông điệp chung,

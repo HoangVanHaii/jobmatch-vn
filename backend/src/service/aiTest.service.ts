@@ -27,6 +27,7 @@ import {
   users,
 } from '../db/schema';
 import { n8nService } from './n8n.service';
+import { notificationService } from './notification.service';
 import { notificationGateway } from '../socket/notificationGateway';
 import { assertEmployerOwnsApplication } from './referenceVerify.service';
 
@@ -722,7 +723,12 @@ export const submitTest = async (
   token: string,
   answers: Record<string, string>,
   ip?: string,
-): Promise<{ score: number; totalPoints: number; passed: boolean }> => {
+): Promise<{
+  score: number;
+  totalPoints: number;
+  passed: boolean;
+  decision: 'advanced' | 'rejected' | 'manual_review' | 'waiting_others';
+}> => {
   const { row, test } = await loadAssignmentByToken(token);
 
   if (row.expiresAt && row.expiresAt < new Date()) {
@@ -776,37 +782,248 @@ export const submitTest = async (
     })
     .where(eq(testAssignments.id, row.id));
 
-  // Nhắc employer (application → job.postedBy).
+  // ---------------------------------------------------------------------------
+  // Auto-Decision sau khi nộp bài test:
+  // Kiểm tra tất cả assignments của application.
+  // - Nếu còn bài chưa nộp: waiting_others (chờ tiếp, không đổi status).
+  // - Nếu tất cả đã nộp:
+  //     + Tất cả bài ≥ 70% VÀ không có cờ cảnh báo (flags):
+  //         auto-advance: status='interview', stage='pending_schedule'
+  //     + Tất cả bài < 40%:
+  //         auto-reject: status='rejected', stage='rejected', trigger n8n auto_reject email
+  //     + Còn lại (40-70%, hoặc có flag nghi gian lận, hoặc 1 bài cao 1 bài thấp):
+  //         manual_review: giữ screening để employer tự quyết
+  // ---------------------------------------------------------------------------
+  let decision: 'advanced' | 'rejected' | 'manual_review' | 'waiting_others' = 'waiting_others';
+
   const [appRow] = await db
-    .select({ jobId: applications.jobId })
+    .select({
+      id: applications.id,
+      jobId: applications.jobId,
+      candidateId: applications.candidateId,
+      currentStatus: applications.status,
+      currentStage: applications.stage,
+      candidateEmail: users.email,
+      candidateName: userProfiles.fullName,
+      jobPostedBy: jobs.postedBy,
+      jobTitle: jobs.title,
+    })
     .from(applications)
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
+    .innerJoin(users, eq(users.id, applications.candidateId))
+    .leftJoin(userProfiles, eq(userProfiles.userId, applications.candidateId))
     .where(eq(applications.id, row.applicationId))
     .limit(1);
 
   if (appRow) {
-    const [job] = await db
-      .select({ postedBy: jobs.postedBy })
-      .from(jobs)
-      .where(eq(jobs.id, appRow.jobId))
-      .limit(1);
-    if (job) {
-      notificationGateway.emitToUser(job.postedBy, 'ai-test:graded', {
+    const allAssignments = await db
+      .select({
+        id: testAssignments.id,
+        score: testAssignments.score,
+        status: testAssignments.status,
+        submittedAt: testAssignments.submittedAt,
+        flags: testAssignments.flags,
+      })
+      .from(testAssignments)
+      .where(eq(testAssignments.applicationId, row.applicationId));
+
+    const allSubmitted =
+      allAssignments.length > 0 &&
+      allAssignments.every((a) => a.status === 'submitted' || a.submittedAt !== null);
+
+    if (!allSubmitted) {
+      decision = 'waiting_others';
+      notificationGateway.emitToUser(appRow.jobPostedBy, 'ai-test:graded', {
         applicationId: row.applicationId,
         assignmentId: row.id,
         score: percent,
         passed,
         flags,
+        decision,
       });
+    } else {
+      const scores = allAssignments.map((a) => Number(a.score ?? 0));
+      const anyFlagged = allAssignments.some((a) => Array.isArray(a.flags) && a.flags.length > 0);
+      const allPassedHigh = allAssignments.every((a) => Number(a.score ?? 0) >= 70);
+      const allFailedLow = allAssignments.every((a) => Number(a.score ?? 0) < 40);
+
+      const canTransition =
+        appRow.currentStatus !== 'withdrawn' && appRow.currentStatus !== 'hired';
+
+      if (canTransition && allPassedHigh && !anyFlagged) {
+        decision = 'advanced';
+        const newStatus = 'interview';
+        const newStage = 'pending_schedule';
+
+        await db
+          .update(applications)
+          .set({
+            status: newStatus,
+            stage: newStage,
+            updatedAt: new Date(),
+          })
+          .where(eq(applications.id, row.applicationId));
+
+        const statusPayload = {
+          applicationId: row.applicationId,
+          jobId: appRow.jobId,
+          status: newStatus,
+          stage: newStage,
+          updatedAt: new Date().toISOString(),
+        };
+
+        notificationGateway.emitToUser(appRow.candidateId, 'application:status-changed', statusPayload);
+        notificationGateway.emitToUser(appRow.jobPostedBy, 'application:status-changed', statusPayload);
+
+        notificationGateway.emitToUser(appRow.jobPostedBy, 'ai-test:graded', {
+          applicationId: row.applicationId,
+          assignmentId: row.id,
+          score: percent,
+          passed,
+          flags,
+          decision,
+          allScores: scores,
+        });
+
+        // In-app notifications
+        try {
+          await notificationService.create({
+            userId: appRow.jobPostedBy,
+            type: 'system',
+            title: 'Ứng viên tự động chuyển sang Phỏng vấn',
+            message: `Ứng viên ${appRow.candidateName || 'Ứng viên'} đạt kết quả test cao (≥70%) và không có cờ cảnh báo, hồ sơ đã tự động chuyển sang vòng Phỏng vấn (stage: pending_schedule).`,
+            payload: {
+              applicationId: appRow.id,
+              jobId: appRow.jobId,
+              jobTitle: appRow.jobTitle,
+            },
+          });
+          await notificationService.create({
+            userId: appRow.candidateId,
+            type: 'system',
+            title: 'Kết quả bài kiểm tra đánh giá năng lực',
+            message: `Chúc mừng bạn! Kết quả bài test cho vị trí ${appRow.jobTitle || ''} đạt yêu cầu xuất sắc, hồ sơ của bạn đã được chuyển sang vòng Phỏng vấn.`,
+            payload: {
+              applicationId: appRow.id,
+              jobId: appRow.jobId,
+              jobTitle: appRow.jobTitle,
+            },
+          });
+        } catch (err) {
+          logger.warn({ err }, 'aiTest submit: lưu notification DB thất bại (best-effort)');
+        }
+      } else if (canTransition && allFailedLow && appRow.currentStatus !== 'rejected') {
+        decision = 'rejected';
+        const newStatus = 'rejected';
+        const newStage = 'rejected';
+
+        await db
+          .update(applications)
+          .set({
+            status: newStatus,
+            stage: newStage,
+            updatedAt: new Date(),
+          })
+          .where(eq(applications.id, row.applicationId));
+
+        const statusPayload = {
+          applicationId: row.applicationId,
+          jobId: appRow.jobId,
+          status: newStatus,
+          stage: newStage,
+          updatedAt: new Date().toISOString(),
+        };
+
+        notificationGateway.emitToUser(appRow.candidateId, 'application:status-changed', statusPayload);
+        notificationGateway.emitToUser(appRow.jobPostedBy, 'application:status-changed', statusPayload);
+
+        notificationGateway.emitToUser(appRow.jobPostedBy, 'ai-test:graded', {
+          applicationId: row.applicationId,
+          assignmentId: row.id,
+          score: percent,
+          passed,
+          flags,
+          decision,
+          allScores: scores,
+        });
+
+        // In-app notification cho employer
+        try {
+          await notificationService.create({
+            userId: appRow.jobPostedBy,
+            type: 'system',
+            title: 'Ứng viên tự động từ chối sau bài test',
+            message: `Ứng viên ${appRow.candidateName || 'Ứng viên'} có kết quả test dưới 40%, hệ thống đã tự động từ chối và trigger gửi email thông báo.`,
+            payload: {
+              applicationId: appRow.id,
+              jobId: appRow.jobId,
+              jobTitle: appRow.jobTitle,
+            },
+          });
+        } catch (err) {
+          logger.warn({ err }, 'aiTest submit: lưu notification DB thất bại (best-effort)');
+        }
+
+        // Trigger n8n auto_reject email cho candidate
+        const avgScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
+        n8nService
+          .trigger('auto_reject', {
+            applicationId: row.applicationId,
+            type: 'ai_test',
+            jobTitle: appRow.jobTitle,
+            candidateEmail: appRow.candidateEmail,
+            candidateName: appRow.candidateName,
+            reason: 'Kết quả bài kiểm tra đánh giá năng lực chưa đạt yêu cầu tối thiểu của vị trí (< 40%).',
+            score: avgScore,
+          })
+          .catch((err) =>
+            logger.error(
+              { err, applicationId: row.applicationId },
+              'aiTest auto_reject: n8n trigger thất bại (status đã commit)',
+            ),
+          );
+      } else {
+        // Vùng xám: 40-70%, hoặc có flags gian lận dù điểm cao, hoặc 1 bài cao 1 bài thấp
+        decision = 'manual_review';
+        notificationGateway.emitToUser(appRow.jobPostedBy, 'ai-test:graded', {
+          applicationId: row.applicationId,
+          assignmentId: row.id,
+          score: percent,
+          passed,
+          flags,
+          decision,
+          allScores: scores,
+          hasFlags: anyFlagged,
+        });
+
+        // In-app notification cho employer biết có bài nộp cần review
+        try {
+          await notificationService.create({
+            userId: appRow.jobPostedBy,
+            type: 'system',
+            title: 'Ứng viên đã nộp bài test (Cần xem xét)',
+            message: anyFlagged
+              ? `Ứng viên ${appRow.candidateName || 'Ứng viên'} đã hoàn thành bài test nhưng có cờ cảnh báo nghi vấn gian lận. Cần bạn xem xét thủ công.`
+              : `Ứng viên ${appRow.candidateName || 'Ứng viên'} đã hoàn thành bài test với điểm số trung bình (${scores.join('%, ')}%). Cần bạn xem xét thủ công.`,
+            payload: {
+              applicationId: appRow.id,
+              jobId: appRow.jobId,
+              jobTitle: appRow.jobTitle,
+            },
+          });
+        } catch (err) {
+          logger.warn({ err }, 'aiTest submit: lưu notification DB thất bại (best-effort)');
+        }
+      }
     }
   }
 
   logger.info(
-    { assignmentId: row.id, score: percent, passed, flags },
+    { assignmentId: row.id, score: percent, passed, flags, decision },
     'aiTest.submit: candidate nộp bài',
   );
 
-  return { score: percent, totalPoints, passed };
+  return { score: percent, totalPoints, passed, decision };
 };
 
 export const aiTestService = {

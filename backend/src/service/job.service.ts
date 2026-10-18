@@ -152,6 +152,37 @@ const getAdjacentJobs = async (
   };
 };
 
+/**
+ * Kiểm tra quyền quản lý tin tuyển dụng:
+ * - Là người tạo tin (`postedBy`)
+ * - Hoặc là người được phân công phụ trách (`assignedTo`)
+ * - Hoặc là Owner của công ty sở hữu tin
+ */
+const assertCanManageJob = async (
+  job: { postedBy: string; assignedTo?: string | null; companyId: string },
+  userId: string,
+  actionMsg = 'thao tác trên tin tuyển dụng này',
+): Promise<void> => {
+  const isDirectPerson = job.postedBy === userId || job.assignedTo === userId;
+  if (isDirectPerson) return;
+
+  const [membership] = await db
+    .select({ role: companyMembers.role })
+    .from(companyMembers)
+    .where(
+      and(
+        eq(companyMembers.companyId, job.companyId),
+        eq(companyMembers.userId, userId),
+        eq(companyMembers.status, 'active'),
+      ),
+    )
+    .limit(1);
+
+  if (!membership || membership.role !== 'owner') {
+    throw new AppError(403, 'FORBIDDEN', `Bạn không có quyền ${actionMsg}`);
+  }
+};
+
 export const jobService = {
   /**
    * Slim list id + title của job thuộc 1 company — cho dropdown filter
@@ -658,9 +689,7 @@ export const jobService = {
   submit: async (userId: string, jobId: string): Promise<void> => {
     const job = await db.query.jobs.findFirst({ where: eq(jobs.id, jobId) });
     if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
-    if (job.postedBy !== userId) {
-      throw new AppError(403, 'FORBIDDEN', 'Bạn không sở hữu job này');
-    }
+    await assertCanManageJob(job, userId, 'gửi kiểm duyệt tin tuyển dụng này');
     // if (!['draft', 'ai_flagged', ''].includes(job.status)) {
     //   throw new AppError(400, 'INVALID_STATUS', `Không thể submit từ trạng thái ${job.status}`);
     // }
@@ -696,8 +725,8 @@ export const jobService = {
   getScanResult: async (userId: string, jobId: string, role: string) => {
     const job = await db.query.jobs.findFirst({ where: eq(jobs.id, jobId) });
     if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
-    if (job.postedBy !== userId && role !== 'admin') {
-      throw new AppError(403, 'FORBIDDEN', 'Bạn không có quyền xem scan này');
+    if (role !== 'admin') {
+      await assertCanManageJob(job, userId, 'xem kết quả quét của tin tuyển dụng này');
     }
     const [latestScan] = await db
       .select()
@@ -1003,25 +1032,7 @@ generateDraft: async (
     const existing = await db.query.jobs.findFirst({ where: eq(jobs.id, id) });
     if (!existing) throw new AppError(404, 'NOT_FOUND', 'Job not found');
 
-    // Quyền sửa tin: Là người tạo (postedBy), hoặc người được gán (assignedTo), hoặc là Owner của công ty
-    const isDirectPerson = existing.postedBy === userId || existing.assignedTo === userId;
-    if (!isDirectPerson) {
-      const [membership] = await db
-        .select({ role: companyMembers.role })
-        .from(companyMembers)
-        .where(
-          and(
-            eq(companyMembers.companyId, existing.companyId),
-            eq(companyMembers.userId, userId),
-            eq(companyMembers.status, 'active'),
-          ),
-        )
-        .limit(1);
-
-      if (!membership || membership.role !== 'owner') {
-        throw new AppError(403, 'FORBIDDEN', 'Bạn không có quyền chỉnh sửa tin tuyển dụng này');
-      }
-    }
+    await assertCanManageJob(existing, userId, 'chỉnh sửa tin tuyển dụng này');
 
     const patch: Record<string, unknown> = { ...data, updatedAt: new Date() };
     if (data.deadline !== undefined) {
@@ -1049,9 +1060,7 @@ generateDraft: async (
   softDelete: async (userId: string, id: string): Promise<void> => {
     const existing = await db.query.jobs.findFirst({ where: eq(jobs.id, id) });
     if (!existing) throw new AppError(404, 'NOT_FOUND', 'Job not found');
-    if (existing.postedBy !== userId) {
-      throw new AppError(403, 'FORBIDDEN', 'Bạn không sở hữu job này');
-    }
+    await assertCanManageJob(existing, userId, 'đóng tin tuyển dụng này');
     await db.update(jobs).set({ status: 'closed' }).where(eq(jobs.id, id));
     // await db.delete(jobs).where(eq(jobs.id, id));
   },
@@ -1069,9 +1078,7 @@ generateDraft: async (
   reopen: async (userId: string, id: string): Promise<void> => {
     const existing = await db.query.jobs.findFirst({ where: eq(jobs.id, id) });
     if (!existing) throw new AppError(404, 'NOT_FOUND', 'Job not found');
-    if (existing.postedBy !== userId) {
-      throw new AppError(403, 'FORBIDDEN', 'Bạn không sở hữu job này');
-    }
+    await assertCanManageJob(existing, userId, 'mở lại tin tuyển dụng này');
     if (existing.status !== 'closed') {
       throw new AppError(400, 'INVALID_STATUS', 'Chỉ có thể mở lại job đã đóng');
     }
@@ -1091,9 +1098,7 @@ generateDraft: async (
   getMatches: async (userId: string, jobId: string) => {
     const job = await db.query.jobs.findFirst({ where: eq(jobs.id, jobId) });
     if (!job) throw new AppError(404, 'NOT_FOUND', 'Job not found');
-    if (job.postedBy !== userId) {
-      throw new AppError(403, 'FORBIDDEN', 'Bạn không sở hữu job này');
-    }
+    await assertCanManageJob(job, userId, 'xem danh sách ứng viên của tin tuyển dụng này');
     // TODO: join applications + sort ai_match_score
     return [];
   },
