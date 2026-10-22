@@ -37,6 +37,7 @@ export interface CreatedApplication {
 export interface ListApplicationQuery {
   status?: ApplicationStatus;
   jobId?: string;
+  scope?: 'company' | 'me';
   page?: number;
   limit?: number;
 }
@@ -131,6 +132,18 @@ export interface UpdatedStatus {
   id: string;
   status: ApplicationStatus;
   stage: string | null;
+}
+
+/** Application item hiển thị trong bảng danh sách đơn ứng tuyển của Employer. */
+export interface ApplicationItem {
+  name: string;
+  avatarUrl?: string | null;
+  email: string;
+  position: string;
+  status: ApplicationStatus;
+  match: number | null;
+  date: string;
+  applicationId?: string;
 }
 
 /**

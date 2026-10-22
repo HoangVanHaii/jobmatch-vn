@@ -107,9 +107,11 @@ export const jobController = {
       }
       // ?keyword= optional — filter title (cap 100 ký tự chống query rác).
       const keyword = typeof req.query.keyword === 'string' ? req.query.keyword.slice(0, 100) : undefined;
+      const scope = req.query.scope === 'me' ? 'me' : 'company';
       const data = await jobService.listJobNames(membership.companyId, keyword, {
         userId,
         role: membership.role,
+        scope,
       });
       res.json({ success: true, data });
     } catch (err) { next(err); }

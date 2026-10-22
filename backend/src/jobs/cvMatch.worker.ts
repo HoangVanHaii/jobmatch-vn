@@ -221,6 +221,8 @@ export const cvMatchWorker = new Worker(
         n8nService
           .trigger('auto_reject', {
             applicationId,
+            type: 'cv_match',
+            jobTitle: dbJob.title,
             candidateEmail: app.candidateEmail,
             candidateName: app.candidateName,
             reason: result.data.rationale,

@@ -100,6 +100,7 @@ export const companyController = {
           id: company.id,
           name: company.name,
           logoUrl: company.logoUrl,
+          role: membership.role,
         },
       });
     } catch (err) {

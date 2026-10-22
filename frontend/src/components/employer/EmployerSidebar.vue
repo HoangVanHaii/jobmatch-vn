@@ -198,12 +198,6 @@ const groups: MenuGroup[] = [
         activeOn: ['/employer/applications'],
       },
       {
-        label: 'Đơn ứng tuyển test (demo)',
-        icon: ClipboardList,
-        to: '/employer/test',
-        activeOn: ['/employer/tests'],
-      },
-      {
         label: 'Lịch phỏng vấn',
         icon: Calendar,
         to: '/employer/interviews',

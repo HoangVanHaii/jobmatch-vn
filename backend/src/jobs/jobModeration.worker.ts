@@ -58,7 +58,7 @@ export const jobModerationWorker = new Worker('jobModeration', async (job) => {
     }
     if (dbJob.status !== 'ai_scanning') {
       logger.warn({ jobId, status: dbJob.status }, 'Worker: jobstatus khác ai_scanning, skip');
-      await refundModerationQuota(dbJob.postedBy, chargeQuota, 'status guard skip (duplicate/processed job)');
+      await refundModerationQuota(postedBy || dbJob.postedBy, chargeQuota, 'status guard skip (duplicate/processed job)');
       return;
     }
 
@@ -77,9 +77,10 @@ export const jobModerationWorker = new Worker('jobModeration', async (job) => {
 
       // Ghi nhận token thực tế sau LLM success.
       const tokenUsed = result.usage.totalTokens ?? 0;
-      if (tokenUsed > 0) {
+      const chargeUserId = postedBy || dbJob.postedBy;
+      if (tokenUsed > 0 && chargeUserId) {
         await usageLogService.insertOrIncrementToken(
-          dbJob.postedBy,
+          chargeUserId,
           JOB_POST_FEATURE,
           tokenUsed,
         );
@@ -125,13 +126,19 @@ export const jobModerationWorker = new Worker('jobModeration', async (job) => {
         'Worker: scan xong',
       );
 
-      // Realtime push tới employer (socket room: user:${postedBy})
-      notificationGateway.emitToUser(dbJob.postedBy, 'job_scan_complete', {
+      // Realtime push tới người tạo tin (postedBy) và người phụ trách tin (assignedTo)
+      const scanNotificationPayload = {
         jobId,
         verdict: result.data.verdict,
         score: result.data.score,
         flaggedCount: result.data.flags.length,
-      });
+      };
+      if (dbJob.postedBy) {
+        notificationGateway.emitToUser(dbJob.postedBy, 'job_scan_complete', scanNotificationPayload);
+      }
+      if (dbJob.assignedTo && dbJob.assignedTo !== dbJob.postedBy) {
+        notificationGateway.emitToUser(dbJob.assignedTo, 'job_scan_complete', scanNotificationPayload);
+      }
     } catch (err) {
       // Rollback quota ở attempt cuối (đã hết retry).
       const attempt = job.attemptsMade + 1;
@@ -144,7 +151,7 @@ export const jobModerationWorker = new Worker('jobModeration', async (job) => {
       );
 
       if (isLastAttempt) {
-        await refundModerationQuota(dbJob.postedBy, chargeQuota, 'LLM failed, last attempt');
+        await refundModerationQuota(postedBy || dbJob.postedBy, chargeQuota, 'LLM failed, last attempt');
       }
       throw err;
     }
