@@ -13,6 +13,13 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { companyApi } from '@services/company.api';
+import { uploadApi } from '@services/upload.api';
+import { HttpError } from '@services/http';
+import {
+  companyToProfile,
+  profileToUpdatePayload,
+  type CompanyProfile,
+} from '@/utils/companyProfileUtils';
 import type {
   Company,
   CompanyStatus,
@@ -31,6 +38,15 @@ export const useCompanyStore = defineStore('company', () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
+  // State tách riêng cho màn hồ sơ công ty để không làm ảnh hưởng loading/error của các màn company khác.
+  const company = ref<CompanyProfile | null>(null);
+  const companyLoading = ref(false);
+  const companySaving = ref(false);
+  const companyLoadError = ref<string | null>(null);
+  const companySaveError = ref<string | null>(null);
+  const companyFieldErrors = ref<Record<string, string>>({});
+  let companyFetchRequestId = 0;
+
   /** Query cho list: search/filter + phân trang (đổi filter sẽ reset page ở setQuery) */
   const query = ref<ListCompaniesQuery>({ page: 1, limit: DEFAULT_PAGE_SIZE });
 
@@ -48,6 +64,72 @@ export const useCompanyStore = defineStore('company', () => {
     const idx = items.value.findIndex((c) => c.id === company.id);
     if (idx >= 0) items.value[idx] = company;
     if (current.value?.id === company.id) current.value = company;
+  };
+
+  const toFieldErrors = (details: Record<string, unknown> | undefined): Record<string, string> => {
+    if (!details) return {};
+    return Object.entries(details).reduce<Record<string, string>>((result, [field, value]) => {
+      if (typeof value === 'string') result[field] = value;
+      else if (Array.isArray(value) && typeof value[0] === 'string') result[field] = value[0];
+      return result;
+    }, {});
+  };
+
+  /** Tải company của user hiện tại; chỉ request mới nhất được phép ghi state. */
+  const fetchCompany = async (): Promise<boolean> => {
+    const requestId = ++companyFetchRequestId;
+    companyLoading.value = true;
+    companyLoadError.value = null;
+    try {
+      const { data: mine } = await companyApi.getMyCompany();
+      if (!mine.data) {
+        if (requestId === companyFetchRequestId) {
+          company.value = null;
+          companyLoadError.value = 'Chưa tìm thấy hồ sơ doanh nghiệp của bạn.';
+        }
+        return false;
+      }
+      const { data } = await companyApi.getById(mine.data.id);
+      if (requestId === companyFetchRequestId) {
+        current.value = data.data;
+        company.value = companyToProfile(data.data);
+      }
+      return true;
+    } catch (e) {
+      if (requestId === companyFetchRequestId) {
+        companyLoadError.value = e instanceof Error ? e.message : 'Không thể tải hồ sơ công ty.';
+      }
+      return false;
+    } finally {
+      if (requestId === companyFetchRequestId) companyLoading.value = false;
+    }
+  };
+
+  /** Upload logo (nếu có) rồi PATCH profile; không optimistic update. */
+  const updateCompany = async (profile: CompanyProfile, logoFile?: File | null): Promise<boolean> => {
+    if (companySaving.value || !current.value) return false;
+    companySaving.value = true;
+    companySaveError.value = null;
+    companyFieldErrors.value = {};
+    try {
+      let logoUrl = current.value.logoUrl ?? undefined;
+      if (logoFile) {
+        const { data: upload } = await uploadApi.uploadImage(logoFile, 'logos');
+        logoUrl = upload.data.url;
+      }
+      const payload = profileToUpdatePayload(profile);
+      if (logoUrl) payload.logoUrl = logoUrl;
+      const { data } = await companyApi.update(current.value.id, payload);
+      syncItem(data.data);
+      company.value = companyToProfile(data.data);
+      return true;
+    } catch (e) {
+      companyFieldErrors.value = e instanceof HttpError ? toFieldErrors(e.details) : {};
+      companySaveError.value = e instanceof Error ? e.message : 'Không thể lưu hồ sơ công ty.';
+      return false;
+    } finally {
+      companySaving.value = false;
+    }
   };
 
   // --- Actions ---
@@ -160,14 +242,22 @@ export const useCompanyStore = defineStore('company', () => {
     current.value = null;
     error.value = null;
     query.value = { page: 1, limit: DEFAULT_PAGE_SIZE };
+    company.value = null;
+    companyLoading.value = false;
+    companySaving.value = false;
+    companyLoadError.value = null;
+    companySaveError.value = null;
+    companyFieldErrors.value = {};
   };
 
   return {
     // state
     items, total, current, loading, error, query,
+    company, companyLoading, companySaving, companyLoadError, companySaveError, companyFieldErrors,
     // computed
     hasMore, isEmpty,
     // actions
-    fetchList, setQuery, fetchById, fetchBySlug, create, update, updateStatus, reset,
+    fetchList, setQuery, fetchById, fetchBySlug, create, update, updateStatus,
+    fetchCompany, updateCompany, reset,
   };
 });

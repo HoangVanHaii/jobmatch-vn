@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Company3ProfileView.vue — Chế độ XEM hồ sơ doanh nghiệp (Editorial Corporate).
+ * CompanyProfileView.vue — Chế độ XEM hồ sơ doanh nghiệp (Editorial Corporate).
  * Nhận profile và cờ thông báo lưu từ cha, phát sự kiện @edit khi bấm nút chỉnh sửa.
  */
 import { computed } from 'vue';
@@ -16,7 +16,7 @@ import {
   getSocialMeta,
   normalizeUrl,
   type CompanyProfile,
-} from '@/utils/company3Utils';
+} from '@/utils/companyProfileUtils';
 
 interface Props {
   profile: CompanyProfile;
@@ -87,7 +87,7 @@ const visibleSocial = computed(() =>
       </div>
     </section>
 
-    <!-- Thông báo lưu thành công (giả lập) -->
+    <!-- Thông báo lưu thành công -->
     <div class="mx-auto max-w-[1240px] px-6">
       <transition name="notice">
         <p
@@ -96,7 +96,7 @@ const visibleSocial = computed(() =>
           role="status"
         >
           <Check :size="15" />
-          Đã lưu thay đổi (mockup — không ghi dữ liệu thật).
+          Đã lưu thay đổi.
         </p>
       </transition>
     </div>
@@ -198,7 +198,7 @@ const visibleSocial = computed(() =>
     <footer class="border-t border-slate-200 py-6">
       <div class="mx-auto flex max-w-[1240px] flex-wrap justify-between gap-2 px-6 text-xs text-slate-500">
         <span>jobmatch.vn</span>
-        <span>Trang mockup — dữ liệu minh họa, không phải dữ liệu thật.</span>
+        <span>Hồ sơ doanh nghiệp</span>
       </div>
     </footer>
   </main>

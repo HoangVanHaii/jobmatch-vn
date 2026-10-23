@@ -45,7 +45,7 @@ import { useAuthStore } from '@stores/auth';
 import { useToastStore } from '@stores/toast';
 import { useSocket } from '@composables/useSocket';
 import { companyApi } from '@services/company.api';
-import CreateCompanyModal from '@components/employer/CreateCompanyModal.vue';
+import CreateCompanyModal from '@components/employer/CreateCompanyTestModal.vue';
 import ImageUploadField from '@components/employer/ImageUploadField.vue';
 import type {
   Company,

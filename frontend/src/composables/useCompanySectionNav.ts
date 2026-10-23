@@ -1,6 +1,6 @@
 /**
- * useCompany3SectionNav.ts — Quản lý cuộn trang, sticky header, và scroll-spy
- * cho 5 section trong form chỉnh sửa hồ sơ Company3.
+ * useCompanySectionNav.ts — Quản lý cuộn trang, sticky header, và scroll-spy
+ * cho 5 section trong form chỉnh sửa hồ sơ công ty.
  */
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 
@@ -17,7 +17,7 @@ export const editSections: EditSection[] = [
   { id: 'sec-social', label: 'Mạng xã hội' },
 ];
 
-export function useCompany3SectionNav(
+export function useCompanySectionNav(
   rootEl: Ref<HTMLElement | null>,
   headerEl: Ref<HTMLElement | null>,
 ) {

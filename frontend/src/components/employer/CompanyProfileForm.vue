@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
- * Company3ProfileForm.vue — Chế độ CHỈNH SỬA hồ sơ doanh nghiệp (Editorial Corporate).
+ * CompanyProfileForm.vue — Chế độ CHỈNH SỬA hồ sơ doanh nghiệp (Editorial Corporate).
  * Quản lý form nhập liệu, validate, tải ảnh logo tạm thời, và điều hướng section sticky.
  */
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import {
   Building2,
   Check,
@@ -11,8 +11,8 @@ import {
   Plus,
   Trash2,
 } from 'lucide-vue-next';
-import Company3Select from '@/views/employer/Company3Select.vue';
-import { useCompany3SectionNav } from '@/composables/useCompany3SectionNav';
+import CompanySelect from '@/views/employer/CompanySelect.vue';
+import { useCompanySectionNav } from '@/composables/useCompanySectionNav';
 import {
   cloneProfile,
   getInitials,
@@ -24,16 +24,19 @@ import {
   socialToRows,
   type CompanyProfile,
   type KvRow,
-} from '@/utils/company3Utils';
+} from '@/utils/companyProfileUtils';
 
 interface Props {
   profile: CompanyProfile;
+  saving: boolean;
+  serverErrors: Record<string, string>;
+  saveError: string | null;
 }
 
 const props = defineProps<Props>();
 
 const emit = defineEmits<{
-  (e: 'save', profile: CompanyProfile): void;
+  (e: 'save', profile: CompanyProfile, logoFile: File | null): void;
   (e: 'cancel'): void;
 }>();
 
@@ -59,9 +62,22 @@ if (!DISTRICTS[draft.value.province]?.includes(draft.value.district)) {
 
 /* Lỗi validate form (key: tên lỗi, value: thông điệp hiển thị) */
 const errors = ref<Record<string, string>>({});
+const dismissedServerErrors = ref<string[]>([]);
+const displayedErrors = computed<Record<string, string>>(() => {
+  const server = Object.fromEntries(
+    Object.entries(props.serverErrors).filter(([field]) => !dismissedServerErrors.value.includes(field)),
+  );
+  return { ...server, ...errors.value };
+});
+
+function clearFieldError(field: string): void {
+  errors.value[field] = '';
+  if (!dismissedServerErrors.value.includes(field)) dismissedServerErrors.value.push(field);
+}
 
 /* Logo preview object URL */
 let logoObjectUrl: string | null = null;
+let logoFile: File | null = null;
 const logoError = ref<string | null>(null);
 const logoPreview = ref<string | null>(props.profile.logoUrl);
 
@@ -88,6 +104,7 @@ function onLogoChange(e: Event): void {
   logoError.value = null;
   revokeLocalBlob();
   logoObjectUrl = URL.createObjectURL(file);
+  logoFile = file;
   logoPreview.value = logoObjectUrl;
 }
 
@@ -159,21 +176,33 @@ function focusIn(secId: string, inputId: string): void {
 
 /** Cuộn tới section chứa lỗi đầu tiên và focus ô tương ứng. */
 function focusFirstError(): void {
-  if (errors.value.name) {
+  if (displayedErrors.value.name) {
     focusIn('sec-brand', 'f-name');
     return;
   }
-  if (errors.value.website) {
+  if (displayedErrors.value.website) {
     focusIn('sec-general', 'f-website');
     return;
   }
-  const socialErr = Object.keys(errors.value).find((k) => k.startsWith('social-'));
+  const socialErr = Object.keys(displayedErrors.value).find((k) => k.startsWith('social-'));
   if (socialErr) {
     focusIn('sec-social', socialErr);
   }
 }
 
+watch(
+  () => props.serverErrors,
+  async (serverErrors) => {
+    dismissedServerErrors.value = [];
+    if (Object.keys(serverErrors).length > 0) {
+      await nextTick();
+      focusFirstError();
+    }
+  },
+);
+
 function saveEdit(): void {
+  if (props.saving) return;
   if (!validateForm()) {
     focusFirstError();
     return;
@@ -189,9 +218,7 @@ function saveEdit(): void {
     logoUrl: logoPreview.value,
     social: rowsToSocial(socialRows.value),
   };
-  emit('save', updatedProfile);
-  // Blob mới chuyển quyền sở hữu cho cha quản lý, Form không revoke nhầm
-  logoObjectUrl = null;
+  emit('save', updatedProfile, logoFile);
 }
 
 function cancelEdit(): void {
@@ -201,6 +228,7 @@ function cancelEdit(): void {
 
 /** Hủy có xác nhận nếu đang có thay đổi chưa lưu. */
 function requestCancel(): void {
+  if (props.saving) return;
   if (isDirty.value && !window.confirm('Bạn có thay đổi chưa lưu. Hủy bỏ các thay đổi?')) return;
   cancelEdit();
 }
@@ -209,7 +237,7 @@ function requestCancel(): void {
 const rootEl = ref<HTMLElement | null>(null);
 const editHeaderEl = ref<HTMLElement | null>(null);
 
-const { editSections, activeSection, isStuck, scrollToSection } = useCompany3SectionNav(
+const { editSections, activeSection, isStuck, scrollToSection } = useCompanySectionNav(
   rootEl,
   editHeaderEl,
 );
@@ -236,7 +264,7 @@ onBeforeUnmount(() => {
           class="c3-page-title m-0 text-[clamp(22px,2.6vw,30px)] font-bold leading-[1.2] tracking-[-0.01em] outline-none"
         >Chỉnh sửa hồ sơ doanh nghiệp</h1>
         <p class="mt-2.5 max-w-[60ch] text-[13.5px] text-slate-500">
-          Các thay đổi chỉ được lưu vào bộ nhớ của trang mockup này, không gửi lên hệ thống.
+          Thông tin sẽ hiển thị trên trang tuyển dụng của bạn.
         </p>
       </div>
 
@@ -244,6 +272,7 @@ onBeforeUnmount(() => {
         type="button"
         class="inline-flex shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-[13px] text-slate-600 transition-colors duration-150 hover:border-slate-300 hover:text-slate-900 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none max-sm:w-full max-sm:justify-center"
         @click="requestCancel"
+        :disabled="saving"
       >
         <ChevronRight :size="15" class="rotate-180" aria-hidden="true" />
         Quay lại hồ sơ (hủy thay đổi)
@@ -313,7 +342,7 @@ onBeforeUnmount(() => {
                   >
                     Chọn ảnh logo
                   </label>
-                  <input id="f-logo" type="file" accept="image/*" class="sr-only" @change="onLogoChange" />
+                  <input id="f-logo" type="file" accept="image/*" class="sr-only" :disabled="saving" @change="onLogoChange" />
                 </div>
               </div>
               <p v-if="logoError" class="text-xs text-red-600">{{ logoError }}</p>
@@ -326,13 +355,13 @@ onBeforeUnmount(() => {
                 v-model="draft.name"
                 type="text"
                 class="w-full rounded-lg border bg-white px-3.5 py-3 text-sm text-slate-900 transition duration-150 placeholder:text-slate-400 focus:outline-none focus:ring-[3px] focus:ring-blue-600/15 motion-reduce:transition-none"
-                :class="errors.name ? 'border-red-300 focus:border-red-500' : 'border-slate-200 focus:border-blue-600'"
-                :aria-invalid="errors.name ? 'true' : undefined"
-                :aria-describedby="errors.name ? 'f-name-err' : undefined"
+                :class="displayedErrors.name ? 'border-red-300 focus:border-red-500' : 'border-slate-200 focus:border-blue-600'"
+                :aria-invalid="displayedErrors.name ? 'true' : undefined"
+                :aria-describedby="displayedErrors.name ? 'f-name-err' : undefined"
                 placeholder="Tên công ty"
-                @input="errors.name = ''"
+                @input="clearFieldError('name')"
               />
-              <p v-if="errors.name" id="f-name-err" class="text-xs text-red-600" role="alert">{{ errors.name }}</p>
+              <p v-if="displayedErrors.name" id="f-name-err" class="text-xs text-red-600" role="alert">{{ displayedErrors.name }}</p>
             </div>
           </div>
         </section>
@@ -358,7 +387,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="flex min-w-0 flex-col gap-2">
               <label class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-700" for="f-size">Quy mô doanh nghiệp</label>
-              <Company3Select id="f-size" v-model="draft.size" :options="SIZES" />
+              <CompanySelect id="f-size" v-model="draft.size" :options="SIZES" />
             </div>
           </div>
           <div class="mt-6 flex min-w-0 flex-col gap-2">
@@ -368,13 +397,13 @@ onBeforeUnmount(() => {
               v-model="draft.website"
               type="text"
               class="w-full rounded-lg border bg-white px-3.5 py-3 text-sm text-slate-900 transition duration-150 placeholder:text-slate-400 focus:outline-none focus:ring-[3px] focus:ring-blue-600/15 motion-reduce:transition-none"
-              :class="errors.website ? 'border-red-300 focus:border-red-500' : 'border-slate-200 focus:border-blue-600'"
-              :aria-invalid="errors.website ? 'true' : undefined"
-              :aria-describedby="errors.website ? 'f-website-err' : undefined"
+              :class="displayedErrors.website ? 'border-red-300 focus:border-red-500' : 'border-slate-200 focus:border-blue-600'"
+              :aria-invalid="displayedErrors.website ? 'true' : undefined"
+              :aria-describedby="displayedErrors.website ? 'f-website-err' : undefined"
               placeholder="https://example.com"
-              @input="errors.website = ''"
+              @input="clearFieldError('website')"
             />
-            <p v-if="errors.website" id="f-website-err" class="text-xs text-red-600" role="alert">{{ errors.website }}</p>
+            <p v-if="displayedErrors.website" id="f-website-err" class="text-xs text-red-600" role="alert">{{ displayedErrors.website }}</p>
           </div>
         </section>
 
@@ -389,11 +418,11 @@ onBeforeUnmount(() => {
           <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
             <div class="flex min-w-0 flex-col gap-2">
               <label class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-700" for="f-province">Tỉnh / Thành phố</label>
-              <Company3Select id="f-province" v-model="draft.province" :options="PROVINCES" @change="onDraftProvinceChange" />
+              <CompanySelect id="f-province" v-model="draft.province" :options="PROVINCES" @change="onDraftProvinceChange" />
             </div>
             <div class="flex min-w-0 flex-col gap-2">
               <label class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-700" for="f-district">Quận / Huyện</label>
-              <Company3Select id="f-district" v-model="draft.district" :options="DISTRICTS[draft.province] || []" />
+              <CompanySelect id="f-district" v-model="draft.district" :options="DISTRICTS[draft.province] || []" />
             </div>
           </div>
           <div class="mt-6 flex min-w-0 flex-col gap-2">
@@ -523,19 +552,23 @@ onBeforeUnmount(() => {
 
         <!-- Hành động -->
         <div class="sticky bottom-0 mt-10 flex justify-end gap-3 border-t border-slate-200 bg-white pb-[max(18px,env(safe-area-inset-bottom))] pt-[18px]">
+          <p v-if="saveError" class="mr-auto text-xs text-red-600" role="alert">{{ saveError }}</p>
           <button
             type="button"
             class="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 py-[11px] text-[13px] font-semibold tracking-[0.04em] text-slate-700 transition-colors duration-150 hover:border-slate-300 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none"
             @click="requestCancel"
+            :disabled="saving"
           >
             Hủy
           </button>
           <button
             type="submit"
             class="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-transparent bg-[#5b4eea] px-5 py-[11px] text-[13px] font-semibold tracking-[0.04em] text-white transition-colors duration-150 hover:bg-blue-700 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none"
+            :disabled="saving"
+            :aria-busy="saving ? 'true' : undefined"
           >
             <Check :size="15" />
-            Lưu thay đổi
+            {{ saving ? 'Đang lưu…' : 'Lưu thay đổi' }}
           </button>
         </div>
       </form>

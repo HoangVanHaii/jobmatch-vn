@@ -1,33 +1,25 @@
 <script setup lang="ts">
 /**
- * Company3Mockup.vue — Mockup giao diện hồ sơ doanh nghiệp (Editorial Corporate).
- * Component cha: quản lý trạng thái view/edit, mock data ban đầu và chuyển cảnh.
+ * CompanyProfilePage.vue — Giao diện hồ sơ doanh nghiệp (Editorial Corporate).
+ * Component cha quản lý trạng thái view/edit và chuyển cảnh.
  */
-import { onBeforeUnmount, ref } from 'vue';
-import Company3ProfileView from '@/components/employer/Company3ProfileView.vue';
-import Company3ProfileForm from '@/components/employer/Company3ProfileForm.vue';
-import { cloneProfile, type CompanyProfile } from '@/utils/company3Utils';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { storeToRefs } from 'pinia';
+import CompanyProfileView from '@/components/employer/CompanyProfileView.vue';
+import CompanyProfileForm from '@/components/employer/CompanyProfileForm.vue';
+import { useCompanyStore } from '@stores/company';
+import type { CompanyProfile } from '@/utils/companyProfileUtils';
 
-const initialProfile: CompanyProfile = {
-  name: 'Công ty Cổ phần Minh An',
-  industry: 'Thương mại và Dịch vụ',
-  size: '51–200 nhân viên',
-  website: 'https://example.com',
-  province: 'TP. Hồ Chí Minh',
-  district: 'Quận 1',
-  address: '123 Nguyễn Huệ, phường Bến Nghé, Quận 1',
-  description:
-    'Minh An là doanh nghiệp hoạt động trong lĩnh vực thương mại và dịch vụ, kết nối các thương hiệu tiêu dùng hàng đầu Việt Nam với hệ thống phân phối trên toàn quốc. Với hơn một thập kỷ phát triển, chúng tôi xây dựng mạng lưới đối tác đa ngành và đội ngũ nhân sự giàu kinh nghiệm, đặt sự tin cậy và chất lượng dịch vụ làm nền tảng cho mọi hoạt động.',
-  logoUrl: null,
-  social: {
-    linkedin: 'https://www.linkedin.com/company/minh-an',
-    facebook: 'https://www.facebook.com/minhan.official',
-    youtube: 'https://www.youtube.com/@minhan',
-  },
-};
-
-/* Dữ liệu hiển thị (đã lưu) */
-const profile = ref<CompanyProfile>(cloneProfile(initialProfile));
+const companyStore = useCompanyStore();
+const {
+  company: profile,
+  companyLoading,
+  companySaving,
+  companyLoadError,
+  companySaveError,
+  companyFieldErrors,
+} = storeToRefs(companyStore);
+const hasProfile = computed(() => profile.value !== null);
 
 const isEditing = ref(false);
 const savedNotice = ref(false);
@@ -39,13 +31,9 @@ function startEdit(): void {
   isEditing.value = true;
 }
 
-function onSave(updatedProfile: CompanyProfile): void {
-  const oldLogo = profile.value.logoUrl;
-  const newLogo = updatedProfile.logoUrl;
-  if (oldLogo && oldLogo.startsWith('blob:') && oldLogo !== newLogo) {
-    URL.revokeObjectURL(oldLogo);
-  }
-  profile.value = updatedProfile;
+async function onSave(updatedProfile: CompanyProfile, logoFile: File | null): Promise<void> {
+  const saved = await companyStore.updateCompany(updatedProfile, logoFile);
+  if (!saved) return;
   isEditing.value = false;
   savedNotice.value = true;
   if (savedNoticeTimer) clearTimeout(savedNoticeTimer);
@@ -67,27 +55,47 @@ function onModeAfterEnter(): void {
 
 onBeforeUnmount(() => {
   if (savedNoticeTimer) clearTimeout(savedNoticeTimer);
-  if (profile.value.logoUrl && profile.value.logoUrl.startsWith('blob:')) {
-    URL.revokeObjectURL(profile.value.logoUrl);
-  }
+});
+
+onMounted(() => {
+  void companyStore.fetchCompany();
 });
 </script>
 
 <template>
   <div ref="rootEl" class="min-h-screen bg-white font-poppins text-slate-900 antialiased">
     <Transition name="c3-mode" mode="out-in" @before-enter="onModeBeforeEnter" @after-enter="onModeAfterEnter">
-      <Company3ProfileView
-        v-if="!isEditing"
-        :profile="profile"
+      <div v-if="companyLoading" class="mx-auto max-w-[1240px] px-6 py-10 text-sm text-slate-500">
+        Đang tải hồ sơ doanh nghiệp…
+      </div>
+      <div v-else-if="companyLoadError" class="mx-auto max-w-[1240px] px-6 py-10">
+        <p class="text-sm text-red-600" role="alert">{{ companyLoadError }}</p>
+        <button
+          type="button"
+          class="mt-3 inline-flex cursor-pointer items-center justify-center rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-[13px] text-slate-700 transition-colors duration-150 hover:border-slate-300 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none"
+          @click="companyStore.fetchCompany()"
+        >
+          Thử lại
+        </button>
+      </div>
+      <CompanyProfileView
+        v-else-if="hasProfile && !isEditing"
+        :profile="profile!"
         :saved-notice="savedNotice"
         @edit="startEdit"
       />
-      <Company3ProfileForm
-        v-else
-        :profile="profile"
+      <CompanyProfileForm
+        v-else-if="hasProfile"
+        :profile="profile!"
+        :saving="companySaving"
+        :server-errors="companyFieldErrors"
+        :save-error="companySaveError"
         @save="onSave"
         @cancel="isEditing = false"
       />
+      <div v-else class="mx-auto max-w-[1240px] px-6 py-10 text-sm text-slate-500">
+        Bạn chưa có hồ sơ doanh nghiệp.
+      </div>
     </Transition>
   </div>
 </template>

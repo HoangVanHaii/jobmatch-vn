@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Company3Select.vue — Dropdown tùy biến thay thế thẻ <select> chuẩn.
+ * CompanySelect.vue — Dropdown tùy biến thay thế thẻ <select> chuẩn.
  * Tương thích accessibility (combobox/listbox), hỗ trợ phím mũi tên,
  * tự lật lên trên khi ở sát mép dưới viewport, không phụ thuộc thư viện ngoài.
  */

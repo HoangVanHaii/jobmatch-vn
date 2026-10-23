@@ -1,5 +1,5 @@
 /**
- * company3Utils.ts — Các hàm tiện ích và kiểu dữ liệu thuần cho Company3 mockup.
+ * companyProfileUtils.ts — Các hàm tiện ích và kiểu dữ liệu thuần cho hồ sơ công ty.
  * Không phụ thuộc DOM hay Vue reactivity.
  */
 import {
@@ -11,6 +11,7 @@ import {
   Twitter,
   Youtube,
 } from 'lucide-vue-next';
+import type { Company, UpdateCompanyPayload } from '@/types/company';
 
 export interface CompanyProfile {
   name: string;
@@ -25,6 +26,38 @@ export interface CompanyProfile {
   /** Object key/value giống `CompanySocial` trong CompanyView.vue. */
   social: Record<string, string>;
 }
+
+/** Chuyển response Company sang shape dùng riêng cho giao diện hồ sơ công ty. */
+export const companyToProfile = (company: Company): CompanyProfile => {
+  const address = company.address ?? {};
+  return {
+    name: company.name,
+    industry: company.industry ?? '',
+    size: company.sizeRange ?? '',
+    website: company.website ?? '',
+    province: typeof address.city === 'string' ? address.city : '',
+    district: typeof address.district === 'string' ? address.district : '',
+    address: typeof address.address === 'string' ? address.address : '',
+    description: company.description ?? '',
+    logoUrl: company.logoUrl ?? null,
+    social: { ...(company.social ?? {}) },
+  };
+};
+
+/** Chuẩn hóa profile thành payload PATCH, giữ logo hiện có nếu không upload mới. */
+export const profileToUpdatePayload = (profile: CompanyProfile): UpdateCompanyPayload => ({
+  name: profile.name.trim(),
+  industry: profile.industry.trim(),
+  sizeRange: profile.size.trim(),
+  website: profile.website.trim() || undefined,
+  description: profile.description.trim(),
+  social: { ...profile.social },
+  address: {
+    city: profile.province,
+    district: profile.district,
+    address: profile.address.trim(),
+  },
+});
 
 /** Sao chép sâu 1 mức, tách tham chiếu `social` để draft không mutate profile. */
 export const cloneProfile = (p: CompanyProfile): CompanyProfile => ({
