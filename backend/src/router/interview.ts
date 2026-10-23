@@ -54,6 +54,40 @@ interviewRouter.get(
   interviewController.list,
 );
 
+// ============================================================================
+// Google Calendar Integration routes (TRƯỚC /:id)
+// ============================================================================
+
+// GET /calendar/callback — Google redirect về sau khi user cấp quyền (Public endpoint)
+interviewRouter.get(
+  '/calendar/callback',
+  interviewController.handleCalendarCallback,
+);
+
+// GET /calendar/connect-url — HR lấy link OAuth Google Calendar
+interviewRouter.get(
+  '/calendar/connect-url',
+  auth,
+  requireRole('employer', 'admin'),
+  interviewController.getCalendarConnectUrl,
+);
+
+// GET /calendar/status — Kiểm tra trạng thái kết nối Google Calendar của HR
+interviewRouter.get(
+  '/calendar/status',
+  auth,
+  requireRole('employer', 'admin'),
+  interviewController.getCalendarStatus,
+);
+
+// DELETE /calendar/disconnect — HR ngắt kết nối Google Calendar
+interviewRouter.delete(
+  '/calendar/disconnect',
+  auth,
+  requireRole('employer', 'admin'),
+  interviewController.disconnectCalendar,
+);
+
 // PUT /:id/cancel — TRƯỚC /:id để Express không nuốt
 interviewRouter.put(
   '/:id/cancel',

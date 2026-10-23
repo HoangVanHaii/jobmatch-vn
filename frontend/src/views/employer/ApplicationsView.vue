@@ -9,10 +9,13 @@ import {
   ArrowDown,
   Loader2,
   Inbox,
+  Calendar,
+  X,
 } from 'lucide-vue-next';
 import { applicationApi } from '@services/application.api';
 import { companyApi } from '@services/company.api';
 import { jobApi, type JobNameItem } from '@services/job.api';
+import { interviewApi } from '@/services/interview.api';
 import { getSocket } from '@services/socket';
 import { useToastStore } from '@stores/toast';
 import ApplicationDetailPanel from '@components/employer/ApplicationDetailPanel.vue';
@@ -404,7 +407,34 @@ const onStatusChanged = (payload: {
   }
 };
 
+const isCalendarConnected = ref(false);
+const calendarLoaded = ref(false);
+const isCalendarDismissed = ref(false);
+
+const checkCalendarStatus = async (): Promise<void> => {
+  try {
+    const res = await interviewApi.getCalendarStatus();
+    if (res.data?.success && res.data.data) {
+      isCalendarConnected.value = Boolean(res.data.data.isConnected);
+    }
+  } catch {
+    // Không chặn trang danh sách ứng tuyển nếu lỗi mạng/dịch vụ
+  } finally {
+    calendarLoaded.value = true;
+  }
+};
+
+const onCalendarStorage = (event: StorageEvent): void => {
+  if (event.key === 'jobmatch_calendar_sync') {
+    void checkCalendarStatus();
+  }
+};
+
 onMounted(async () => {
+  void checkCalendarStatus();
+  window.addEventListener('storage', onCalendarStorage);
+  window.addEventListener('focus', checkCalendarStatus);
+
   try {
     const { data } = await companyApi.getMyCompany();
     if (data.data?.role) {
@@ -531,6 +561,8 @@ watch(
 
 onUnmounted(() => {
   if (rowRaf !== null) cancelAnimationFrame(rowRaf);
+  window.removeEventListener('storage', onCalendarStorage);
+  window.removeEventListener('focus', checkCalendarStatus);
   document.removeEventListener('mousedown', onDocClick, true);
   getSocket().off('application:new', onApplicationNew);
   getSocket().off('application:scored', onApplicationScored);
@@ -549,6 +581,38 @@ onUnmounted(() => {
           <div>
             <h1 class="text-xl font-semibold text-gray-900 tracking-tight">Danh sách ứng tuyển</h1>
             <p class="text-[12px] text-[#8190a5]">Quản lý các đơn ứng tuyển và duy trì quy trình tuyển dụng của bạn.</p>
+          </div>
+
+          <!-- Dòng thông báo màu vàng khi chưa kết nối Google Calendar -->
+          <div
+            v-if="calendarLoaded && !isCalendarConnected && !isCalendarDismissed"
+            class="flex items-center justify-between gap-3 rounded-lg border border-amber-200/90 bg-amber-50/90 px-3.5 py-2.5 text-xs text-amber-900 shadow-xs transition-all"
+          >
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                <Calendar :size="13" />
+              </span>
+              <p class="truncate sm:whitespace-normal">
+                Tài khoản của bạn chưa kết nối <strong>Google Calendar & Meet</strong> để tự động tạo link họp và đồng bộ lịch phỏng vấn.
+                <router-link
+                  to="/employer/settings?tab=dich-vu"
+                  class="ml-1.5 font-semibold text-amber-800 underline underline-offset-2 hover:text-amber-950 inline-flex items-center gap-0.5"
+                >
+                  Kết nối ngay
+                  <ChevronRight :size="13" />
+                </router-link>
+              </p>
+            </div>
+
+            <button
+              type="button"
+              class="shrink-0 rounded p-1 text-amber-600 hover:bg-amber-100/80 hover:text-amber-900 transition cursor-pointer"
+              title="Đóng thông báo"
+              aria-label="Đóng thông báo"
+              @click="isCalendarDismissed = true"
+            >
+              <X :size="14" />
+            </button>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
             <!-- 2 Tabs chỉ hiển thị khi Owner đăng nhập: 'Của công ty' và 'Của tôi' (style đơn giản như MyResumesView) -->

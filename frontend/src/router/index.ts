@@ -126,7 +126,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'chat/:id?', name: 'e-chat', component: ChatView },
       //{ path: 'notifications', name: 'employer-notifications', component: () => import('@views/notifications/NotificationsView.vue') },
       { path: 'notifications', name: 'employer-notifications', component: () => import('@views/NotificationsView.vue') },
-      { path: 'settings', name: 'employer-settings', component: () => import('@views/employer/SettingsView.vue') },
+      { path: 'settings', name: 'employer-settings', alias: ['profile'], component: () => import('@views/employer/SettingsView.vue') },
+      { path: 'profile', name: 'employer-profile', component: () => import('@views/employer/SettingsView.vue') },
 
       // Gói dịch vụ / billing
       { path: 'pricing', name: 'employer-pricing', component: () => import('@views/employer/PricingView.vue') },

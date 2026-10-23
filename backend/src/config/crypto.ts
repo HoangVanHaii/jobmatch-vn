@@ -1,10 +1,19 @@
 /**
  * AES-256-GCM helper — encrypt OAuth tokens, sensitive data
  */
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
 
 const ALGO = 'aes-256-gcm';
-const KEY = Buffer.from(process.env.ENCRYPTION_KEY || '0'.repeat(64), 'hex').subarray(0, 32);
+
+const getEncryptionKey = (): Buffer => {
+  const raw = process.env.ENCRYPTION_KEY || '0'.repeat(64);
+  if (/^[0-9a-fA-F]{64}$/.test(raw)) {
+    return Buffer.from(raw, 'hex');
+  }
+  return createHash('sha256').update(raw).digest();
+};
+
+const KEY = getEncryptionKey();
 
 export const encrypt = (plaintext: string): string => {
   const iv = randomBytes(12);

@@ -1414,68 +1414,25 @@ const passwordTouched = reactive({
   confirm: false,
 })
 
-const currentPasswordError = computed<string | null>(() => {
-  if (!passwordTouched.current && passwordForm.currentPassword.length === 0) return null
-  if (passwordForm.currentPassword.length === 0) {
-    return 'Vui lòng nhập mật khẩu hiện tại'
-  }
-  return null
-})
+const pwdCriteria = computed(() => {
+  const pwd = passwordForm.newPassword
+  const current = passwordForm.currentPassword
+  const confirm = passwordForm.confirmPassword
 
-const newPasswordError = computed<string | null>(() => {
-  if (!passwordTouched.new && passwordForm.newPassword.length === 0) return null
-  if (passwordForm.newPassword.length === 0) {
-    return 'Vui lòng nhập mật khẩu mới'
+  return {
+    minLength: pwd.length >= 8 && pwd.length <= 72,
+    hasUpper: /[A-Z]/.test(pwd),
+    hasLower: /[a-z]/.test(pwd),
+    hasNumber: /[0-9]/.test(pwd),
+    isDifferent: Boolean(pwd && current && pwd !== current),
+    isMatch: Boolean(confirm && confirm === pwd),
   }
-  if (passwordForm.newPassword.length < 8) {
-    return `Mật khẩu mới phải có tối thiểu 8 ký tự (còn thiếu ${8 - passwordForm.newPassword.length} ký tự)`
-  }
-  const byteLen = new TextEncoder().encode(passwordForm.newPassword).length
-  if (passwordForm.newPassword.length > 72 || byteLen > 72) {
-    return 'Mật khẩu không được vượt quá 72 ký tự'
-  }
-  if (!/[A-Z]/.test(passwordForm.newPassword)) {
-    return 'Mật khẩu phải có ít nhất 1 chữ hoa (A-Z)'
-  }
-  if (!/[a-z]/.test(passwordForm.newPassword)) {
-    return 'Mật khẩu phải có ít nhất 1 chữ thường (a-z)'
-  }
-  if (!/[0-9]/.test(passwordForm.newPassword)) {
-    return 'Mật khẩu phải có ít nhất 1 chữ số (0-9)'
-  }
-  if (passwordForm.currentPassword && passwordForm.newPassword === passwordForm.currentPassword) {
-    return 'Mật khẩu mới phải khác mật khẩu hiện tại'
-  }
-  return null
-})
-
-const confirmPasswordError = computed<string | null>(() => {
-  if (!passwordTouched.confirm && passwordForm.confirmPassword.length === 0) return null
-  if (passwordForm.confirmPassword.length === 0) {
-    return 'Vui lòng xác nhận lại mật khẩu mới'
-  }
-  if (passwordForm.confirmPassword !== passwordForm.newPassword) {
-    return 'Mật khẩu xác nhận không khớp'
-  }
-  return null
 })
 
 const isPasswordFormValid = computed<boolean>(() => {
   const isCurrentFilled = passwordForm.currentPassword.length > 0
-  const pwd = passwordForm.newPassword
-  const byteLen = new TextEncoder().encode(pwd).length
-  const isNewValid =
-    pwd.length >= 8 &&
-    pwd.length <= 72 &&
-    byteLen <= 72 &&
-    /[A-Z]/.test(pwd) &&
-    /[a-z]/.test(pwd) &&
-    /[0-9]/.test(pwd) &&
-    pwd !== passwordForm.currentPassword
-  const isConfirmMatch =
-    passwordForm.confirmPassword.length > 0 &&
-    passwordForm.confirmPassword === pwd
-  return isCurrentFilled && isNewValid && isConfirmMatch
+  const c = pwdCriteria.value
+  return isCurrentFilled && c.minLength && c.hasUpper && c.hasLower && c.hasNumber && c.isDifferent && c.isMatch
 })
 
 const resetPasswordForm = (): void => {
@@ -2798,21 +2755,22 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- Đổi mật khẩu tab -->
+      <!-- ================= TAB: ĐỔI MẬT KHẨU ================= -->
       <section
         v-else-if="activeProfileTab === 'Đổi mật khẩu'"
         key="tab-doi-mat-khau"
-        class="bg-white p-6"
+        class="bg-white p-6 max-w-4xl space-y-6"
       >
         <div>
-          <h2 class="text-xl md:text-2xl font-bold text-slate-900">
-            Đổi mật khẩu
+          <h2 class="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+            Bảo mật & Đổi mật khẩu
           </h2>
-          <p class="mt-1 text-sm text-slate-500">
-            Cập nhật mật khẩu định kỳ để nâng cao bảo mật cho tài khoản của bạn.
+          <p class="text-sm text-slate-500 mt-0.5">
+            Cập nhật mật khẩu thường xuyên giúp bảo vệ tài khoản và dữ liệu của bạn.
           </p>
         </div>
 
-        <hr class="my-4 border-slate-200" />
+        <hr class="border-slate-100" />
 
         <!-- Trường hợp tài khoản chỉ đăng nhập bằng mạng xã hội (OAuth-only, không có local password) -->
         <p
@@ -2822,197 +2780,191 @@ onBeforeUnmount(() => {
           Tài khoản này được đăng nhập bằng phương thức liên kết bên ngoài (Google, Facebook hoặc GitHub). Bạn không cần mật khẩu JobMatchVN.
         </p>
 
-        <!-- Form đổi mật khẩu: max-w-[900px] -->
-        <form
-          v-else
-          class="max-w-[900px] space-y-4"
-          @submit.prevent="handleChangePassword"
-        >
-          <!-- Hàng 1: Mật khẩu hiện tại (chiếm toàn bộ chiều rộng form) -->
-          <div>
-            <div class="flex items-center gap-1.5 mb-1.5">
-              <Lock :size="15" class="text-slate-400" />
-              <label
-                for="profile-current-password"
-                class="text-sm font-medium text-slate-700"
-              >
-                Mật khẩu hiện tại
-              </label>
-            </div>
-
-            <div class="relative">
-              <input
-                id="profile-current-password"
-                v-model="passwordForm.currentPassword"
-                :type="showCurrentPassword ? 'text' : 'password'"
-                autocomplete="current-password"
-                placeholder="Nhập mật khẩu hiện tại"
-                :disabled="isSubmittingPassword"
-                class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 pr-10 text-sm text-slate-700 outline-none placeholder:text-slate-400 transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                :class="
-                  currentPasswordError
-                    ? '!border-rose-400 !focus:border-rose-500 !focus:ring-rose-500'
-                    : ''
-                "
-                @blur="passwordTouched.current = true"
-              />
-              <button
-                type="button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:text-slate-600 transition focus:outline-none"
-                :title="showCurrentPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'"
-                :aria-label="showCurrentPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'"
-                @click="showCurrentPassword = !showCurrentPassword"
-              >
-                <EyeOff v-if="showCurrentPassword" :size="16" />
-                <Eye v-else :size="16" />
-              </button>
-            </div>
-
-            <div class="min-h-[1.25rem] mt-1">
-              <p
-                v-if="currentPasswordError"
-                class="text-xs font-medium text-rose-500"
-              >
-                {{ currentPasswordError }}
-              </p>
-            </div>
-          </div>
-
-          <!-- Hàng 2: Mật khẩu mới và Xác nhận mật khẩu mới (mỗi trường 1/2 chiều rộng khi viewport >= 1024px) -->
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-5">
-            <!-- Mật khẩu mới -->
-            <div>
-              <div class="flex items-center gap-1.5 mb-1.5">
-                <KeyRound :size="15" class="text-slate-400" />
-                <label
-                  for="profile-new-password"
-                  class="text-sm font-medium text-slate-700"
-                >
-                  Mật khẩu mới
+        <form v-else @submit.prevent="handleChangePassword">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+            <!-- Cột trái: 3 input fields -->
+            <div class="space-y-4">
+              <!-- Mật khẩu hiện tại -->
+              <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
+                  Mật khẩu hiện tại <span class="text-rose-500">*</span>
                 </label>
+                <div class="relative">
+                  <input
+                    v-model="passwordForm.currentPassword"
+                    :type="showCurrentPassword ? 'text' : 'password'"
+                    placeholder="Nhập mật khẩu bạn đang sử dụng"
+                    class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    @blur="passwordTouched.current = true"
+                  />
+                  <button
+                    type="button"
+                    class="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
+                    @click="showCurrentPassword = !showCurrentPassword"
+                  >
+                    <EyeOff v-if="showCurrentPassword" :size="16" />
+                    <Eye v-else :size="16" />
+                  </button>
+                </div>
               </div>
 
-              <div class="relative">
-                <input
-                  id="profile-new-password"
-                  v-model="passwordForm.newPassword"
-                  :type="showNewPassword ? 'text' : 'password'"
-                  autocomplete="new-password"
-                  placeholder="Tối thiểu 8 ký tự"
-                  :disabled="isSubmittingPassword"
-                  class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 pr-10 text-sm text-slate-700 outline-none placeholder:text-slate-400 transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                  :class="
-                    newPasswordError
-                      ? '!border-rose-400 !focus:border-rose-500 !focus:ring-rose-500'
-                      : ''
-                  "
-                  @blur="passwordTouched.new = true"
-                />
+              <!-- Mật khẩu mới -->
+              <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
+                  Mật khẩu mới <span class="text-rose-500">*</span>
+                </label>
+                <div class="relative">
+                  <input
+                    v-model="passwordForm.newPassword"
+                    :type="showNewPassword ? 'text' : 'password'"
+                    placeholder="Nhập mật khẩu mới (tối thiểu 8 ký tự)"
+                    class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    @blur="passwordTouched.new = true"
+                  />
+                  <button
+                    type="button"
+                    class="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
+                    @click="showNewPassword = !showNewPassword"
+                  >
+                    <EyeOff v-if="showNewPassword" :size="16" />
+                    <Eye v-else :size="16" />
+                  </button>
+                </div>
+              </div>
+
+              <!-- Xác nhận mật khẩu mới -->
+              <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
+                  Xác nhận mật khẩu mới <span class="text-rose-500">*</span>
+                </label>
+                <div class="relative">
+                  <input
+                    v-model="passwordForm.confirmPassword"
+                    :type="showConfirmPassword ? 'text' : 'password'"
+                    placeholder="Nhập lại mật khẩu mới"
+                    class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    @blur="passwordTouched.confirm = true"
+                  />
+                  <button
+                    type="button"
+                    class="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
+                    @click="showConfirmPassword = !showConfirmPassword"
+                  >
+                    <EyeOff v-if="showConfirmPassword" :size="16" />
+                    <Eye v-else :size="16" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cột phải: Yêu cầu mật khẩu & Nút Cập nhật mật khẩu -->
+            <div class="space-y-4">
+              <!-- Yêu cầu mật khẩu -->
+              <div class="rounded-xl bg-slate-50 border border-slate-200/80 p-4 text-xs space-y-2.5 text-slate-600">
+                <p class="font-semibold text-slate-700 text-xs">Yêu cầu bảo mật mật khẩu:</p>
+                <div class="space-y-2 text-[12px]">
+                  <!-- Tối thiểu 8 ký tự -->
+                  <div
+                    class="flex items-center gap-2 transition-colors duration-200"
+                    :class="pwdCriteria.minLength ? 'text-emerald-700 font-medium' : 'text-slate-500'"
+                  >
+                    <span
+                      class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-all duration-200"
+                      :class="pwdCriteria.minLength ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-400'"
+                    >
+                      <Check v-if="pwdCriteria.minLength" :size="11" class="stroke-[3]" />
+                      <span v-else class="h-1 w-1 rounded-full bg-slate-400" />
+                    </span>
+                    <span>Tối thiểu 8 ký tự</span>
+                  </div>
+
+                  <!-- Chữ in hoa -->
+                  <div
+                    class="flex items-center gap-2 transition-colors duration-200"
+                    :class="pwdCriteria.hasUpper ? 'text-emerald-700 font-medium' : 'text-slate-500'"
+                  >
+                    <span
+                      class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-all duration-200"
+                      :class="pwdCriteria.hasUpper ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-400'"
+                    >
+                      <Check v-if="pwdCriteria.hasUpper" :size="11" class="stroke-[3]" />
+                      <span v-else class="h-1 w-1 rounded-full bg-slate-400" />
+                    </span>
+                    <span>Chứa ít nhất 1 chữ in hoa (A-Z)</span>
+                  </div>
+
+                  <!-- Chữ in thường -->
+                  <div
+                    class="flex items-center gap-2 transition-colors duration-200"
+                    :class="pwdCriteria.hasLower ? 'text-emerald-700 font-medium' : 'text-slate-500'"
+                  >
+                    <span
+                      class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-all duration-200"
+                      :class="pwdCriteria.hasLower ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-400'"
+                    >
+                      <Check v-if="pwdCriteria.hasLower" :size="11" class="stroke-[3]" />
+                      <span v-else class="h-1 w-1 rounded-full bg-slate-400" />
+                    </span>
+                    <span>Chứa ít nhất 1 chữ in thường (a-z)</span>
+                  </div>
+
+                  <!-- Chữ số -->
+                  <div
+                    class="flex items-center gap-2 transition-colors duration-200"
+                    :class="pwdCriteria.hasNumber ? 'text-emerald-700 font-medium' : 'text-slate-500'"
+                  >
+                    <span
+                      class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-all duration-200"
+                      :class="pwdCriteria.hasNumber ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-400'"
+                    >
+                      <Check v-if="pwdCriteria.hasNumber" :size="11" class="stroke-[3]" />
+                      <span v-else class="h-1 w-1 rounded-full bg-slate-400" />
+                    </span>
+                    <span>Chứa ít nhất 1 chữ số (0-9)</span>
+                  </div>
+
+                  <!-- Khác mật khẩu hiện tại -->
+                  <div
+                    class="flex items-center gap-2 transition-colors duration-200"
+                    :class="pwdCriteria.isDifferent ? 'text-emerald-700 font-medium' : 'text-slate-500'"
+                  >
+                    <span
+                      class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-all duration-200"
+                      :class="pwdCriteria.isDifferent ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-400'"
+                    >
+                      <Check v-if="pwdCriteria.isDifferent" :size="11" class="stroke-[3]" />
+                      <span v-else class="h-1 w-1 rounded-full bg-slate-400" />
+                    </span>
+                    <span>Khác mật khẩu hiện tại</span>
+                  </div>
+
+                  <!-- Trùng khớp mật khẩu xác nhận -->
+                  <div
+                    class="flex items-center gap-2 transition-colors duration-200"
+                    :class="pwdCriteria.isMatch ? 'text-emerald-700 font-medium' : 'text-slate-500'"
+                  >
+                    <span
+                      class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-all duration-200"
+                      :class="pwdCriteria.isMatch ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-400'"
+                    >
+                      <Check v-if="pwdCriteria.isMatch" :size="11" class="stroke-[3]" />
+                      <span v-else class="h-1 w-1 rounded-full bg-slate-400" />
+                    </span>
+                    <span>Mật khẩu xác nhận trùng khớp</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
                 <button
-                  type="button"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:text-slate-600 transition focus:outline-none"
-                  :title="showNewPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'"
-                  :aria-label="showNewPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'"
-                  @click="showNewPassword = !showNewPassword"
+                  type="submit"
+                  class="w-full rounded-md bg-[#5b4eea] px-6 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  :disabled="!isPasswordFormValid || isSubmittingPassword"
                 >
-                  <EyeOff v-if="showNewPassword" :size="16" />
-                  <Eye v-else :size="16" />
+                  {{ isSubmittingPassword ? 'Đang cập nhật...' : 'Cập nhật mật khẩu' }}
                 </button>
               </div>
-
-              <div class="min-h-[1.25rem] mt-1">
-                <p
-                  v-if="newPasswordError"
-                  class="text-xs font-medium text-rose-500"
-                >
-                  {{ newPasswordError }}
-                </p>
-                <p
-                  v-else
-                  class="text-xs text-slate-400"
-                >
-                  Tối thiểu 8 ký tự (gồm chữ hoa, chữ thường, số) và khác mật khẩu hiện tại.
-                </p>
-              </div>
             </div>
-
-            <!-- Xác nhận mật khẩu mới -->
-            <div>
-              <div class="flex items-center gap-1.5 mb-1.5">
-                <Lock :size="15" class="text-slate-400" />
-                <label
-                  for="profile-confirm-password"
-                  class="text-sm font-medium text-slate-700"
-                >
-                  Xác nhận mật khẩu mới
-                </label>
-              </div>
-
-              <div class="relative">
-                <input
-                  id="profile-confirm-password"
-                  v-model="passwordForm.confirmPassword"
-                  :type="showConfirmPassword ? 'text' : 'password'"
-                  autocomplete="new-password"
-                  placeholder="Nhập lại mật khẩu mới"
-                  :disabled="isSubmittingPassword"
-                  class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 pr-10 text-sm text-slate-700 outline-none placeholder:text-slate-400 transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                  :class="
-                    confirmPasswordError
-                      ? '!border-rose-400 !focus:border-rose-500 !focus:ring-rose-500'
-                      : ''
-                  "
-                  @blur="passwordTouched.confirm = true"
-                />
-                <button
-                  type="button"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded text-slate-400 hover:text-slate-600 transition focus:outline-none"
-                  :title="showConfirmPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'"
-                  :aria-label="showConfirmPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'"
-                  @click="showConfirmPassword = !showConfirmPassword"
-                >
-                  <EyeOff v-if="showConfirmPassword" :size="16" />
-                  <Eye v-else :size="16" />
-                </button>
-              </div>
-
-              <div class="min-h-[1.25rem] mt-1">
-                <p
-                  v-if="confirmPasswordError"
-                  class="text-xs font-medium text-rose-500"
-                >
-                  {{ confirmPasswordError }}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Hàng 3: Hai nút Hủy và Đổi mật khẩu căn phải, flex-wrap chống tràn trên màn hình siêu nhỏ -->
-          <div class="flex flex-wrap items-center justify-end gap-2.5 sm:gap-3 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              :disabled="isSubmittingPassword"
-              class="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
-              @click="resetPasswordForm"
-            >
-              Hủy
-            </button>
-            <button
-              type="submit"
-              :disabled="!isPasswordFormValid || isSubmittingPassword"
-              class="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Loader2
-                v-if="isSubmittingPassword"
-                :size="15"
-                class="animate-spin"
-              />
-              <KeyRound
-                v-else
-                :size="15"
-              />
-              <span>{{ isSubmittingPassword ? 'Đang cập nhật...' : 'Đổi mật khẩu' }}</span>
-            </button>
           </div>
         </form>
       </section>
