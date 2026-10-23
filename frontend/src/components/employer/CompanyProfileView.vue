@@ -7,10 +7,12 @@ import { computed } from 'vue';
 import {
   Building2,
   Check,
+  Copy,
   ExternalLink,
   Globe,
   Pencil,
 } from 'lucide-vue-next';
+import { useToastStore } from '@stores/toast';
 import {
   getInitials,
   getSocialMeta,
@@ -21,9 +23,38 @@ import {
 interface Props {
   profile: CompanyProfile;
   savedNotice: boolean;
+  /** Nội dung thông báo lưu/tạo thành công (mặc định như trước đây). */
+  savedMessage?: string;
+  /** Chỉ owner active hoặc admin mới được sửa (khớp BE requireCompanyOwnerOrAdmin). */
+  canEdit?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  savedMessage: 'Đã lưu thay đổi.',
+  canEdit: true,
+});
+
+const toast = useToastStore();
+
+/** Badge trạng thái lifecycle — nhãn giống trang cũ (CompanyTestView). */
+const STATUS_META: Record<NonNullable<CompanyProfile['status']>, { label: string; cls: string }> = {
+  active: { label: 'Đang hoạt động', cls: 'bg-emerald-50 text-emerald-700' },
+  banned: { label: 'Bị khóa', cls: 'bg-red-50 text-red-700' },
+  removed: { label: 'Đã gỡ', cls: 'bg-gray-100 text-gray-600' },
+};
+const statusMeta = computed(() =>
+  props.profile.status ? STATUS_META[props.profile.status] ?? null : null,
+);
+
+async function copySlug(): Promise<void> {
+  if (!props.profile.slug) return;
+  try {
+    await navigator.clipboard.writeText(props.profile.slug);
+    toast.success('Đã sao chép slug.');
+  } catch {
+    toast.error('Không sao chép được slug.');
+  }
+}
 
 defineEmits<{
   (e: 'edit'): void;
@@ -69,13 +100,32 @@ const visibleSocial = computed(() =>
               <Building2 v-else-if="!getInitials(profile.name)" :size="22" class="text-slate-500" />
               <span v-else class="font-semibold text-slate-900">{{ getInitials(profile.name) }}</span>
             </div>
-            <div>
+            <div class="min-w-0">
               <h2 class="m-0 break-words text-xl font-semibold leading-normal">{{ profile.name }}</h2>
               <p class="mt-1.5 text-[13px] font-medium text-slate-900">{{ profile.industry }} · {{ profile.size }}</p>
               <p class="mt-0.5 text-[13px] text-slate-500">{{ profile.district }}, {{ profile.province }}</p>
+              <div class="mt-1.5 flex items-center gap-2">
+                <span
+                  v-if="statusMeta"
+                  class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium"
+                  :class="statusMeta.cls"
+                >{{ statusMeta.label }}</span>
+                <button
+                  v-if="profile.slug"
+                  type="button"
+                  class="inline-flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[11px] text-slate-400 transition-colors duration-150 hover:text-slate-700 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none"
+                  title="Sao chép slug"
+                  :aria-label="`Sao chép slug ${profile.slug}`"
+                  @click="copySlug"
+                >
+                  <Copy :size="12" aria-hidden="true" />
+                  {{ profile.slug }}
+                </button>
+              </div>
             </div>
           </div>
           <button
+            v-if="canEdit"
             type="button"
             class="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-transparent bg-[#5b4eea] px-5 py-[11px] text-[13px] font-semibold tracking-[0.04em] text-white transition-colors duration-150 hover:bg-blue-700 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none"
             @click="$emit('edit')"
@@ -83,6 +133,9 @@ const visibleSocial = computed(() =>
             <Pencil :size="15" />
             Chỉnh sửa hồ sơ
           </button>
+          <p v-else class="m-0 text-[12.5px] leading-[1.6] text-slate-500">
+            Chỉ chủ sở hữu hoặc quản trị viên mới sửa được hồ sơ.
+          </p>
         </div>
       </div>
     </section>
@@ -96,7 +149,7 @@ const visibleSocial = computed(() =>
           role="status"
         >
           <Check :size="15" />
-          Đã lưu thay đổi.
+          {{ savedMessage }}
         </p>
       </transition>
     </div>

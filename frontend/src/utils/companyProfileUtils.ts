@@ -11,9 +11,10 @@ import {
   Twitter,
   Youtube,
 } from 'lucide-vue-next';
-import type { Company, UpdateCompanyPayload } from '@/types/company';
+import type { Company, CreateCompanyPayload, UpdateCompanyPayload } from '@/types/company';
 
 export interface CompanyProfile {
+  id: string;
   name: string;
   industry: string;
   size: string;
@@ -25,22 +26,74 @@ export interface CompanyProfile {
   logoUrl: string | null;
   /** Object key/value giống `CompanySocial` trong CompanyView.vue. */
   social: Record<string, string>;
+  /** Trạng thái lifecycle (hiển thị badge). */
+  status: Company['status'] | null;
+  slug: string;
+  /** Các key khác của address (lat, lng, …) — giữ nguyên khi PATCH để không mất data. */
+  addressExtra: Record<string, unknown>;
 }
 
 /** Chuyển response Company sang shape dùng riêng cho giao diện hồ sơ công ty. */
 export const companyToProfile = (company: Company): CompanyProfile => {
   const address = company.address ?? {};
+  const { city, district, address: street, ...extra } = address as Record<string, unknown>;
   return {
+    id: company.id,
     name: company.name,
     industry: company.industry ?? '',
     size: company.sizeRange ?? '',
     website: company.website ?? '',
-    province: typeof address.city === 'string' ? address.city : '',
-    district: typeof address.district === 'string' ? address.district : '',
-    address: typeof address.address === 'string' ? address.address : '',
+    province: typeof city === 'string' ? city : '',
+    district: typeof district === 'string' ? district : '',
+    address: typeof street === 'string' ? street : '',
     description: company.description ?? '',
     logoUrl: company.logoUrl ?? null,
     social: { ...(company.social ?? {}) },
+    status: company.status ?? null,
+    slug: company.slug,
+    addressExtra: extra,
+  };
+};
+
+/** Profile rỗng — khởi tạo draft ở chế độ TẠO hồ sơ (chưa có công ty). */
+export const EMPTY_PROFILE: CompanyProfile = {
+  id: '',
+  name: '',
+  industry: '',
+  size: '',
+  website: '',
+  province: '',
+  district: '',
+  address: '',
+  description: '',
+  logoUrl: null,
+  social: {},
+  status: null,
+  slug: '',
+  addressExtra: {},
+};
+
+/** Chuẩn hóa profile thành payload POST /companies — KHÔNG gửi logo (upload sau khi tạo).
+ *  Backend chỉ bắt buộc `name`; các trường còn lại chỉ gửi khi có giá trị. */
+export const profileToCreatePayload = (profile: CompanyProfile): CreateCompanyPayload => {
+  const website = profile.website.trim();
+  const social = { ...profile.social };
+  return {
+    name: profile.name.trim(),
+    industry: profile.industry.trim() || undefined,
+    sizeRange: profile.size.trim() || undefined,
+    website: website ? normalizeUrl(website) : undefined,
+    description: profile.description.trim() || undefined,
+    social: Object.keys(social).length > 0 ? social : undefined,
+    address:
+      profile.province || profile.district || profile.address.trim()
+        ? {
+            ...profile.addressExtra,
+            city: profile.province,
+            district: profile.district,
+            address: profile.address.trim(),
+          }
+        : undefined,
   };
 };
 
@@ -53,6 +106,7 @@ export const profileToUpdatePayload = (profile: CompanyProfile): UpdateCompanyPa
   description: profile.description.trim(),
   social: { ...profile.social },
   address: {
+    ...profile.addressExtra,
     city: profile.province,
     district: profile.district,
     address: profile.address.trim(),

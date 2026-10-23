@@ -7,9 +7,15 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { Check, ChevronDown } from 'lucide-vue-next';
 
+/** 1 lựa chọn: value gửi lên model, label hiển thị. String thuần = value === label. */
+export interface CompanySelectOption {
+  value: string;
+  label: string;
+}
+
 interface Props {
   modelValue: string;
-  options: string[];
+  options: Array<string | CompanySelectOption>;
   id: string;
   placeholder?: string;
 }
@@ -22,6 +28,11 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void;
   (e: 'change', value: string): void;
 }>();
+
+/** Normalize: string → { value, label }. */
+const opts = computed<CompanySelectOption[]>(() =>
+  props.options.map((o) => (typeof o === 'string' ? { value: o, label: o } : o)),
+);
 
 const isOpen = ref(false);
 const activeIdx = ref(-1);
@@ -45,9 +56,9 @@ const listClass = computed(() => {
   return flipUp.value ? `${base} bottom-full mb-1.5` : `${base} top-full mt-1.5`;
 });
 
-function getOptionClass(i: number, opt: string): string {
+function getOptionClass(i: number, opt: CompanySelectOption): string {
   const isHighlighted = i === activeIdx.value;
-  const isSelected = opt === props.modelValue;
+  const isSelected = opt.value === props.modelValue;
   const base =
     'flex cursor-pointer items-center justify-between gap-2 rounded-md px-3 py-2 text-sm select-none transition-colors duration-100 motion-reduce:transition-none';
   const bg = isHighlighted ? 'bg-slate-50' : 'bg-transparent';
@@ -79,7 +90,7 @@ function openMenu(): void {
     // max-h-60 là 240px, thêm lề khoảng 10px -> 250px
     flipUp.value = spaceBelow < 250 && rect.top > spaceBelow;
   }
-  const idx = props.options.indexOf(props.modelValue);
+  const idx = opts.value.findIndex((o) => o.value === props.modelValue);
   activeIdx.value = idx >= 0 ? idx : 0;
   isOpen.value = true;
   document.addEventListener('pointerdown', onDocPointerDown);
@@ -116,26 +127,26 @@ function onDocPointerDown(e: PointerEvent): void {
 
 watch(
   () => props.options,
-  (newOpts) => {
-    if (activeIdx.value >= newOpts.length) {
-      activeIdx.value = Math.max(0, newOpts.length - 1);
+  () => {
+    if (activeIdx.value >= opts.value.length) {
+      activeIdx.value = Math.max(0, opts.value.length - 1);
     }
     if (isOpen.value) {
-      const idx = newOpts.indexOf(props.modelValue);
+      const idx = opts.value.findIndex((o) => o.value === props.modelValue);
       activeIdx.value = idx >= 0 ? idx : 0;
     }
   },
 );
 
 function onKeydown(e: KeyboardEvent): void {
-  if (props.options.length === 0) return;
+  if (opts.value.length === 0) return;
 
   if (e.key === 'ArrowDown') {
     e.preventDefault();
     if (!isOpen.value) {
       openMenu();
     } else {
-      activeIdx.value = (activeIdx.value + 1) % props.options.length;
+      activeIdx.value = (activeIdx.value + 1) % opts.value.length;
       scrollToActive();
     }
   } else if (e.key === 'ArrowUp') {
@@ -143,7 +154,7 @@ function onKeydown(e: KeyboardEvent): void {
     if (!isOpen.value) {
       openMenu();
     } else {
-      activeIdx.value = (activeIdx.value - 1 + props.options.length) % props.options.length;
+      activeIdx.value = (activeIdx.value - 1 + opts.value.length) % opts.value.length;
       scrollToActive();
     }
   } else if (e.key === 'Home') {
@@ -155,7 +166,7 @@ function onKeydown(e: KeyboardEvent): void {
   } else if (e.key === 'End') {
     if (isOpen.value) {
       e.preventDefault();
-      activeIdx.value = props.options.length - 1;
+      activeIdx.value = opts.value.length - 1;
       scrollToActive();
     }
   } else if (e.key === 'Enter' || e.key === ' ') {
@@ -163,8 +174,8 @@ function onKeydown(e: KeyboardEvent): void {
     if (!isOpen.value) {
       openMenu();
     } else {
-      if (activeIdx.value >= 0 && activeIdx.value < props.options.length) {
-        selectOption(props.options[activeIdx.value]);
+      if (activeIdx.value >= 0 && activeIdx.value < opts.value.length) {
+        selectOption(opts.value[activeIdx.value].value);
       } else {
         closeMenu();
       }
@@ -230,18 +241,18 @@ onBeforeUnmount(() => {
         Không có lựa chọn
       </li>
       <li
-        v-for="(opt, i) in options"
+        v-for="(opt, i) in opts"
         :id="`${id}-opt-${i}`"
-        :key="opt"
+        :key="opt.value"
         role="option"
-        :aria-selected="opt === modelValue"
+        :aria-selected="opt.value === modelValue"
         :class="getOptionClass(i, opt)"
         @mousedown.prevent
         @mouseenter="activeIdx = i"
-        @click="selectOption(opt)"
+        @click="selectOption(opt.value)"
       >
-        <span class="truncate">{{ opt }}</span>
-        <Check v-if="opt === modelValue" :size="16" class="shrink-0 text-blue-600" aria-hidden="true" />
+        <span class="truncate">{{ opt.label }}</span>
+        <Check v-if="opt.value === modelValue" :size="16" class="shrink-0 text-blue-600" aria-hidden="true" />
       </li>
     </ul>
   </div>

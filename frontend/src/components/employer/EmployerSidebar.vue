@@ -221,12 +221,6 @@ const groups: MenuGroup[] = [
         to: '/employer/company/members',
         activeOn: ['/employer/company/members'],
       },
-      {
-        label: 'Hồ sơ doanh nghiệp',
-        icon: Building2,
-        to: '/employer/company-profile',
-        activeOn: ['/employer/company-profile'],
-      },
     ],
   },
 

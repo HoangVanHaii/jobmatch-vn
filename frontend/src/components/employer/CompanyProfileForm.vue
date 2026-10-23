@@ -3,7 +3,7 @@
  * CompanyProfileForm.vue — Chế độ CHỈNH SỬA hồ sơ doanh nghiệp (Editorial Corporate).
  * Quản lý form nhập liệu, validate, tải ảnh logo tạm thời, và điều hướng section sticky.
  */
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   Building2,
   Check,
@@ -11,8 +11,9 @@ import {
   Plus,
   Trash2,
 } from 'lucide-vue-next';
-import CompanySelect from '@/views/employer/CompanySelect.vue';
+import CompanySelect, { type CompanySelectOption } from '@/views/employer/CompanySelect.vue';
 import { useCompanySectionNav } from '@/composables/useCompanySectionNav';
+import { useLocations } from '@/composables/useLocations';
 import {
   cloneProfile,
   getInitials,
@@ -31,33 +32,58 @@ interface Props {
   saving: boolean;
   serverErrors: Record<string, string>;
   saveError: string | null;
+  /** 'create' khi tạo hồ sơ lần đầu (chưa có công ty), 'edit' khi sửa hồ sơ có sẵn. */
+  mode?: 'create' | 'edit';
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  mode: 'edit',
+});
+
+const isCreating = computed(() => props.mode === 'create');
 
 const emit = defineEmits<{
   (e: 'save', profile: CompanyProfile, logoFile: File | null): void;
   (e: 'cancel'): void;
 }>();
 
-/* Mock danh mục địa giới tĩnh — chỉ phục vụ mockup */
-const PROVINCES = ['TP. Hồ Chí Minh', 'Hà Nội', 'Đà Nẵng', 'Hải Phòng', 'Cần Thơ'];
-const DISTRICTS: Record<string, string[]> = {
-  'TP. Hồ Chí Minh': ['Quận 1', 'Quận 3', 'Quận 7', 'Bình Thạnh', 'Thủ Đức'],
-  'Hà Nội': ['Hoàn Kiếm', 'Ba Đình', 'Cầu Giấy', 'Đống Đa'],
-  'Đà Nẵng': ['Hải Châu', 'Thanh Khê', 'Sơn Trà'],
-  'Hải Phòng': ['Hồng Bàng', 'Lê Chân', 'Ngô Quyền'],
-  'Cần Thơ': ['Ninh Kiều', 'Bình Thủy', 'Cái Răng'],
-};
+/* Quy mô: mock tĩnh (chỉnh sửa lẫn tạo đều dùng chung) */
 const SIZES = ['1–10 nhân viên', '11–50 nhân viên', '51–200 nhân viên', '201–500 nhân viên', '500+ nhân viên'];
 const DESC_LIMIT = 5000;
 
-/* Bản nháp khi chỉnh sửa */
+/* Bản nháp khi chỉnh sửa / tạo mới */
 const draft = ref<CompanyProfile>(cloneProfile(props.profile));
 
-// Chuẩn hóa district theo danh mục hiện có (phòng dữ liệu cũ lệch danh mục).
-if (!DISTRICTS[draft.value.province]?.includes(draft.value.district)) {
-  draft.value.district = DISTRICTS[draft.value.province]?.[0] ?? '';
+/* Danh mục địa giới thật — useLocations (63 tỉnh / 696 quận, tự fallback API ngoài).
+ * Province option value = shortName ("Hà Nội") khớp dữ liệu BE (address.city);
+ * district option value = tên đầy đủ ("Quận Ba Đình"). */
+const locations = useLocations();
+onMounted(() => {
+  void locations.fetch();
+});
+
+/** Danh sách tỉnh; giá trị hiện tại nằm ngoài danh mục được giữ lại làm option đầu
+ *  để không bị âm thầm ghi đè thành rỗng khi lưu. */
+const provinceOptions = computed<CompanySelectOption[]>(() => {
+  const list: CompanySelectOption[] = locations.items.value.map((p) => ({ value: p.shortName, label: p.name }));
+  const cur = draft.value.province;
+  if (cur && !list.some((o) => o.value === cur)) list.unshift({ value: cur, label: cur });
+  return list;
+});
+
+/** Districts của province đang chọn (lookup theo shortName → code). */
+const districtOptions = computed<CompanySelectOption[]>(() => {
+  const code = locations.findProvinceByName(draft.value.province)?.code ?? null;
+  const list: CompanySelectOption[] =
+    code !== null ? locations.getDistricts(code).map((d) => ({ value: d.name, label: d.name })) : [];
+  const cur = draft.value.district;
+  if (cur && !list.some((o) => o.value === cur)) list.unshift({ value: cur, label: cur });
+  return list;
+});
+
+/** Đổi tỉnh → quận cũ có thể không thuộc tỉnh mới → reset về placeholder. */
+function onDraftProvinceChange(): void {
+  draft.value.district = '';
 }
 
 /* Lỗi validate form (key: tên lỗi, value: thông điệp hiển thị) */
@@ -121,13 +147,6 @@ function removeSocialRow(idx: number): void {
 
 const descCount = computed(() => draft.value.description.length);
 
-function onDraftProvinceChange(): void {
-  const list = DISTRICTS[draft.value.province];
-  if (list && !list.includes(draft.value.district)) {
-    draft.value.district = list[0];
-  }
-}
-
 /** Trang đang có thay đổi chưa lưu hay không (so draft/socialRows/logo với props.profile). */
 const isDirty = computed(() => {
   const d = draft.value;
@@ -147,6 +166,9 @@ function validateForm(): boolean {
   errors.value = {};
   if (!draft.value.name.trim()) {
     errors.value.name = 'Vui lòng nhập tên doanh nghiệp';
+  } else if (draft.value.name.trim().length < 2) {
+    // backend bắt buộc name trim min 2 ký tự (createCompanySchema)
+    errors.value.name = 'Tên doanh nghiệp tối thiểu 2 ký tự';
   }
   const website = draft.value.website.trim();
   if (website && !isValidUrl(website)) {
@@ -258,11 +280,11 @@ onBeforeUnmount(() => {
       :class="isStuck ? 'border-slate-200' : 'border-transparent'"
     >
       <div class="min-w-0">
-        <p class="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-600">Hồ sơ doanh nghiệp / Chỉnh sửa</p>
+        <p class="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-600">Hồ sơ doanh nghiệp / {{ isCreating ? 'Tạo mới' : 'Chỉnh sửa' }}</p>
         <h1
           tabindex="-1"
           class="c3-page-title m-0 text-[clamp(22px,2.6vw,30px)] font-bold leading-[1.2] tracking-[-0.01em] outline-none"
-        >Chỉnh sửa hồ sơ doanh nghiệp</h1>
+        >{{ isCreating ? 'Tạo hồ sơ doanh nghiệp' : 'Chỉnh sửa hồ sơ doanh nghiệp' }}</h1>
         <p class="mt-2.5 max-w-[60ch] text-[13.5px] text-slate-500">
           Thông tin sẽ hiển thị trên trang tuyển dụng của bạn.
         </p>
@@ -275,7 +297,7 @@ onBeforeUnmount(() => {
         :disabled="saving"
       >
         <ChevronRight :size="15" class="rotate-180" aria-hidden="true" />
-        Quay lại hồ sơ (hủy thay đổi)
+        {{ isCreating ? 'Quay lại' : 'Quay lại hồ sơ (hủy thay đổi)' }}
       </button>
     </header>
 
@@ -335,14 +357,15 @@ onBeforeUnmount(() => {
                   <Building2 v-else :size="26" class="text-slate-500" />
                 </div>
                 <div class="flex flex-col items-start gap-2.5 rounded-lg focus-within:ring-[3px] focus-within:ring-blue-600/40">
-                  <p class="m-0 text-[12.5px] text-slate-500">Ảnh vuông, tối thiểu 200×200px.</p>
+                  <p class="m-0 text-[12.5px] text-slate-500">{{ isCreating ? 'Bạn có thể thêm logo sau khi tạo hồ sơ.' : 'Ảnh vuông, tối thiểu 200×200px.' }}</p>
                   <label
                     for="f-logo"
-                    class="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 py-[11px] text-[13px] font-semibold tracking-[0.04em] text-slate-700 transition-colors duration-150 hover:border-slate-300 motion-reduce:transition-none"
+                    class="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 py-[11px] text-[13px] font-semibold tracking-[0.04em] text-slate-700 transition-colors duration-150 hover:border-slate-300 motion-reduce:transition-none"
+                    :class="isCreating ? 'pointer-events-none opacity-50' : 'cursor-pointer'"
                   >
                     Chọn ảnh logo
                   </label>
-                  <input id="f-logo" type="file" accept="image/*" class="sr-only" :disabled="saving" @change="onLogoChange" />
+                  <input id="f-logo" type="file" accept="image/*" class="sr-only" :disabled="saving || isCreating" @change="onLogoChange" />
                 </div>
               </div>
               <p v-if="logoError" class="text-xs text-red-600">{{ logoError }}</p>
@@ -418,11 +441,11 @@ onBeforeUnmount(() => {
           <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
             <div class="flex min-w-0 flex-col gap-2">
               <label class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-700" for="f-province">Tỉnh / Thành phố</label>
-              <CompanySelect id="f-province" v-model="draft.province" :options="PROVINCES" @change="onDraftProvinceChange" />
+              <CompanySelect id="f-province" v-model="draft.province" :options="provinceOptions" @change="onDraftProvinceChange" />
             </div>
             <div class="flex min-w-0 flex-col gap-2">
               <label class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-700" for="f-district">Quận / Huyện</label>
-              <CompanySelect id="f-district" v-model="draft.district" :options="DISTRICTS[draft.province] || []" />
+              <CompanySelect id="f-district" v-model="draft.district" :options="districtOptions" />
             </div>
           </div>
           <div class="mt-6 flex min-w-0 flex-col gap-2">
@@ -568,7 +591,7 @@ onBeforeUnmount(() => {
             :aria-busy="saving ? 'true' : undefined"
           >
             <Check :size="15" />
-            {{ saving ? 'Đang lưu…' : 'Lưu thay đổi' }}
+            {{ saving ? (isCreating ? 'Đang tạo…' : 'Đang lưu…') : (isCreating ? 'Tạo hồ sơ' : 'Lưu thay đổi') }}
           </button>
         </div>
       </form>

@@ -17,11 +17,13 @@ import { uploadApi } from '@services/upload.api';
 import { HttpError } from '@services/http';
 import {
   companyToProfile,
+  profileToCreatePayload,
   profileToUpdatePayload,
   type CompanyProfile,
 } from '@/utils/companyProfileUtils';
 import type {
   Company,
+  CompanyInvite,
   CompanyStatus,
   CreateCompanyPayload,
   UpdateCompanyPayload,
@@ -42,9 +44,17 @@ export const useCompanyStore = defineStore('company', () => {
   const company = ref<CompanyProfile | null>(null);
   const companyLoading = ref(false);
   const companySaving = ref(false);
+  // "Chưa có công ty" (GET /companies/me trả 200 + data:null) tách riêng khỏi lỗi tải
+  // thật (500/mất mạng) — nhánh trước hiển thị màn tạo, nhánh sau hiển thị "Thử lại".
+  const companyNotFound = ref(false);
+  const companyCreating = ref(false);
   const companyLoadError = ref<string | null>(null);
   const companySaveError = ref<string | null>(null);
   const companyFieldErrors = ref<Record<string, string>>({});
+  // Lời mời tham gia công ty đang chờ (chỉ dùng khi user chưa có công ty).
+  const companyInvites = ref<CompanyInvite[]>([]);
+  const invitesLoading = ref(false);
+  const invitesError = ref<string | null>(null);
   let companyFetchRequestId = 0;
 
   /** Query cho list: search/filter + phân trang (đổi filter sẽ reset page ở setQuery) */
@@ -80,12 +90,14 @@ export const useCompanyStore = defineStore('company', () => {
     const requestId = ++companyFetchRequestId;
     companyLoading.value = true;
     companyLoadError.value = null;
+    companyNotFound.value = false;
     try {
       const { data: mine } = await companyApi.getMyCompany();
       if (!mine.data) {
+        // BE trả 200 + data:null khi user chưa thuộc company nào (không phải lỗi).
         if (requestId === companyFetchRequestId) {
           company.value = null;
-          companyLoadError.value = 'Chưa tìm thấy hồ sơ doanh nghiệp của bạn.';
+          companyNotFound.value = true;
         }
         return false;
       }
@@ -130,6 +142,47 @@ export const useCompanyStore = defineStore('company', () => {
     } finally {
       companySaving.value = false;
     }
+  };
+
+  /** Tạo công ty (POST /companies) — trả về company mới; không optimistic update. */
+  const createCompany = async (profile: CompanyProfile): Promise<boolean> => {
+    if (companyCreating.value) return false;
+    companyCreating.value = true;
+    companySaveError.value = null;
+    companyFieldErrors.value = {};
+    try {
+      const { data } = await companyApi.create(profileToCreatePayload(profile));
+      current.value = data.data;
+      company.value = companyToProfile(data.data);
+      companyNotFound.value = false;
+      return true;
+    } catch (e) {
+      companyFieldErrors.value = e instanceof HttpError ? toFieldErrors(e.details) : {};
+      companySaveError.value = e instanceof Error ? e.message : 'Không thể tạo hồ sơ công ty.';
+      return false;
+    } finally {
+      companyCreating.value = false;
+    }
+  };
+
+  /** Tải lời mời đang chờ (GET /companies/me/invites); lỗi ghi vào invitesError. */
+  const fetchInvites = async (): Promise<void> => {
+    invitesLoading.value = true;
+    invitesError.value = null;
+    try {
+      const { data } = await companyApi.getMyInvites();
+      companyInvites.value = data.data;
+    } catch (e) {
+      invitesError.value = e instanceof Error ? e.message : 'Không thể tải lời mời.';
+      companyInvites.value = [];
+    } finally {
+      invitesLoading.value = false;
+    }
+  };
+
+  /** Bỏ 1 lời mời khỏi danh sách local (sau khi server xác nhận declined). */
+  const dismissInvite = (companyId: string): void => {
+    companyInvites.value = companyInvites.value.filter((i) => i.companyId !== companyId);
   };
 
   // --- Actions ---
@@ -245,19 +298,26 @@ export const useCompanyStore = defineStore('company', () => {
     company.value = null;
     companyLoading.value = false;
     companySaving.value = false;
+    companyCreating.value = false;
+    companyNotFound.value = false;
     companyLoadError.value = null;
     companySaveError.value = null;
     companyFieldErrors.value = {};
+    companyInvites.value = [];
+    invitesLoading.value = false;
+    invitesError.value = null;
   };
 
   return {
     // state
     items, total, current, loading, error, query,
-    company, companyLoading, companySaving, companyLoadError, companySaveError, companyFieldErrors,
+    company, companyLoading, companySaving, companyNotFound, companyCreating,
+    companyLoadError, companySaveError, companyFieldErrors,
+    companyInvites, invitesLoading, invitesError,
     // computed
     hasMore, isEmpty,
     // actions
     fetchList, setQuery, fetchById, fetchBySlug, create, update, updateStatus,
-    fetchCompany, updateCompany, reset,
+    fetchCompany, updateCompany, createCompany, fetchInvites, dismissInvite, reset,
   };
 });

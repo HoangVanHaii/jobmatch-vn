@@ -23,7 +23,7 @@ import { useAuthStore } from '@stores/auth';
 import { useToastStore } from '@stores/toast';
 import { useSocket } from '@composables/useSocket';
 import { companyApi } from '@services/company.api';
-import CreateCompanyModal from '@components/employer/CreateCompanyModal.vue';
+import CreateCompanyModal from '@components/employer/CreateCompanyTestModal.vue';
 import ConfirmModal from '@components/common/ConfirmModal.vue';
 import { formatDate } from '@/utils/format';
 import type { Company } from '@/types/company';
