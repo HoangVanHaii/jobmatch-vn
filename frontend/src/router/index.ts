@@ -121,6 +121,7 @@ const routes: RouteRecordRaw[] = [
       // Công ty
       { path: 'company', name: 'employer-company', component: () => import('@views/employer/CompanyView.vue') },
       { path: 'company/members', name: 'employer-company-members', component: () => import('@views/employer/CompanyMembersView.vue') },
+     { path: 'company3', name: 'employer-company3', component: () => import('@views/employer/Company3Mockup.vue') },
 
       // Hỗ trợ
       { path: 'chat/:id?', name: 'e-chat', component: ChatView },

@@ -221,6 +221,14 @@ const groups: MenuGroup[] = [
         to: '/employer/company/members',
         activeOn: ['/employer/company/members'],
       },
+      // Mockup comparison pages (tạm thời để so sánh thiết kế hồ sơ công ty)
+
+      {
+        label: 'Mockup 3 — Hồ sơ',
+        icon: Building2,
+        to: '/employer/company3',
+        activeOn: ['/employer/company3'],
+      },
     ],
   },
 
