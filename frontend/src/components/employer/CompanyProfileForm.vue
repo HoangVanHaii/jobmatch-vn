@@ -270,7 +270,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main ref="rootEl" class="mx-auto max-w-[1240px] px-6 pb-24 [--c3-header-h:0px]">
+  <main ref="rootEl" class="mx-auto max-w-[1240px] px-6 [--c3-header-h:0px]">
     <!-- Header chỉnh sửa: chỉ sticky từ lg (dưới lg tĩnh, pt-6 nhẹ); pt-12 (48px)
          là tổng khoảng cách tự nhiên cũ (pt-8 của main + pt-4) để vị trí tự nhiên
          trùng vị trí pinned — header không dịch chuyển khi cuộn. -->
@@ -292,12 +292,17 @@ onBeforeUnmount(() => {
 
       <button
         type="button"
-        class="inline-flex shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-[13px] text-slate-600 transition-colors duration-150 hover:border-slate-300 hover:text-slate-900 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none max-sm:w-full max-sm:justify-center"
+        class="group inline-flex shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-lg px-2 py-1.5 text-[13px] font-medium text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none max-sm:w-full max-sm:justify-center"
+        :title="isCreating ? undefined : 'Quay lại hồ sơ, các thay đổi chưa lưu sẽ bị bỏ'"
         @click="requestCancel"
         :disabled="saving"
       >
-        <ChevronRight :size="15" class="rotate-180" aria-hidden="true" />
-        {{ isCreating ? 'Quay lại' : 'Quay lại hồ sơ (hủy thay đổi)' }}
+        <ChevronRight
+          :size="15"
+          aria-hidden="true"
+          class="rotate-180 transition-transform duration-150 group-hover:-translate-x-0.5 motion-reduce:transform-none motion-reduce:transition-none"
+        />
+        {{ isCreating ? 'Quay lại' : 'Quay lại hồ sơ' }}
       </button>
     </header>
 

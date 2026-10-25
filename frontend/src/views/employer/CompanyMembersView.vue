@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   AlertCircle,
   Building2,
-  Check,
   Crown,
   Loader2,
   LogOut,
-  MailCheck,
   MailPlus,
   RefreshCw,
   Trash2,
   User as UserIcon,
+  UserPlus,
   Users,
   X,
 } from 'lucide-vue-next';
@@ -22,16 +21,12 @@ import { useCompanyMemberStore } from '@stores/companyMember';
 import { useAuthStore } from '@stores/auth';
 import { useToastStore } from '@stores/toast';
 import { useSocket } from '@composables/useSocket';
-import { companyApi } from '@services/company.api';
-import CreateCompanyModal from '@components/employer/CreateCompanyTestModal.vue';
 import ConfirmModal from '@components/common/ConfirmModal.vue';
 import { formatDate } from '@/utils/format';
-import type { Company } from '@/types/company';
 import type {
   CompanyMember,
   CompanyMemberRole,
   CompanyMemberStatus,
-  UpdateCompanyMemberPayload,
 } from '@/types/companyMember';
 
 /* ============================================================================
@@ -54,9 +49,9 @@ const companyId = ref<string | null>(null);
 const loadError = ref<string | null>(null);
 const inviteOpen = ref(false);
 const transferTarget = ref<CompanyMember | null>(null);
-const createModalOpen = ref(false);
 /** Row sắp được xoá (mở ConfirmModal trước khi gọi API thật). */
 const removeTarget = ref<CompanyMember | null>(null);
+const removeSaving = ref(false);
 
 /* ============================================================================
  * Lifecycle
@@ -69,66 +64,70 @@ const removeTarget = ref<CompanyMember | null>(null);
  */
 const LOAD_HARD_TIMEOUT_MS = 15_000;
 
+/** Chống race: chỉ lần loadData() mới nhất được ghi state. */
+let loadDataSeq = 0;
+let loadTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
 const loadData = async (): Promise<void> => {
-  console.log('[CompanyMembersView] loadData:start');
+  const seq = ++loadDataSeq;
   loadState.value = 'loading';
   loadError.value = null;
-  companyStore.reset();
+  // Chỉ reset members cache — KHÔNG reset company store vì trang
+  // /employer/company (CompanyProfilePage) dùng chung state đó.
   memberStore.reset();
 
-  // Safety timer: nếu bất kỳ API nào dưới đây treo quá LOAD_HARD_TIMEOUT_MS,
-  // resolve timer sớm để UI chuyển ready state. Background Promise vẫn chạy
-  // nhưng UI đã không kẹt nữa.
-  const timeoutTimer = setTimeout(() => {
-    console.warn(
-      `[CompanyMembersView] loadData exceeded ${LOAD_HARD_TIMEOUT_MS}ms — forcing ready state.`,
-    );
-    if (loadState.value === 'loading') {
-      loadError.value =
-        'Tải dữ liệu lâu hơn dự kiến — bạn có thể thử lại.';
+  // Safety timer: nếu API treo quá LOAD_HARD_TIMEOUT_MS, force ready để
+  // UI hiện banner lỗi + "Thử lại" thay vì spinner vô hạn.
+  if (loadTimeoutTimer) clearTimeout(loadTimeoutTimer);
+  loadTimeoutTimer = setTimeout(() => {
+    if (seq === loadDataSeq && loadState.value === 'loading') {
+      loadError.value = 'Tải dữ liệu lâu hơn dự kiến — bạn có thể thử lại.';
       loadState.value = 'ready';
     }
   }, LOAD_HARD_TIMEOUT_MS);
 
   try {
-    console.log('[CompanyMembersView] loadData:await getMyCompany');
-    const { data } = await companyApi.getMyCompany();
-    if (!data.data) {
+    // Qua store (fetchCompany): phân biệt "chưa có công ty" (companyNotFound)
+    // với lỗi tải thật (companyLoadError) — không gộp chung.
+    const okCompany = await companyStore.fetchCompany();
+    if (seq !== loadDataSeq) return;
+    if (companyStore.companyNotFound) {
       companyId.value = null;
       loadState.value = 'no-company';
-      console.log('[CompanyMembersView] loadData:no-company');
       return;
     }
-    companyId.value = data.data.id;
-    console.log('[CompanyMembersView] loadData:companyId=', data.data.id);
-
-    // Chạy song song 2 API (fetchById + fetchList) thay vì tuần tự — UI nhanh
-    // hơn đáng kể. Mỗi store action có try/catch riêng (swallow error → set
-    // store.error), nên Promise.all vẫn resolve dù 1 trong 2 fail.
-    await Promise.all([
-      companyStore.fetchById(data.data.id),
-      memberStore.fetchList(data.data.id),
-    ]);
-    console.log(
-      '[CompanyMembersView] loadData:done',
-      'companyError=',
-      companyStore.error,
-      'memberError=',
-      memberStore.error,
-    );
-
+    if (!okCompany || !company.value) {
+      loadError.value = companyStore.companyLoadError ?? 'Không thể tải dữ liệu công ty.';
+      loadState.value = 'ready';
+      return;
+    }
+    companyId.value = company.value.id;
+    await memberStore.fetchList(companyId.value);
+    if (seq !== loadDataSeq) return;
+    if (memberStore.error) loadError.value = memberStore.error;
+    membersLoadedOnce = true;
     loadState.value = 'ready';
   } catch (e) {
     console.error('[CompanyMembersView.loadData] error:', e);
-    loadError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
-    loadState.value = 'ready';
+    if (seq === loadDataSeq) {
+      loadError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+      loadState.value = 'ready';
+    }
   } finally {
-    clearTimeout(timeoutTimer);
+    if (seq === loadDataSeq && loadTimeoutTimer) {
+      clearTimeout(loadTimeoutTimer);
+      loadTimeoutTimer = null;
+    }
   }
 };
 
 onMounted(() => {
   void loadData();
+});
+
+onBeforeUnmount(() => {
+  if (loadTimeoutTimer) clearTimeout(loadTimeoutTimer);
+  if (reloadTimer !== null) clearTimeout(reloadTimer);
 });
 
 /**
@@ -155,39 +154,34 @@ onMounted(() => {
  * ra khỏi trang members → `/employer/company` để thấy empty state + modal
  * tạo công ty. Không navigate nếu user chỉ là người xem (affected ≠ current).
  */
-const onMembershipChange = async (
-  kind: string,
-  payloadCompanyId: string,
-  payload: Record<string, unknown>,
-): Promise<void> => {
-  if (!companyId.value || payloadCompanyId !== companyId.value) return;
+let membersLoadedOnce = false;
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Refetch members + kiểm tra current user còn active không.
+ * Nếu không (bị xoá / tự rời) → refresh company context rồi đẩy về
+ * /employer/company để thấy state 'no-company'.
+ */
+const reloadMembersAndCheck = async (): Promise<void> => {
+  if (!companyId.value) return;
   await memberStore.fetchList(companyId.value);
-
-  // Sau reload: nếu current user không còn active ở company này → navigate.
-  // (listByCompany BE trả [] cho non-active viewer nên currentUserMember sẽ là null.)
   const me = currentUserMember.value;
-  const isStillActive = !!me && me.status === 'active';
-
-  if (!isStillActive) {
-    // User bị xoá hoặc đã rời → đẩy về trang company để refresh context.
-    // (Trang company sẽ chuyển sang state 'no-company' → show create modal.)
+  if (!me || me.status !== 'active') {
+    await companyStore.fetchCompany();
     if (route.name !== 'employer-company') {
       await router.push({ name: 'employer-company' });
-    } else {
-      // Đang ở đúng trang → reload lại để state 'ready' → 'no-company'.
-      await companyStore.fetchById(companyId.value);
     }
-  } else if (
-    kind === 'company_owner_transferred_to_you' &&
-    auth.user?.id === payload.previousOwnerUserId
-  ) {
-    // Trường hợp đặc biệt: chính user này vừa được promote lên owner (kind
-    // '..._to_you' thực ra dành cho recipient mới). Nếu current user là
-    // newOwner thì currentUserMember đã được sync qua fetchList → role đổi
-    // thành 'owner' → isCurrentUserOwner = true → UI tự render các nút owner.
-    // Không cần navigate, chỉ cần reload đã đủ.
   }
+};
+
+/** Debounce: nhiều socket event dồn → chỉ 1 fetch sau 300ms. */
+const onMembershipChange = (payloadCompanyId: string): void => {
+  if (!companyId.value || payloadCompanyId !== companyId.value) return;
+  if (reloadTimer !== null) return;
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null;
+    void reloadMembersAndCheck();
+  }, 300);
 };
 
 useSocket('notification:new', (n: unknown) => {
@@ -221,29 +215,16 @@ useSocket('notification:new', (n: unknown) => {
     reloadKinds.has(notif.payload.kind) &&
     notif.payload?.companyId
   ) {
-    void onMembershipChange(
-      notif.payload.kind,
-      notif.payload.companyId,
-      notif.payload,
-    );
+    onMembershipChange(notif.payload.companyId);
   }
 });
 
-/**
- * Khi user tạo công ty mới qua modal:
- *   - Reload full page state (getMyCompany + fetchById + fetchList) để đảm bảo
- *     UI đồng bộ — fix bug "page không reload sau create" do thay đổi
- *     companyId + set loadState không trigger được re-render trong một số
- *     edge case (Vue reactivity / cache stale).
- *   - Toast success.
- *
- * Tham số `created` không dùng trực tiếp — loadData() sẽ tự lấy company qua
- * getMyCompany (user vừa create đã trở thành active member ngay).
- */
-const onCompanyCreated = async (_created: Company): Promise<void> => {
-  await loadData();
-  toast.success('Đã tạo công ty thành công. Bạn là chủ sở hữu.');
-};
+/** Mất kết nối rồi nối lại → refetch một lần (bỏ qua lần connect đầu). */
+useSocket('connect', () => {
+  if (membersLoadedOnce && loadState.value === 'ready') {
+    onMembershipChange(companyId.value ?? '');
+  }
+});
 
 /* ============================================================================
  * Helpers — derive từ store + auth
@@ -266,12 +247,6 @@ const isCurrentUserOwner = computed<boolean>(() => {
   return !!m && m.role === 'owner' && m.status === 'active';
 });
 
-/** Current user có pending invite? */
-const hasPendingInvite = computed<boolean>(() => {
-  const m = currentUserMember.value;
-  return !!m && m.status === 'pending' && m.role === 'member';
-});
-
 /* ============================================================================
  * Modals
  * ==========================================================================*/
@@ -288,18 +263,31 @@ const inviteError = ref<string | null>(null);
  */
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const inviteEmailEl = ref<HTMLInputElement | null>(null);
+let inviteReturnFocusEl: HTMLElement | null = null;
+
 const openInvite = (): void => {
   inviteEmail.value = '';
   inviteRole.value = 'member';
   inviteError.value = null;
+  inviteReturnFocusEl = document.activeElement as HTMLElement | null;
   inviteOpen.value = true;
+  void nextTick(() => inviteEmailEl.value?.focus());
 };
 const closeInvite = (): void => {
   if (inviteSaving.value) return;
   inviteOpen.value = false;
+  inviteReturnFocusEl?.focus();
+  inviteReturnFocusEl = null;
 };
 
+/** Khóa cuộn nền khi modal mở. */
+watch(inviteOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : '';
+});
+
 const submitInvite = async (): Promise<void> => {
+  if (inviteSaving.value) return; // guard double-submit
   inviteError.value = null;
   const email = inviteEmail.value.trim().toLowerCase();
   if (!email) {
@@ -547,10 +535,11 @@ const removeMember = (row: CompanyMember): void => {
 /** Handler bước 2: gọi API xoá sau khi user đã confirm. */
 const confirmRemoveMember = async (): Promise<void> => {
   const row = removeTarget.value;
-  if (!row || !companyId.value) {
-    removeTarget.value = null;
+  if (!row || !companyId.value || removeSaving.value) {
+    if (!removeSaving.value) removeTarget.value = null;
     return;
   }
+  removeSaving.value = true;
   try {
     const ok = await memberStore.remove(companyId.value, row.userId);
     if (ok) {
@@ -571,6 +560,8 @@ const confirmRemoveMember = async (): Promise<void> => {
     }
   } catch (e) {
     toast.error(e instanceof Error ? e.message : 'Đã có lỗi xảy ra.');
+  } finally {
+    removeSaving.value = false;
   }
 };
 
@@ -639,7 +630,7 @@ const onTransferModalClose = (open: boolean): void => {
 };
 
 const submitTransfer = async (): Promise<void> => {
-  if (!transferTarget.value || !companyId.value) return;
+  if (!transferTarget.value || !companyId.value || transferSaving.value) return;
   transferSaving.value = true;
   try {
     const result = await memberStore.transferOwner(companyId.value, {
@@ -658,37 +649,6 @@ const submitTransfer = async (): Promise<void> => {
     toast.error(e instanceof Error ? e.message : 'Đã có lỗi xảy ra.');
   } finally {
     transferSaving.value = false;
-  }
-};
-
-/* ---------- Accept invite (self) ----------
- *
- * BE route `:userId/accept` yêu cầu userId trên URL (controller check
- * self-only) → truyền userId của chính user đang đăng nhập.
- */
-const acceptSaving = ref(false);
-const acceptError = ref<string | null>(null);
-const submitAccept = async (): Promise<void> => {
-  if (!companyId.value) return;
-  if (!auth.user) {
-    acceptError.value = 'Phiên đăng nhập đã hết — vui lòng đăng nhập lại.';
-    return;
-  }
-  acceptError.value = null;
-  acceptSaving.value = true;
-  try {
-    const result = await memberStore.acceptInvite(companyId.value, auth.user.id);
-    if (result) {
-      toast.success('Đã chấp nhận lời mời.');
-      // Reload list + company context.
-      await memberStore.fetchList(companyId.value);
-    } else {
-      acceptError.value = memberStore.error ?? 'Không thể chấp nhận lời mời.';
-    }
-  } catch (e) {
-    acceptError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
-  } finally {
-    acceptSaving.value = false;
   }
 };
 
@@ -713,7 +673,7 @@ const openLeave = (): void => {
 };
 
 const submitLeave = async (): Promise<void> => {
-  if (!companyId.value || !auth.user) return;
+  if (!companyId.value || !auth.user || leaveSaving.value) return;
   leaveSaving.value = true;
   leaveError.value = null;
   try {
@@ -770,10 +730,6 @@ const STATUS_BADGE: Record<CompanyMemberStatus, { cls: string }> = {
   auto_cancelled: { cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
 };
 
-/* ============================================================================
- * Skeleton helper (cho loading state)
- * ==========================================================================*/
-const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
 </script>
 
 <template>
@@ -789,11 +745,11 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
         </div>
 
         <!-- Skeleton placeholder for button on loading -->
-        <div v-if="loadState === 'loading'" :class="SkeletonLine()" class="h-9 w-40" />
+        <div v-if="loadState === 'loading'" class="animate-pulse bg-gray-200 rounded h-9 w-40" />
         <button
           v-else-if="loadState === 'ready' && isCurrentUserOwner"
           type="button"
-          class="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-800 transition focus:outline-none focus:ring-2 focus:ring-gray-300"
+          class="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/40"
           @click="openInvite"
         >
           <UserPlus class="w-4 h-4" />
@@ -806,10 +762,10 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
         <!-- Company summary skeleton -->
         <div class="bg-white rounded-xl border border-gray-200 p-5">
           <div class="flex items-center gap-4">
-            <div :class="SkeletonLine()" class="w-12 h-12 rounded-lg shrink-0" />
+            <div class="animate-pulse bg-gray-200 rounded w-12 h-12 rounded-lg shrink-0" />
             <div class="flex-1 space-y-2">
-              <div :class="SkeletonLine()" class="h-4 w-44" />
-              <div :class="SkeletonLine()" class="h-3 w-32" />
+              <div class="animate-pulse bg-gray-200 rounded h-4 w-44" />
+              <div class="animate-pulse bg-gray-200 rounded h-3 w-32" />
             </div>
           </div>
         </div>
@@ -817,48 +773,41 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
         <!-- Table skeleton -->
         <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div class="hidden md:grid grid-cols-12 px-4 py-3 border-b border-gray-100 bg-gray-50/50">
-            <div :class="SkeletonLine()" class="col-span-4 h-3 w-24" />
-            <div :class="SkeletonLine()" class="col-span-2 h-3 w-16" />
-            <div :class="SkeletonLine()" class="col-span-2 h-3 w-20" />
-            <div :class="SkeletonLine()" class="col-span-2 h-3 w-24" />
-            <div :class="SkeletonLine()" class="col-span-2 h-3 w-16 ml-auto" />
+            <div class="animate-pulse bg-gray-200 rounded col-span-4 h-3 w-24" />
+            <div class="animate-pulse bg-gray-200 rounded col-span-2 h-3 w-16" />
+            <div class="animate-pulse bg-gray-200 rounded col-span-2 h-3 w-20" />
+            <div class="animate-pulse bg-gray-200 rounded col-span-2 h-3 w-24" />
+            <div class="animate-pulse bg-gray-200 rounded col-span-2 h-3 w-16 ml-auto" />
           </div>
           <div v-for="i in 4" :key="i" class="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-0 px-4 py-4 border-b border-gray-100 last:border-b-0">
-            <div :class="SkeletonLine()" class="md:col-span-4 h-4 w-40" />
-            <div :class="SkeletonLine()" class="md:col-span-2 h-4 w-16 mt-1 md:mt-0" />
-            <div :class="SkeletonLine()" class="md:col-span-2 h-4 w-20 mt-1 md:mt-0" />
-            <div :class="SkeletonLine()" class="md:col-span-2 h-4 w-24 mt-1 md:mt-0" />
-            <div :class="SkeletonLine()" class="md:col-span-2 h-4 w-12 mt-1 md:mt-0 md:ml-auto" />
+            <div class="animate-pulse bg-gray-200 rounded md:col-span-4 h-4 w-40" />
+            <div class="animate-pulse bg-gray-200 rounded md:col-span-2 h-4 w-16 mt-1 md:mt-0" />
+            <div class="animate-pulse bg-gray-200 rounded md:col-span-2 h-4 w-20 mt-1 md:mt-0" />
+            <div class="animate-pulse bg-gray-200 rounded md:col-span-2 h-4 w-24 mt-1 md:mt-0" />
+            <div class="animate-pulse bg-gray-200 rounded md:col-span-2 h-4 w-12 mt-1 md:mt-0 md:ml-auto" />
           </div>
         </div>
       </template>
 
       <!-- =================== No company =================== -->
+      <!-- Việc tạo công ty + nhận lời mời đã nằm ở /employer/company (CompanyProfilePage). -->
       <template v-else-if="loadState === 'no-company'">
         <div class="bg-white rounded-xl border border-gray-200">
           <div class="flex flex-col items-center justify-center py-16 text-center px-6">
-            <div class="w-14 h-14 rounded-full bg-primary-50 flex items-center justify-center mb-4">
-              <Building2 class="w-7 h-7 text-primary-600" />
+            <div class="w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center mb-4">
+              <Building2 class="w-7 h-7 text-blue-600" />
             </div>
             <h2 class="text-base font-semibold text-gray-900">Bạn chưa thuộc công ty nào</h2>
             <p class="text-sm text-gray-500 mt-2 max-w-md">
               Bạn cần thuộc một công ty để mời và quản lý thành viên.
             </p>
-            <button
-              v-if="auth.user?.role === 'employer' || auth.user?.role === 'admin'"
-              type="button"
-              class="mt-5 inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-800 transition focus:outline-none focus:ring-2 focus:ring-gray-300"
-              @click="createModalOpen = true"
+            <RouterLink
+              :to="{ name: 'employer-company' }"
+              class="mt-5 inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/40"
             >
               <Building2 class="w-4 h-4" />
-              Tạo công ty
-            </button>
-            <p
-              v-else
-              class="text-xs text-gray-400 mt-4 italic max-w-sm"
-            >
-              Chỉ tài khoản nhà tuyển dụng mới có thể tạo công ty.
-            </p>
+              Đến hồ sơ công ty
+            </RouterLink>
           </div>
         </div>
       </template>
@@ -871,42 +820,13 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
           class="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 flex items-center gap-2"
         >
           <AlertCircle class="w-4 h-4 text-red-500 shrink-0" />
-          <p class="text-sm text-red-700 flex-1">{{ loadError }}</p>
+          <p class="text-sm text-red-700 flex-1" role="alert">{{ loadError }}</p>
           <button
             type="button"
             class="text-xs font-medium text-red-700 hover:text-red-900 underline shrink-0 inline-flex items-center gap-1"
             @click="loadData"
           >
             <RefreshCw class="w-3 h-3" /> Thử lại
-          </button>
-        </div>
-
-        <!-- ============ Accept invite banner ============ -->
-        <div
-          v-if="hasPendingInvite && currentUserMember"
-          class="rounded-xl border border-amber-200 bg-amber-50 p-4 flex flex-col sm:flex-row sm:items-center gap-3"
-        >
-          <div class="flex items-start gap-3 flex-1 min-w-0">
-            <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
-              <MailCheck class="w-5 h-5 text-amber-700" />
-            </div>
-            <div class="min-w-0">
-              <p class="text-sm font-semibold text-amber-900">Bạn đang được mời tham gia công ty này</p>
-              <p class="text-xs text-amber-700 mt-0.5">
-                Hãy chấp nhận lời mời để có quyền truy cập vào các tính năng dành cho thành viên.
-              </p>
-              <p v-if="acceptError" class="text-xs text-red-700 mt-1">{{ acceptError }}</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            class="shrink-0 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
-            :disabled="acceptSaving"
-            @click="submitAccept"
-          >
-            <Loader2 v-if="acceptSaving" class="w-3.5 h-3.5 animate-spin" />
-            <Check v-else class="w-3.5 h-3.5" />
-            {{ acceptSaving ? 'Đang xử lý...' : 'Chấp nhận lời mời' }}
           </button>
         </div>
 
@@ -955,7 +875,7 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
           class="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 flex items-center gap-2"
         >
           <AlertCircle class="w-4 h-4 text-red-500 shrink-0" />
-          <p class="text-sm text-red-700 flex-1">{{ memberStore.error }}</p>
+          <p class="text-sm text-red-700 flex-1" role="alert">{{ memberStore.error }}</p>
           <button
             v-if="companyId"
             type="button"
@@ -970,6 +890,7 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
         <div
           v-if="memberStore.loading && members.length === 0"
           class="bg-white rounded-xl border border-gray-200 flex items-center justify-center py-12"
+          aria-busy="true"
         >
           <Loader2 class="w-5 h-5 text-gray-400 animate-spin" />
         </div>
@@ -990,7 +911,7 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
             <button
               v-if="isCurrentUserOwner"
               type="button"
-              class="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-gray-900 text-white hover:bg-gray-800 transition"
+              class="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 transition"
               @click="openInvite"
             >
               <UserPlus class="w-3.5 h-3.5" /> Mời thành viên
@@ -1008,11 +929,11 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
             <table class="w-full text-sm">
               <thead class="bg-gray-50/50 border-b border-gray-100">
                 <tr class="text-left text-[11px] uppercase tracking-wider font-semibold text-gray-500">
-                  <th class="px-4 py-3 font-semibold">Thành viên</th>
-                  <th class="px-4 py-3 font-semibold">Vai trò</th>
-                  <th class="px-4 py-3 font-semibold">Trạng thái</th>
-                  <th class="px-4 py-3 font-semibold">Ngày tham gia</th>
-                  <th class="px-4 py-3 font-semibold text-right">Thao tác</th>
+                  <th scope="col" class="px-4 py-3 font-semibold">Thành viên</th>
+                  <th scope="col" class="px-4 py-3 font-semibold">Vai trò</th>
+                  <th scope="col" class="px-4 py-3 font-semibold">Trạng thái</th>
+                  <th scope="col" class="px-4 py-3 font-semibold">Ngày mời</th>
+                  <th scope="col" class="px-4 py-3 font-semibold text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100">
@@ -1178,7 +1099,7 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
                   </button>
                 </div>
               </div>
-              <div class="flex flex-wrap items-center gap-2 pl-13">
+              <div class="flex flex-wrap items-center gap-2 pl-[52px]">
                 <span
                   v-if="row.role === 'owner' && row.status === 'active'"
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200"
@@ -1220,6 +1141,7 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
           aria-modal="true"
           aria-labelledby="invite-modal-title"
           @mousedown.self="closeInvite"
+          @keydown.escape="closeInvite"
         >
           <div class="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
           <div
@@ -1255,20 +1177,25 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
 
             <div class="mt-4 space-y-3">
               <div>
-                <label class="block text-xs font-medium text-gray-700 mb-1.5">
+                <label for="invite-email" class="block text-xs font-medium text-gray-700 mb-1.5">
                   Email <span class="text-red-500">*</span>
                 </label>
                 <input
+                  id="invite-email"
+                  ref="inviteEmailEl"
                   v-model="inviteEmail"
                   type="email"
                   placeholder="email@example.com"
                   autocomplete="off"
                   spellcheck="false"
-                  class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-1 focus:ring-gray-300 focus:border-gray-300 transition"
+                  class="w-full px-3 py-2 text-sm rounded-lg border bg-white focus:outline-none focus:ring-1 transition"
+                  :class="inviteError ? 'border-red-300 focus:border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-blue-600 focus:ring-blue-600/20'"
                   :disabled="inviteSaving"
+                  :aria-invalid="inviteError ? 'true' : undefined"
+                  :aria-describedby="inviteError ? 'invite-email-err' : 'invite-email-hint'"
                   @keyup.enter="submitInvite"
                 />
-                <p class="text-[11px] text-gray-500 mt-1">
+                <p id="invite-email-hint" class="text-[11px] text-gray-500 mt-1">
                   Email của user đã đăng ký tài khoản trên JobMatch. Hệ thống sẽ gửi thông báo mời.
                 </p>
               </div>
@@ -1290,7 +1217,7 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
                 class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 flex items-start gap-2"
               >
                 <AlertCircle class="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
-                <p class="text-xs text-red-700">{{ friendlyInviteError(inviteError) }}</p>
+                <p id="invite-email-err" class="text-xs text-red-700" role="alert">{{ inviteError }}</p>
               </div>
             </div>
 
@@ -1305,7 +1232,7 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
               </button>
               <button
                 type="button"
-                class="inline-flex items-center justify-center rounded-lg px-3.5 py-2 text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 transition focus:outline-none focus:ring-2 focus:ring-gray-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                class="inline-flex items-center justify-center rounded-lg px-3.5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/40 disabled:opacity-60 disabled:cursor-not-allowed"
                 :disabled="inviteSaving"
                 @click="submitInvite"
               >
@@ -1364,11 +1291,6 @@ const SkeletonLine = (): string => 'animate-pulse bg-gray-200 rounded';
       @confirm="submitLeave"
     />
 
-    <!-- =================== Create Company modal =================== -->
-    <CreateCompanyModal
-      v-model:open="createModalOpen"
-      @created="onCompanyCreated"
-    />
   </div>
 </template>
 

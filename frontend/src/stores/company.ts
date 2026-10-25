@@ -55,6 +55,11 @@ export const useCompanyStore = defineStore('company', () => {
   const companyInvites = ref<CompanyInvite[]>([]);
   const invitesLoading = ref(false);
   const invitesError = ref<string | null>(null);
+  // false = chưa tải lần nào trong phiên → trang "chưa có công ty" chờ cờ này
+  // trước khi render để không nháy (trống → "Đang tải…" → danh sách).
+  const invitesInitialized = ref(false);
+  let invitesInflight: Promise<void> | null = null;
+  let companyInflight: Promise<boolean> | null = null;
   let companyFetchRequestId = 0;
 
   /** Query cho list: search/filter + phân trang (đổi filter sẽ reset page ở setQuery) */
@@ -86,35 +91,49 @@ export const useCompanyStore = defineStore('company', () => {
   };
 
   /** Tải company của user hiện tại; chỉ request mới nhất được phép ghi state. */
-  const fetchCompany = async (): Promise<boolean> => {
-    const requestId = ++companyFetchRequestId;
-    companyLoading.value = true;
-    companyLoadError.value = null;
-    companyNotFound.value = false;
-    try {
-      const { data: mine } = await companyApi.getMyCompany();
-      if (!mine.data) {
-        // BE trả 200 + data:null khi user chưa thuộc company nào (không phải lỗi).
+  /**
+   * Tải company của user hiện tại; chỉ request mới nhất được phép ghi state.
+   * - Dedupe inflight: nhiều lời gọi chồng thời điểm (vd điều hướng
+   *   members → company khi MembersView và Page cùng gọi) = 1 request.
+   * - silent=true: KHÔNG bật companyLoading và KHÔNG xóa company/notFound hiện có
+   *   (tránh chớp về "đang tải"/"chưa có công ty") — chỉ ghi kết quả mới thành công.
+   */
+  const fetchCompany = async (silent = false): Promise<boolean> => {
+    if (companyInflight) return companyInflight;
+    companyInflight = (async () => {
+      const requestId = ++companyFetchRequestId;
+      if (!silent) {
+        companyLoading.value = true;
+        companyNotFound.value = false;
+      }
+      companyLoadError.value = null;
+      try {
+        const { data: mine } = await companyApi.getMyCompany();
+        if (!mine.data) {
+          // BE trả 200 + data:null khi user chưa thuộc company nào (không phải lỗi).
+          if (requestId === companyFetchRequestId) {
+            company.value = null;
+            companyNotFound.value = true;
+          }
+          return false;
+        }
+        const { data } = await companyApi.getById(mine.data.id);
         if (requestId === companyFetchRequestId) {
-          company.value = null;
-          companyNotFound.value = true;
+          current.value = data.data;
+          company.value = companyToProfile(data.data);
+        }
+        return true;
+      } catch (e) {
+        if (requestId === companyFetchRequestId) {
+          companyLoadError.value = e instanceof Error ? e.message : 'Không thể tải hồ sơ công ty.';
         }
         return false;
+      } finally {
+        if (requestId === companyFetchRequestId) companyLoading.value = false;
+        companyInflight = null;
       }
-      const { data } = await companyApi.getById(mine.data.id);
-      if (requestId === companyFetchRequestId) {
-        current.value = data.data;
-        company.value = companyToProfile(data.data);
-      }
-      return true;
-    } catch (e) {
-      if (requestId === companyFetchRequestId) {
-        companyLoadError.value = e instanceof Error ? e.message : 'Không thể tải hồ sơ công ty.';
-      }
-      return false;
-    } finally {
-      if (requestId === companyFetchRequestId) companyLoading.value = false;
-    }
+    })();
+    return companyInflight;
   };
 
   /** Upload logo (nếu có) rồi PATCH profile; không optimistic update. */
@@ -165,19 +184,45 @@ export const useCompanyStore = defineStore('company', () => {
     }
   };
 
-  /** Tải lời mời đang chờ (GET /companies/me/invites); lỗi ghi vào invitesError. */
-  const fetchInvites = async (): Promise<void> => {
-    invitesLoading.value = true;
+  /**
+   * Tải lời mời đang chờ (GET /companies/me/invites); lỗi ghi vào invitesError.
+   * - Dedupe: nhiều lời gọi trùng thời điểm → chung 1 request (inflight).
+   * - silent=true (refetch realtime/reconnect): không bật lại trạng thái loading,
+   *   cập nhật danh sách tại chỗ — tránh nháy layout.
+   */
+  const fetchInvites = async (silent = false): Promise<void> => {
+    if (invitesInflight) return invitesInflight;
+    invitesInflight = (async () => {
+      if (!silent) invitesLoading.value = true;
+      invitesError.value = null;
+      try {
+        const { data } = await companyApi.getMyInvites();
+        companyInvites.value = data.data ?? [];
+        invitesInitialized.value = true;
+      } catch (e) {
+        invitesError.value = e instanceof Error ? e.message : 'Không thể tải lời mời.';
+        if (!silent) companyInvites.value = [];
+        invitesInitialized.value = true;
+      } finally {
+        if (!silent) invitesLoading.value = false;
+        invitesInflight = null;
+      }
+    })();
+    return invitesInflight;
+  };
+
+  /** Dọn state của màn hồ sơ/lời mời khi vào lại trang — không hiện dữ liệu cũ
+   *  của lần trước hoặc tài khoản trước. Không đụng items/query các trang khác. */
+  const resetCompanyProfileState = (): void => {
+    company.value = null;
+    companyNotFound.value = false;
+    companyLoadError.value = null;
+    companySaveError.value = null;
+    companyFieldErrors.value = {};
+    companyInvites.value = [];
+    invitesLoading.value = false;
     invitesError.value = null;
-    try {
-      const { data } = await companyApi.getMyInvites();
-      companyInvites.value = data.data;
-    } catch (e) {
-      invitesError.value = e instanceof Error ? e.message : 'Không thể tải lời mời.';
-      companyInvites.value = [];
-    } finally {
-      invitesLoading.value = false;
-    }
+    invitesInitialized.value = false;
   };
 
   /** Bỏ 1 lời mời khỏi danh sách local (sau khi server xác nhận declined). */
@@ -306,6 +351,7 @@ export const useCompanyStore = defineStore('company', () => {
     companyInvites.value = [];
     invitesLoading.value = false;
     invitesError.value = null;
+    invitesInitialized.value = false;
   };
 
   return {
@@ -313,11 +359,11 @@ export const useCompanyStore = defineStore('company', () => {
     items, total, current, loading, error, query,
     company, companyLoading, companySaving, companyNotFound, companyCreating,
     companyLoadError, companySaveError, companyFieldErrors,
-    companyInvites, invitesLoading, invitesError,
+    companyInvites, invitesLoading, invitesError, invitesInitialized,
     // computed
     hasMore, isEmpty,
     // actions
     fetchList, setQuery, fetchById, fetchBySlug, create, update, updateStatus,
-    fetchCompany, updateCompany, createCompany, fetchInvites, dismissInvite, reset,
+    fetchCompany, updateCompany, createCompany, fetchInvites, dismissInvite, resetCompanyProfileState, reset,
   };
 });

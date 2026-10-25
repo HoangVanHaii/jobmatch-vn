@@ -92,13 +92,19 @@ export function useCompanySectionNav(
     activeSection.value = id;
     const el = rootEl.value?.querySelector<HTMLElement>(`#${id}`);
     if (!el) return;
-    const header = headerEl.value;
-    const sticky = header ? getComputedStyle(header).position === 'sticky' : false;
-    const headerH = sticky && header ? header.getBoundingClientRect().height : 0;
-    const top = el.getBoundingClientRect().top + window.scrollY - (headerH + 16);
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     spyLockUntil = Date.now() + 800;
-    window.scrollTo({ top, behavior: prefersReduced ? 'auto' : 'smooth' });
+    // Section 01 nằm ngay đầu trang (vị trí lúc vừa vào chế độ sửa, scrollY = 0):
+    // về thẳng top 0 thay vì tính offset, tránh lệch 20px do mt-9 của tiêu đề.
+    if (id === editSections[0].id) {
+      window.scrollTo({ top: 0, behavior: prefersReduced ? 'auto' : 'smooth' });
+    } else {
+      const header = headerEl.value;
+      const sticky = header ? getComputedStyle(header).position === 'sticky' : false;
+      const headerH = sticky && header ? header.getBoundingClientRect().height : 0;
+      const top = el.getBoundingClientRect().top + window.scrollY - (headerH + 16);
+      window.scrollTo({ top, behavior: prefersReduced ? 'auto' : 'smooth' });
+    }
     // Chuyển focus vào tiêu đề section (a11y bàn phím / screen reader).
     el.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
   }

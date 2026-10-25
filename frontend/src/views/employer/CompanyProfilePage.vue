@@ -8,6 +8,7 @@ import { storeToRefs } from 'pinia';
 import { MailPlus, X } from 'lucide-vue-next';
 import CompanyProfileView from '@/components/employer/CompanyProfileView.vue';
 import CompanyProfileForm from '@/components/employer/CompanyProfileForm.vue';
+import CompanyProfileSkeleton from '@/components/employer/CompanyProfileSkeleton.vue';
 import { useCompanyStore } from '@stores/company';
 import { useCompanyMemberStore } from '@stores/companyMember';
 import { useAuthStore } from '@stores/auth';
@@ -33,8 +34,27 @@ const {
   companyInvites,
   invitesLoading,
   invitesError,
+  invitesInitialized,
 } = storeToRefs(companyStore);
 const hasProfile = computed(() => profile.value !== null);
+
+/* Dọn state cũ của store (lần vào trước / tài khoản trước) ĐỒNG BỘ ở setup —
+ * trước render đầu. Nếu để trong onMounted thì frame đầu vẫn đọc state cũ
+ * (companyNotFound=true, invitesInitialized=true) và vẽ màn "chưa có công ty"
+ * rồi mới về skeleton → chớp khi điều hướng nội bộ. */
+companyStore.resetCompanyProfileState();
+/** false = luồng tải đầu của lần mount này chưa xong → luôn hiển thị skeleton. */
+const pageReady = ref(false);
+
+/** Trạng thái hiển thị duy nhất của trang; mọi nhánh template dựa vào đây. */
+const pageState = computed<'loading' | 'error' | 'empty' | 'view' | 'form'>(() => {
+  if (!pageReady.value) return 'loading';
+  if (isEditing.value) return 'form'; // form tạo (chưa có công ty) hoặc sửa
+  if (companyLoadError.value && !profile.value) return 'error';
+  if (companyNotFound.value) return invitesInitialized.value ? 'empty' : 'loading';
+  if (profile.value) return 'view';
+  return 'loading';
+});
 
 /* Quyền sửa hồ sơ: owner active HOẶC admin (UX check; BE enforce bằng
  * requireCompanyOwnerOrAdmin). Members cache được fetch khi có company. */
@@ -111,7 +131,6 @@ function onModeAfterEnter(): void {
  * công ty thì bỏ qua mọi update về invite.
  * ==========================================================================*/
 const inviteActionId = ref<string | null>(null); // companyId đang accept/decline
-let invitesFetchedOnce = false; // chặn refetch trùng ở event 'connect' đầu tiên
 
 async function acceptInvite(invite: CompanyInvite): Promise<void> {
   if (!auth.user || inviteActionId.value) return; // guard double-click
@@ -165,9 +184,9 @@ function onInviteNotification(n: unknown): void {
   const isCompany = type === 'company';
   const isLegacy = type === 'company_invite' || type === 'system';
 
-  // Invite mới (legacy + type mới) → refetch danh sách.
+  // Invite mới (legacy + type mới) → refetch im lặng (không bật loading toàn khối).
   if (type === 'company_invite' || (isCompany && kind === 'company_invite_sent')) {
-    if (companyNotFound.value) void companyStore.fetchInvites();
+    if (companyNotFound.value) void companyStore.fetchInvites(true);
     return;
   }
   // Bị xoá khỏi company / invite bị thu hồi → reload company (phát hiện mất membership).
@@ -187,46 +206,41 @@ function onInviteNotification(n: unknown): void {
     }
     // Invite auto-cancel khi user tạo company mới.
     if (kind === 'invite_auto_cancelled_on_create_company' && companyNotFound.value) {
-      void companyStore.fetchInvites();
+      void companyStore.fetchInvites(true);
     }
   }
 }
 
-/** Mất kết nối rồi nối lại → tải lại danh sách để không sót (bỏ qua lần connect đầu). */
+/** Mất kết nối rồi nối lại → refetch im lặng (fetch đầu có dedupe inflight nên không trùng). */
 function onSocketConnect(): void {
-  if (invitesFetchedOnce && companyNotFound.value) void companyStore.fetchInvites();
+  if (companyNotFound.value) void companyStore.fetchInvites(true);
 }
 
 useSocket('notification:new', onInviteNotification);
 useSocket('connect', onSocketConnect);
 
-watch(
-  companyNotFound,
-  (v) => {
-    if (v && !invitesFetchedOnce) {
-      invitesFetchedOnce = true;
-      void companyStore.fetchInvites();
-    }
-  },
-  { immediate: true },
-);
-
 onBeforeUnmount(() => {
   if (savedNoticeTimer) clearTimeout(savedNoticeTimer);
 });
 
-onMounted(() => {
-  void companyStore.fetchCompany();
+/** Vào trang: tải tuần tự company → invites (nếu chưa có công ty); mọi đường
+ *  (kể cả lỗi) đều kết thúc bằng pageReady = true để thoát skeleton. Refetch
+ *  sau đó (socket/reconnect/Thử lại) là silent, không đụng pageReady. */
+onMounted(async () => {
+  try {
+    await companyStore.fetchCompany();
+    if (companyStore.companyNotFound) await companyStore.fetchInvites();
+  } finally {
+    pageReady.value = true;
+  }
 });
 </script>
 
 <template>
   <div ref="rootEl" class="min-h-screen bg-white font-poppins text-slate-900 antialiased">
     <Transition name="c3-mode" mode="out-in" @before-enter="onModeBeforeEnter" @after-enter="onModeAfterEnter">
-      <div v-if="companyLoading" class="mx-auto max-w-[1240px] px-6 py-10 text-sm text-slate-500">
-        Đang tải hồ sơ doanh nghiệp…
-      </div>
-      <div v-else-if="companyLoadError" class="mx-auto max-w-[1240px] px-6 py-10">
+      <CompanyProfileSkeleton v-if="pageState === 'loading'" />
+      <div v-else-if="pageState === 'error'" class="mx-auto max-w-[1240px] px-6 py-10">
         <p class="text-sm text-red-600" role="alert">{{ companyLoadError }}</p>
         <button
           type="button"
@@ -236,7 +250,7 @@ onMounted(() => {
           Thử lại
         </button>
       </div>
-      <div v-else-if="companyNotFound && !isEditing" class="c3-fade mx-auto max-w-[1240px] px-6 py-10">
+      <div v-else-if="pageState === 'empty'" class="c3-fade mx-auto max-w-[1240px] px-6 py-10">
         <p class="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-600">Hồ sơ doanh nghiệp / 01</p>
         <h1
           tabindex="-1"
@@ -271,8 +285,16 @@ onMounted(() => {
             </div>
           </div>
 
-          <p v-if="invitesLoading" class="m-0 text-[13px] text-slate-500">Đang tải lời mời…</p>
-          <p v-else-if="invitesError" class="m-0 text-[13px] text-red-600" role="alert">{{ invitesError }}</p>
+          <!-- Lần tải đầu được che bởi skeleton toàn trang; refetch sau đó im lặng
+               nên không cần chữ loading riêng — chỉ hiện lỗi kèm Thử lại. -->
+          <p v-if="invitesError" class="m-0 text-[13px] text-red-600" role="alert">
+            {{ invitesError }}
+            <button
+              type="button"
+              class="ml-1 cursor-pointer font-medium text-blue-600 underline-offset-2 hover:underline focus:outline-none"
+              @click="companyStore.fetchInvites(true)"
+            >Thử lại</button>
+          </p>
           <ul v-else class="m-0 mt-1 list-none divide-y divide-slate-200 border-t border-slate-200 p-0">
             <li v-for="invite in companyInvites" :key="invite.companyId" class="flex flex-wrap items-center gap-3 py-3">
               <div class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
@@ -307,7 +329,7 @@ onMounted(() => {
         </section>
       </div>
       <CompanyProfileView
-        v-else-if="hasProfile && !isEditing"
+        v-else-if="pageState === 'view'"
         :profile="profile!"
         :saved-notice="savedNotice"
         :saved-message="savedMessage"
@@ -315,7 +337,7 @@ onMounted(() => {
         @edit="startEdit"
       />
       <CompanyProfileForm
-        v-else-if="hasProfile || isEditing"
+        v-else-if="pageState === 'form'"
         :profile="profile ?? EMPTY_PROFILE"
         :mode="mode"
         :saving="companySaving || companyCreating"
