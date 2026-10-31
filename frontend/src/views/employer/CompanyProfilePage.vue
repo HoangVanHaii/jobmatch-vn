@@ -57,20 +57,19 @@ const pageState = computed<'loading' | 'error' | 'empty' | 'view' | 'form'>(() =
 });
 
 /* Quyền sửa hồ sơ: owner active HOẶC admin (UX check; BE enforce bằng
- * requireCompanyOwnerOrAdmin). Members cache được fetch khi có company. */
+ * requireCompanyOwnerOrAdmin). Row membership của viewer (me) được fetch
+ * cùng page members khi có company. */
 const canEdit = computed<boolean>(() => {
   if (!profile.value || !auth.user) return false;
   if (auth.user.role === 'admin') return true;
-  const uid = auth.user.id;
-  const list = memberStore.getMembers(profile.value.id);
-  const me = list.find((m) => m.userId === uid) ?? null;
+  const me = memberStore.getMe(profile.value.id);
   return !!me && me.role === 'owner' && me.status === 'active';
 });
 
 watch(
   profile,
   (v) => {
-    if (v) void memberStore.fetchList(v.id);
+    if (v) void memberStore.fetchPage(v.id);
   },
   { immediate: true },
 );

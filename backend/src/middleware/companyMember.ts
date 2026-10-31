@@ -44,12 +44,28 @@ export const companyIdParamsSchema = z.object({
   companyId: z.string().uuid(),
 });
 
+/**
+ * Query GET /:companyId/members — server-side pagination + search + filter + sort.
+ * Zod coerce string từ query string → number, clamp limit [1,100], offset >= 0.
+ * `status` là nhãn tab FE (không phải enum DB) — service ánh xạ sang điều kiện SQL.
+ * `sortBy` là khoá hiển thị FE — service whitelist sang cột SQL, không nhận tên cột tuỳ ý.
+ */
+export const listMembersQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  offset: z.coerce.number().int().min(0).default(0),
+  search: z.string().trim().max(255).default(''),
+  status: z.enum(['all', 'active', 'pending', 'ended']).default('all'),
+  sortBy: z.enum(['name', 'role', 'status', 'date']).default('date'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+
 /* ============================================================================
  * Validation middleware (composed from Zod schemas + generic validate())
  * ==========================================================================*/
 export const validateInviteMember = validate(inviteMemberSchema, 'body');
 export const validateCompanyMemberUserParams = validate(companyMemberUserParamsSchema, 'params');
 export const validateCompanyIdParams = validate(companyIdParamsSchema, 'params');
+export const validateListMembersQuery = validate(listMembersQuerySchema, 'query');
 
 /* ============================================================================
  * Authorization guards

@@ -23,6 +23,7 @@ import type {
   InviteMemberBody,
   InviteMemberResponse,
   LeaveCompanyResponse,
+  ListCompanyMembersQuery,
   ListCompanyMembersResponse,
   ListPublicCompanyMembersResponse,
   MyInvitationsResponse,
@@ -215,21 +216,28 @@ export const companyMemberController = {
 
   /* ==========================================================================
    * GET /companies/:companyId/members — list members của company
+   * Query (đã validate ở middleware): limit, offset, search, status,
+   * sortBy, sortOrder → server-side pagination.
    * ==========================================================================
    *
    * Permission:
    *   - Owner: thấy TẤT CẢ status (active, pending, declined, removed, left, auto_cancelled).
-   *   - Member active: chỉ thấy active.
-   *   - Người ngoài: [] (không tự ý 401 — không leak info về company tồn tại).
+   *   - Member active: chỉ thấy active (status filter từ client bị bỏ qua).
+   *   - Người ngoài: response rỗng (không tự ý 401 — không leak info về company tồn tại).
    * ==========================================================================*/
   list: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { companyId } = req.params as unknown as CompanyIdParams;
       const viewerUserId = req.user!.userId;
+      const query = req.query as unknown as ListCompanyMembersQuery;
 
-      const members = await companyMemberService.listByCompany(companyId, viewerUserId);
+      const result = await companyMemberService.listByCompany(
+        companyId,
+        viewerUserId,
+        query,
+      );
 
-      const response: ListCompanyMembersResponse = members;
+      const response: ListCompanyMembersResponse = result;
       res.json({ success: true, data: response });
     } catch (err) {
       console.error('[companyMember.list] error:', err);

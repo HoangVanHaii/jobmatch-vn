@@ -117,7 +117,9 @@ export const useCompanyStore = defineStore('company', () => {
           }
           return false;
         }
-        const { data } = await companyApi.getById(mine.data.id);
+        // includeJobs=false: fetchCompany chỉ phục vụ trang hồ sơ công ty +
+        // trang thành viên (không ai đọc current.jobs) → bỏ query jobs ở BE.
+        const { data } = await companyApi.getById(mine.data.id, { includeJobs: false });
         if (requestId === companyFetchRequestId) {
           current.value = data.data;
           company.value = companyToProfile(data.data);
@@ -257,12 +259,16 @@ export const useCompanyStore = defineStore('company', () => {
     if (changedFilter) query.value.page = 1;
   };
 
-  /** Chi tiết theo id (kèm jobs live). */
-  const fetchById = async (id: string): Promise<void> => {
+  /**
+   * Chi tiết theo id (kèm jobs live).
+   * `opts.includeJobs: false` → BE bỏ query jobs — dùng cho trang không đọc
+   * jobs (vd reload company context sau khi rời công ty ở trang thành viên).
+   */
+  const fetchById = async (id: string, opts?: { includeJobs?: boolean }): Promise<void> => {
     loading.value = true;
     error.value = null;
     try {
-      const { data } = await companyApi.getById(id);
+      const { data } = await companyApi.getById(id, opts);
       current.value = data.data;
     } catch (e) {
       setError(e);

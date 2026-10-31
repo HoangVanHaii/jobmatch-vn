@@ -26,11 +26,23 @@ export const companyController = {
     }
   },
 
-  /** GET /companies/:id — chi tiết theo id */
+  /**
+   * GET /companies/:id — chi tiết theo id.
+   * Query tùy chọn `includeJobs=false` → service bỏ qua query jobs live
+   * (cho trang chỉ cần profile). Mặc định/không truyền → trả kèm jobs như cũ.
+   */
   getById: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const id = req.params.id as string;
-      const company = await companyService.getById(id);
+      // Query trùng lặp (?includeJobs=false&includeJobs=false) → Express trả
+      // array; lấy giá trị cuối, không gọi toLowerCase trên array (tránh 500).
+      const raw = req.query.includeJobs;
+      const value = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+      // Chỉ tắt jobs khi giá trị là 'false' (case-insensitive, trim khoảng trắng).
+      // Mọi giá trị khác/thiếu → true = hành vi mặc định cũ.
+      const includeJobs =
+        typeof value !== 'string' || value.trim().toLowerCase() !== 'false';
+      const company = await companyService.getById(id, { includeJobs });
 
       // Không tìm thấy → 404
       if (!company) throw new AppError(404, 'COMPANY_NOT_FOUND', 'Company not found');
@@ -88,7 +100,11 @@ export const companyController = {
         res.json({ success: true, data: null });
         return;
       }
-      const company = await companyService.getById(membership.companyId);
+      // Response chỉ trả { id, name, logoUrl, role } → query jobs là dư thừa,
+      // bỏ qua (tương đương includeJobs=false).
+      const company = await companyService.getById(membership.companyId, {
+        includeJobs: false,
+      });
       if (!company) {
         // Edge case: membership tồn tại nhưng company đã bị xoá → coi như chưa có.
         res.json({ success: true, data: null });

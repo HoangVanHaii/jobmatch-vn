@@ -105,10 +105,16 @@ export const companyService = {
     return { items: rows, total, page, limit };
   },
 
-  /** Chi tiết theo id + jobs liên quan */
-  getById: async (id: string) => {
+  /**
+   * Chi tiết theo id + jobs liên quan.
+   * `includeJobs: false` → bỏ qua query jobs (dành cho trang chỉ cần profile,
+   * vd quản lý thành viên / hồ sơ công ty). Mặc định (undefined/true) giữ nguyên
+   * hành vi cũ: gắn 10 jobs live mới nhất.
+   */
+  getById: async (id: string, opts?: { includeJobs?: boolean }) => {
     const company = await db.query.companies.findFirst({ where: eq(companies.id, id) });
     if (!company) return null;
+    if (opts?.includeJobs === false) return company;
     return withLiveJobs(company);
   },
 

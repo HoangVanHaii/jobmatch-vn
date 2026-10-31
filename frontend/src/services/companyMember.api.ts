@@ -19,6 +19,8 @@ import { http } from './http';
 import type {
   AddCompanyMemberPayload,
   CompanyMember,
+  CompanyMemberListQuery,
+  CompanyMemberListResult,
   PublicCompanyMember,
   TransferCompanyOwnerPayload,
   TransferCompanyOwnerResult,
@@ -32,9 +34,15 @@ export interface ApiResponse<T> {
 }
 
 export const companyMemberApi = {
-  /** GET /companies/:id/members — owner thấy hết, member thường chỉ thấy active */
-  list: (companyId: string) =>
-    http.get<ApiResponse<CompanyMember[]>>(`/companies/${companyId}/members`),
+  /**
+   * GET /companies/:id/members — server-side pagination + search + filter + sort.
+   * Owner thấy hết, member thường chỉ thấy active (BE enforce).
+   * Response: { members, pagination: { limit, offset, total }, counts, me, owners, preview }.
+   */
+  list: (companyId: string, params?: CompanyMemberListQuery) =>
+    http.get<ApiResponse<CompanyMemberListResult>>(`/companies/${companyId}/members`, {
+      params,
+    }),
 
   /** GET /companies/:id/members/public — member active rút gọn cho profile
    *  công khai (candidate Job Detail tab "Công ty"), không cần là member. */
