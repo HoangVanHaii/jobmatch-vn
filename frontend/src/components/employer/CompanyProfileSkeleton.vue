@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * CompanyProfileSkeleton.vue — Skeleton toàn trang cho nhánh loading của
- * CompanyProfilePage. Mô phỏng bố cục CompanyProfileView (hero 2 cột + 3 khối
+ * CompanyView. Mô phỏng bố cục CompanyProfileView (hero 2 cột + 3 khối
  * biên tập) để không nhảy layout khi dữ liệu về. Chỉ hình khối + animate-pulse,
  * không dùng c3-fade; tôn trọng prefers-reduced-motion.
  */

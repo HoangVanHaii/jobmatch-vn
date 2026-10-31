@@ -119,7 +119,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'interviews', name: 'employer-interviews', component: () => import('@views/employer/InterviewsView.vue') },
 
       // Công ty
-      { path: 'company', name: 'employer-company', component: () => import('@views/employer/CompanyProfilePage.vue') },
+      { path: 'company', name: 'employer-company', component: () => import('@views/employer/CompanyView.vue') },
       { path: 'company/members', name: 'employer-company-members', component: () => import('@views/employer/CompanyMembersView.vue') },
       // URL cũ khi trang còn tách riêng — giữ redirect để bookmark không chết.
       { path: 'company-profile', redirect: '/employer/company' },
