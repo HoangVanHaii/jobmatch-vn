@@ -77,9 +77,11 @@ watch(
       <button
         v-for="(tab, i) in tabs"
         :key="tab.key"
+        :id="`company-members-tab-${tab.key}`"
         type="button"
         role="tab"
         :aria-selected="filter === tab.key ? 'true' : 'false'"
+        :aria-controls="'company-members-content'"
         class="cursor-pointer rounded-md px-3 py-1.5 text-[13px] transition-colors duration-150 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
         :class="filter === tab.key
           ? 'bg-white font-semibold text-slate-900 shadow-sm ring-1 ring-slate-200'

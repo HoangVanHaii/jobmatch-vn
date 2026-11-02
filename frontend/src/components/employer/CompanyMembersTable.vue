@@ -46,6 +46,12 @@ const toggleSort = (key: 'role' | 'status' | 'date'): void => {
   // Đổi chiều asc/desc do View quyết định (toggleSort của View).
   emit('sort', key);
 };
+
+/** aria-sort theo trạng thái sort thực tế của cột (a11y — WAI-ARIA). */
+const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending' | 'none' => {
+  if (props.sortKey !== key) return 'none';
+  return props.sortDir === 'asc' ? 'ascending' : 'descending';
+};
 </script>
 
 <template>
@@ -62,7 +68,7 @@ const toggleSort = (key: 'role' | 'status' | 'date'): void => {
       <thead class="border-b border-slate-200">
         <tr class="text-left text-[11px] uppercase tracking-wider font-medium text-slate-600">
           <th scope="col" class="px-4 py-2.5 font-medium">Thành viên</th>
-          <th scope="col" class="px-4 py-2.5 font-medium" aria-sort="none">
+          <th scope="col" class="px-4 py-2.5 font-medium" :aria-sort="ariaSortFor('role')">
             <button
               type="button"
               class="inline-flex cursor-pointer items-center gap-1 transition-colors duration-150 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
@@ -75,7 +81,7 @@ const toggleSort = (key: 'role' | 'status' | 'date'): void => {
               <ArrowUpDown v-else :size="11" class="text-slate-400" aria-hidden="true" />
             </button>
           </th>
-          <th scope="col" class="px-4 py-2.5 font-medium" aria-sort="none">
+          <th scope="col" class="px-4 py-2.5 font-medium" :aria-sort="ariaSortFor('status')">
             <button
               type="button"
               class="inline-flex cursor-pointer items-center gap-1 transition-colors duration-150 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
@@ -88,7 +94,7 @@ const toggleSort = (key: 'role' | 'status' | 'date'): void => {
               <ArrowUpDown v-else :size="11" class="text-slate-400" aria-hidden="true" />
             </button>
           </th>
-          <th scope="col" class="px-4 py-2.5 font-medium" aria-sort="none">
+          <th scope="col" class="px-4 py-2.5 font-medium" :aria-sort="ariaSortFor('date')">
             <button
               type="button"
               class="inline-flex cursor-pointer items-center gap-1 transition-colors duration-150 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"

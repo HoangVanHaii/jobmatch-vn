@@ -26,6 +26,8 @@ import CompanyMembersHeader from '@components/employer/CompanyMembersHeader.vue'
 import CompanyMembersToolbar from '@components/employer/CompanyMembersToolbar.vue';
 import CompanyMembersTable from '@components/employer/CompanyMembersTable.vue';
 import InviteMemberModal from '@components/employer/InviteMemberModal.vue';
+import TransferOwnershipModal from '@components/employer/TransferOwnershipModal.vue';
+import DeleteMemberModal from '@components/employer/DeleteMemberModal.vue';
 import type { RowActionItem } from '@/utils/companyMemberDisplay';
 import type {
   CompanyMember,
@@ -54,9 +56,12 @@ const companyId = ref<string | null>(null);
 const loadError = ref<string | null>(null);
 const inviteOpen = ref(false);
 const transferTarget = ref<CompanyMember | null>(null);
-/** Row sắp được xoá (mở ConfirmModal trước khi gọi API thật). */
+const transferSaving = ref(false);
+const transferError = ref<string | null>(null);
+/** Row sắp được xoá (mở DeleteMemberModal trước khi gọi API thật). */
 const removeTarget = ref<CompanyMember | null>(null);
 const removeSaving = ref(false);
+const removeError = ref<string | null>(null);
 
 /* ============================================================================
 * Lifecycle
@@ -277,6 +282,7 @@ const fetchMembers = async (): Promise<void> => {
   if (!companyId.value) return;
   const seq = ++fetchSeq;
   memberStore.error = null;
+  loadError.value = null;
   // Spinner chỉ dành cho lần tải đầu (trước đó loadState skeleton đã bao);
   // từ fetch thứ 2 trở đi giữ nguyên khối danh sách khi đang loading.
   listInit.value = true;
@@ -295,7 +301,8 @@ const fetchMembers = async (): Promise<void> => {
   });
   if (seq !== fetchSeq) return; // response cũ — bỏ qua
   if (!result) {
-    // Lỗi đã ghi vào memberStore.error → banner "Thử lại" trong template.
+    // Lỗi đã ghi vào loadError → banner "Thử lại" trong template.
+    loadError.value = memberStore.error ?? 'Không thể tải danh sách thành viên.';
     members.value = [];
     total.value = 0;
     fetchingList.value = false;
@@ -444,15 +451,32 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const openInvite = (): void => {
   inviteInitialEmail.value = '';
+  inviteError.value = null;
+  inviteSaving.value = false;
+  memberStore.error = null;
   inviteReturnFocusEl = document.activeElement as HTMLElement | null;
   inviteOpen.value = true;
 };
 
 const closeInvite = (): void => {
   inviteOpen.value = false;
+  inviteError.value = null;
+  inviteSaving.value = false;
+  memberStore.error = null;
   inviteReturnFocusEl?.focus();
   inviteReturnFocusEl = null;
 };
+
+/** Watcher đồng bộ: khi modal đóng bằng bất kỳ cách nào, dọn sạch error và loading. */
+watch(inviteOpen, (open) => {
+  if (!open) {
+    inviteError.value = null;
+    inviteSaving.value = false;
+    memberStore.error = null;
+  }
+});
+
+let inviteSeq = 0;
 
 /**
  * Nhận submit từ InviteMemberModal (đã trim/lowercase ở component).
@@ -463,7 +487,9 @@ const submitInvite = async (payload: {
   role: CompanyMemberRole;
 }): Promise<void> => {
   if (inviteSaving.value) return; // guard double-submit
+  const seq = ++inviteSeq;
   inviteError.value = null;
+  memberStore.error = null;
   const email = payload.email;
   if (!email) {
     inviteError.value = 'Vui lòng nhập email.';
@@ -484,47 +510,45 @@ const submitInvite = async (payload: {
       email,
       role: payload.role,
     });
+    if (seq !== inviteSeq) return;
     if (result) {
       toast.success(`Đã gửi lời mời tới ${email}.`);
       inviteOpen.value = false;
+      inviteError.value = null;
+      memberStore.error = null;
       // Refetch trang hiện tại để lấy user info (fullName/avatarUrl) của
       // invite mới + cập nhật total/counts đúng.
       await fetchMembers();
     } else {
       inviteError.value = friendlyInviteError(memberStore.error) ?? 'Không thể gửi lời mời.';
+      // Dọn sạch memberStore.error để không rò rỉ sang banner trang cha hoặc các thao tác khác
+      memberStore.error = null;
     }
   } catch (e) {
+    if (seq !== inviteSeq) return;
     inviteError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+    memberStore.error = null;
   } finally {
-    inviteSaving.value = false;
+    if (seq === inviteSeq) {
+      inviteSaving.value = false;
+    }
   }
 };
 
 /**
- * Map mã lỗi backend → message thân thiện (ưu tiên Tiếng Việt, fallback message gốc).
+ * Chuẩn hoá lỗi invite hiển thị trong modal.
+ *
+ * Vì sao không map theo error code: http.ts bọc lỗi BE thành HttpError với
+ * `code` ở field RIÊNG, còn memberStore.error (string) chỉ giữ `e.message` —
+ * tức là View chỉ nhận được message tiếng Việt thân thiện đã viết sẵn ở
+ * backend/src/service/companyMember.service.ts (USER_NOT_FOUND,
+ * ALREADY_PENDING, ALREADY_ACTIVE_ELSEWHERE... đều có message riêng).
+ * Các nhánh map theo code cũ (MEMBER_EXISTS, ALREADY_IN_COMPANY,
+ * USER_ACTIVE_ELSEWHERE...) vì thế không bao giờ khớp — đã xoá để không
+ * ảo tưởng rằng mapping đang chạy. Chỉ cần fallback message gốc.
  */
 const friendlyInviteError = (raw: string | null): string => {
   if (!raw) return 'Đã có lỗi xảy ra.';
-  const upper = raw.toUpperCase();
-  if (upper.includes('USER_NOT_FOUND')) return 'Email chưa đăng ký tài khoản trên JobMatch.';
-  if (upper.includes('MEMBER_EXISTS')) return 'Người dùng này đã thuộc công ty.';
-  if (upper.includes('ALREADY_IN_COMPANY')) return 'Người dùng này đang thuộc một công ty khác.';
-  if (upper.includes('USER_ACTIVE_ELSEWHERE')) {
-    return 'Người dùng này đang là thành viên active của công ty khác. Họ cần rời trước khi có thể nhận lời mời mới.';
-  }
-  if (upper.includes('USER_NOT_EMPLOYER')) {
-    return 'Email này thuộc tài khoản ứng viên. Chỉ tài khoản nhà tuyển dụng mới có thể tham gia công ty.';
-  }
-  if (upper.includes('USER_NOT_ACTIVE')) {
-    return 'Tài khoản chưa kích hoạt hoặc đang bị tạm khoá — không thể tham gia công ty.';
-  }
-  if (upper.includes('ALREADY_PENDING')) return 'Đã có lời mời đang chờ user này phản hồi.';
-  if (upper.includes('ALREADY_ACTIVE')) return 'Người dùng này đã là thành viên active của công ty.';
-  if (upper.includes('CANNOT_INVITE_SELF')) return 'Bạn không thể tự mời chính mình.';
-  if (upper.includes('CANNOT_REMOVE_OWNER')) return 'Không thể xoá owner duy nhất của công ty. Hãy chuyển quyền sở hữu trước.';
-  if (upper.includes('VALIDATION')) return 'Thông tin không hợp lệ.';
-  if (upper.includes('FORBIDDEN')) return 'Bạn không có quyền thực hiện thao tác này.';
-  // Fallback: BE message đã là Tiếng Việt thân thiện → trả về luôn.
   return raw;
 };
 
@@ -620,9 +644,14 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
   return items;
 };
 
-/** Handler bước 1: mở ConfirmModal để user xác nhận trước khi xoá. */
+let removeSeq = 0;
+
+/** Handler bước 1: mở DeleteMemberModal để user xác nhận trước khi xoá. */
 const removeMember = (row: CompanyMember): void => {
   removeTarget.value = row;
+  removeError.value = null;
+  removeSaving.value = false;
+  memberStore.error = null;
 };
 
 /** Handler bước 2: gọi API xoá sau khi user đã confirm. */
@@ -632,9 +661,13 @@ const confirmRemoveMember = async (): Promise<void> => {
     if (!removeSaving.value) removeTarget.value = null;
     return;
   }
+  const seq = ++removeSeq;
   removeSaving.value = true;
+  removeError.value = null;
+  memberStore.error = null;
   try {
     const ok = await memberStore.remove(companyId.value, row.userId);
+    if (seq !== removeSeq) return;
     if (ok) {
       const name = row.user?.fullName ?? row.user?.email ?? 'thành viên';
       if (row.status === 'pending') {
@@ -642,24 +675,44 @@ const confirmRemoveMember = async (): Promise<void> => {
       } else {
         toast.success(`Đã xoá ${name} khỏi công ty.`);
       }
+      removeTarget.value = null;
+      removeError.value = null;
+      memberStore.error = null;
       // Refetch trang hiện tại để row biến mất + total/counts cập nhật đúng.
       // fetchMembers tự kẹp page về phạm vi hợp lệ nếu trang cuối không còn row.
       await fetchMembers();
-      removeTarget.value = null;
     } else {
-      toast.error(memberStore.error ?? 'Không thể xoá thành viên.');
+      removeError.value = memberStore.error ?? 'Không thể xoá thành viên.';
+      memberStore.error = null;
     }
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : 'Đã có lỗi xảy ra.');
+    if (seq !== removeSeq) return;
+    removeError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+    memberStore.error = null;
   } finally {
-    removeSaving.value = false;
+    if (seq === removeSeq) {
+      removeSaving.value = false;
+    }
   }
 };
 
 /** Đóng modal khi user cancel (click backdrop / ESC / nút Hủy). */
 const cancelRemove = (): void => {
+  if (removeSaving.value) return;
   removeTarget.value = null;
+  removeError.value = null;
+  removeSaving.value = false;
+  memberStore.error = null;
 };
+
+/** Watcher đồng bộ: khi modal xoá đóng bằng bất kỳ cách nào, dọn sạch error và loading. */
+watch(removeTarget, (target) => {
+  if (!target) {
+    removeError.value = null;
+    removeSaving.value = false;
+    memberStore.error = null;
+  }
+});
 
 /** Handler: mở InviteModal pre-fill với email user để mời lại. */
 const reinviteMember = (row: CompanyMember): void => {
@@ -669,67 +722,104 @@ const reinviteMember = (row: CompanyMember): void => {
   }
   inviteInitialEmail.value = row.user.email;
   inviteError.value = null;
+  inviteSaving.value = false;
+  memberStore.error = null;
   inviteOpen.value = true;
 };
 
 /* ---------- Transfer ownership ---------- */
-const transferSaving = ref(false);
-
-/** Message cho ConfirmModal — chứa tên + email owner mới để user xác nhận đúng người. */
-const transferMessage = computed<string>(() => {
+/** Email owner mới hiển thị trong modal (fallback userId nếu user chưa có email). */
+const transferEmail = computed<string>(() => {
   const t = transferTarget.value;
   if (!t) return '';
-  const newOwnerName = t.user?.fullName ?? `User ID ${t.userId.slice(0, 8)}…`;
-  const newOwnerEmail = t.user?.email ?? t.userId;
-  return `Bạn có chắc chắn muốn chuyển quyền sở hữu cho ${newOwnerName} (${newOwnerEmail}) không? Sau khi chuyển, bạn sẽ trở thành member và không thể hoàn tác.`;
+  return t.user?.email ?? t.userId;
 });
+
+let transferSeq = 0;
 
 const openTransfer = (row: CompanyMember): void => {
   transferTarget.value = row;
+  transferError.value = null;
+  transferSaving.value = false;
+  memberStore.error = null;
 };
 
 /**
- * Message cho ConfirmModal xoá member — phân biệt 2 case:
- *   - status='pending' → "Huỷ lời mời tới {name}"
- *   - status='active'  → "Xoá {name} khỏi công ty"
- * Fallback tên khi user chưa cập nhật profile: dùng email → userId (8 ký tự đầu).
+ * Nội dung DeleteMemberModal — phân biệt 2 case:
+ *   - status='active' → mặc định của modal ("Xoá thành viên?" + email trong mô tả)
+ *   - status='pending' → ghi đè title/description/confirmText thành huỷ lời mời
+ * Fallback tên khi user chưa có email: dùng userId (8 ký tự đầu).
  */
-const removeConfirmMessage = computed<string>(() => {
+const removeEmail = computed<string>(() => {
   const t = removeTarget.value;
   if (!t) return '';
-  const name = t.user?.fullName ?? t.user?.email ?? `User ID ${t.userId.slice(0, 8)}…`;
-  if (t.status === 'pending') {
-    return `Bạn có chắc chắn muốn huỷ lời mời đã gửi tới ${name}? Hành động này không thể hoàn tác — nếu muốn mời lại, bạn phải tạo invite mới.`;
-  }
-  return `Bạn có chắc chắn muốn xoá ${name} khỏi công ty? Họ sẽ mất quyền truy cập vào các tính năng dành cho thành viên. Hành động này không thể hoàn tác.`;
+  return t.user?.email ?? t.userId;
 });
 
-/** Đóng modal (khi user click backdrop hoặc ESC). */
-const onTransferModalClose = (open: boolean): void => {
-  if (!open && !transferSaving.value) {
+const removeTitle = computed<string>(() =>
+  removeTarget.value?.status === 'pending' ? 'Huỷ lời mời?' : 'Xóa thành viên?',
+);
+
+const removeDescription = computed<string>(() => {
+  const t = removeTarget.value;
+  if (!t || t.status !== 'pending') return '';
+  const name = t.user?.fullName ?? t.user?.email ?? `User ID ${t.userId.slice(0, 8)}…`;
+  return `Bạn có chắc chắn muốn huỷ lời mời đã gửi tới ${name}? Hành động này không thể hoàn tác — nếu muốn mời lại, bạn phải tạo invite mới.`;
+});
+
+const removeConfirmText = computed<string>(() =>
+  removeTarget.value?.status === 'pending' ? 'Huỷ lời mời' : 'Xóa thành viên',
+);
+
+/** Đóng modal (nút Hủy / nút X / backdrop / ESC — component tự chặn khi loading). */
+const onTransferModalClose = (): void => {
+  if (!transferSaving.value) {
     transferTarget.value = null;
+    transferError.value = null;
+    transferSaving.value = false;
+    memberStore.error = null;
   }
 };
 
+/** Watcher đồng bộ: khi modal chuyển quyền đóng bằng bất kỳ cách nào, dọn sạch error và loading. */
+watch(transferTarget, (target) => {
+  if (!target) {
+    transferError.value = null;
+    transferSaving.value = false;
+    memberStore.error = null;
+  }
+});
+
 const submitTransfer = async (): Promise<void> => {
   if (!transferTarget.value || !companyId.value || transferSaving.value) return;
+  const seq = ++transferSeq;
   transferSaving.value = true;
+  transferError.value = null;
+  memberStore.error = null;
   try {
     const result = await memberStore.transferOwner(companyId.value, {
       newOwnerUserId: transferTarget.value.userId,
     });
+    if (seq !== transferSeq) return;
     if (result) {
       toast.success('Đã chuyển quyền sở hữu công ty.');
       transferTarget.value = null;
+      transferError.value = null;
+      memberStore.error = null;
       // Refetch trang hiện tại để refresh cache + đảm bảo consistency sau swap.
       await fetchMembers();
     } else {
-      toast.error(memberStore.error ?? 'Không thể chuyển quyền sở hữu.');
+      transferError.value = memberStore.error ?? 'Không thể chuyển quyền sở hữu.';
+      memberStore.error = null;
     }
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : 'Đã có lỗi xảy ra.');
+    if (seq !== transferSeq) return;
+    transferError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+    memberStore.error = null;
   } finally {
-    transferSaving.value = false;
+    if (seq === transferSeq) {
+      transferSaving.value = false;
+    }
   }
 };
 
@@ -762,9 +852,11 @@ const submitLeave = async (): Promise<void> => {
       }
     } else {
       leaveError.value = memberStore.error ?? 'Không thể rời công ty.';
+      memberStore.error = null;
     }
   } catch (e) {
     leaveError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+    memberStore.error = null;
   } finally {
     leaveSaving.value = false;
   }
@@ -881,11 +973,11 @@ watch([memberFilter, sortKey, sortDir], () => {
       <template v-else>
         <!-- ============ Error banner ============ -->
         <div
-          v-if="loadError || memberStore.error"
+          v-if="loadError"
           class="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3"
         >
           <AlertCircle :size="16" class="mt-0.5 shrink-0 text-red-500" />
-          <p class="m-0 flex-1 text-[13px] leading-[1.6] text-red-700" role="alert">{{ loadError ?? memberStore.error }}</p>
+          <p class="m-0 flex-1 text-[13px] leading-[1.6] text-red-700" role="alert">{{ loadError }}</p>
           <button
             type="button"
             class="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] text-slate-700 transition-colors duration-150 hover:border-slate-300 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
@@ -944,7 +1036,16 @@ watch([memberFilter, sortKey, sortDir], () => {
         </div>
 
         <!-- ============ Members table (một bảng duy nhất, mọi trạng thái) ============ -->
-        <div v-else class="c3-fade c3-d1 overflow-hidden scroll-mt-6">
+        <!-- Tabpanel của tab lọc trạng thái ở Toolbar: id/label trùng khớp với
+             `aria-controls` của các tab (company-members-tab-*). ID tĩnh an toàn
+             vì route này chỉ mount đúng 1 instance View + Toolbar. -->
+        <div
+          v-else
+          id="company-members-content"
+          role="tabpanel"
+          :aria-labelledby="isCurrentUserOwner ? `company-members-tab-${memberFilter}` : undefined"
+          class="c3-fade c3-d1 overflow-hidden scroll-mt-6"
+        >
           <CompanyMembersToolbar
             :tabs="filterTabs"
             :filter="memberFilter"
@@ -983,26 +1084,25 @@ watch([memberFilter, sortKey, sortDir], () => {
     />
 
     <!-- =================== Transfer ownership modal =================== -->
-    <ConfirmModal
+    <TransferOwnershipModal
       :open="transferTarget !== null"
-      title="Chuyển quyền sở hữu?"
-      :message="transferMessage"
-      confirm-text="Chuyển quyền sở hữu"
-      variant="danger"
+      :email="transferEmail"
+      :error="transferError"
       :loading="transferSaving"
-      @update:open="onTransferModalClose"
+      @close="onTransferModalClose"
       @confirm="submitTransfer"
     />
 
     <!-- =================== Remove member confirm modal =================== -->
-    <ConfirmModal
+    <DeleteMemberModal
       :open="removeTarget !== null"
-      :title="removeTarget?.status === 'pending' ? 'Huỷ lời mời?' : 'Xoá thành viên?'"
-      :message="removeConfirmMessage"
-      :confirm-text="removeTarget?.status === 'pending' ? 'Huỷ lời mời' : 'Xoá'"
-      cancel-text="Huỷ"
-      variant="danger"
-      @update:open="cancelRemove"
+      :email="removeEmail"
+      :error="removeError"
+      :title="removeTitle"
+      :description="removeDescription || undefined"
+      :confirm-text="removeConfirmText"
+      :loading="removeSaving"
+      @close="cancelRemove"
       @confirm="confirmRemoveMember"
     />
 
