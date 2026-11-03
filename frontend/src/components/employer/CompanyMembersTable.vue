@@ -24,7 +24,7 @@ import {
   displayName,
   primaryName,
   ROLE_LABELS,
-  STATUS_BADGE,
+  STATUS_COLORS,
   STATUS_LABELS,
   type RowActionItem,
 } from "@/utils/companyMemberDisplay";
@@ -271,13 +271,19 @@ const ariaSortFor = (
             }}</span>
           </td>
 
-          <!-- Trạng thái: badge -->
+          <!-- Trạng thái: ô vuông màu + text bên cạnh -->
           <td class="px-4 py-2.5 align-middle">
             <span
-              class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-              :class="STATUS_BADGE[row.status].cls"
-              >{{ STATUS_LABELS[row.status] }}</span
+              class="inline-flex items-center gap-2 text-xs font-medium"
+              :style="{ color: STATUS_COLORS[row.status] }"
             >
+              <span
+                class="h-2.5 w-2.5 rounded-[2px] shrink-0"
+                :style="{ backgroundColor: STATUS_COLORS[row.status] }"
+                aria-hidden="true"
+              ></span>
+              <span>{{ STATUS_LABELS[row.status] }}</span>
+            </span>
           </td>
 
           <!-- Ngày: nhãn theo trạng thái + ngày ngắn (giờ đầy đủ trong title) -->
@@ -349,10 +355,16 @@ const ariaSortFor = (
           {{ ROLE_LABELS.owner }}
         </span>
         <span
-          class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-          :class="STATUS_BADGE[row.status].cls"
-          >{{ STATUS_LABELS[row.status] }}</span
+          class="inline-flex items-center gap-2 text-[11px] font-medium"
+          :style="{ color: STATUS_COLORS[row.status] }"
         >
+          <span
+            class="h-2.5 w-2.5 rounded-[2px] shrink-0"
+            :style="{ backgroundColor: STATUS_COLORS[row.status] }"
+            aria-hidden="true"
+          ></span>
+          <span>{{ STATUS_LABELS[row.status] }}</span>
+        </span>
         <span class="text-[11px] text-slate-500" :title="dateMeta(row).title">
           {{ dateMeta(row).label }} {{ dateMeta(row).short }}
         </span>

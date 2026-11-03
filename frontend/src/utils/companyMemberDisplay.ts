@@ -3,13 +3,13 @@
  * CompanyMembersView và các component con (header, toolbar, table).
  * Không chứa state/logic nghiệp vụ — chỉ format dữ liệu CompanyMember.
  */
-import type { Component } from 'vue';
-import { formatDate } from './format';
+import type { Component } from "vue";
+import { formatDate } from "./format";
 import type {
   CompanyMember,
   CompanyMemberRole,
   CompanyMemberStatus,
-} from '@/types/companyMember';
+} from "@/types/companyMember";
 
 /** Action item cho menu "⋯" trên mỗi row — handler do View cung cấp. */
 export interface RowActionItem {
@@ -32,17 +32,17 @@ export const displayName = (row: CompanyMember): string =>
 /** Tên hiển thị dòng 1 (fallback: phần trước @ của email). */
 export const primaryName = (row: CompanyMember): string => {
   if (row.user?.fullName) return row.user.fullName;
-  if (row.user?.email) return row.user.email.split('@')[0];
+  if (row.user?.email) return row.user.email.split("@")[0];
   return truncateId(row.userId);
 };
 
 /** Ngày ngắn dd/MM/yyyy. */
 export const formatShortDate = (input: string | null | undefined): string => {
-  if (!input) return '';
+  if (!input) return "";
   const d = new Date(input);
-  if (Number.isNaN(d.getTime())) return '';
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
+  if (Number.isNaN(d.getTime())) return "";
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
   const year = d.getFullYear();
   return `${day}/${month}/${year}`;
 };
@@ -57,12 +57,12 @@ export const dateMeta = (
   row: CompanyMember,
 ): { label: string; short: string; title: string } => {
   let iso = row.invitedAt;
-  let label = 'Mời';
-  if (row.status === 'active') {
-    label = 'Tham gia';
+  let label = "Mời";
+  if (row.status === "active") {
+    label = "Tham gia";
     iso = row.respondedAt ?? row.invitedAt;
-  } else if (row.status !== 'pending') {
-    label = 'Kết thúc';
+  } else if (row.status !== "pending") {
+    label = "Kết thúc";
     iso = row.endedAt ?? row.invitedAt;
   }
   const title = formatDate(iso);
@@ -71,7 +71,7 @@ export const dateMeta = (
 
 /** 2 chữ cái viết tắt cho avatar fallback (tên → email → ID). */
 export const initials = (row: CompanyMember): string => {
-  const name = row.user?.fullName ?? row.user?.email ?? '';
+  const name = row.user?.fullName ?? row.user?.email ?? "";
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return truncateId(row.userId).charAt(0).toUpperCase();
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
@@ -85,13 +85,13 @@ export const initials = (row: CompanyMember): string => {
  * render/chuyển tab, các thành viên khác nhau phân bổ đa dạng.
  */
 const AVATAR_PALETTES: ReadonlyArray<{ bg: string; text: string }> = [
-  { bg: 'bg-violet-100', text: 'text-violet-700' },
-  { bg: 'bg-blue-100', text: 'text-blue-700' },
-  { bg: 'bg-indigo-100', text: 'text-indigo-700' },
-  { bg: 'bg-teal-100', text: 'text-teal-700' },
-  { bg: 'bg-cyan-100', text: 'text-cyan-700' },
-  { bg: 'bg-rose-100', text: 'text-rose-700' },
-  { bg: 'bg-amber-100', text: 'text-amber-700' },
+  { bg: "bg-violet-100", text: "text-violet-700" },
+  { bg: "bg-blue-100", text: "text-blue-700" },
+  { bg: "bg-indigo-100", text: "text-indigo-700" },
+  { bg: "bg-teal-100", text: "text-teal-700" },
+  { bg: "bg-cyan-100", text: "text-cyan-700" },
+  { bg: "bg-rose-100", text: "text-rose-700" },
+  { bg: "bg-amber-100", text: "text-amber-700" },
 ];
 
 export const avatarColor = (row: CompanyMember): string => {
@@ -106,25 +106,34 @@ export const avatarColor = (row: CompanyMember): string => {
 };
 
 export const STATUS_LABELS: Record<CompanyMemberStatus, string> = {
-  pending: 'Đã mời',
-  active: 'Đang hoạt động',
-  declined: 'Đã từ chối',
-  removed: 'Đã bị xoá',
-  left: 'Đã rời công ty',
-  auto_cancelled: 'Bị huỷ tự động',
+  pending: "Đã mời",
+  active: "Đang hoạt động",
+  declined: "Đã từ chối",
+  removed: "Đã bị xoá",
+  left: "Đã rời công ty",
+  auto_cancelled: "Bị huỷ tự động",
+};
+
+export const STATUS_COLORS: Record<CompanyMemberStatus, string> = {
+  pending: "#3975C6",
+  active: "#17636A",
+  declined: "#64748B",
+  removed: "#B83D35",
+  left: "#89929D",
+  auto_cancelled: "#94A3B8",
 };
 
 export const ROLE_LABELS: Record<CompanyMemberRole, string> = {
-  owner: 'Chủ sở hữu',
-  member: 'Thành viên',
+  owner: "Chủ sở hữu",
+  member: "Thành viên",
 };
 
 /** Badge trạng thái — palette slate, 4 trạng thái kết thúc phân biệt bằng chữ. */
 export const STATUS_BADGE: Record<CompanyMemberStatus, { cls: string }> = {
-  pending: { cls: 'bg-amber-50 text-amber-700' },
-  active: { cls: 'bg-emerald-50 text-emerald-700' },
-  declined: { cls: 'bg-slate-100 text-slate-600' },
-  removed: { cls: 'bg-red-50 text-red-700' },
-  left: { cls: 'bg-white text-slate-800 ring-1 ring-inset ring-slate-300' },
-  auto_cancelled: { cls: 'bg-slate-100 text-slate-500' },
+  pending: { cls: "bg-amber-50 text-amber-700" },
+  active: { cls: "bg-emerald-50 text-emerald-700" },
+  declined: { cls: "bg-slate-100 text-slate-600" },
+  removed: { cls: "bg-red-50 text-red-700" },
+  left: { cls: "bg-white text-slate-800 ring-1 ring-inset ring-slate-300" },
+  auto_cancelled: { cls: "bg-slate-100 text-slate-500" },
 };
