@@ -192,8 +192,60 @@ export interface MyInvitationItem {
 }
 export type MyInvitationsResponse = MyInvitationItem[];
 
-/** Response của GET /companies/:companyId/members — list members enriched. */
-export type ListCompanyMembersResponse = CompanyMemberWithUser[];
+/* ============================================================================
+ * GET /:companyId/members — query + response server-side pagination
+ * ==========================================================================*/
+
+/**
+ * Query params của GET /companies/:companyId/members.
+ *
+ * - `status` là nhãn tab của FE (all/active/pending/ended), KHÔNG phải enum DB.
+ *   Service ánh xạ `ended` → IN ('declined','removed','left','auto_cancelled').
+ * - `sortBy` dùng khoá hiển thị của FE; service whitelist → cột SQL tương ứng.
+ */
+export interface ListCompanyMembersQuery {
+  limit?: number;
+  offset?: number;
+  /** Tìm kiếm email (substring, không phân biệt hoa thường). Rỗng = không lọc. */
+  search?: string;
+  status?: 'all' | 'active' | 'pending' | 'ended';
+  sortBy?: 'name' | 'role' | 'status' | 'date';
+  sortOrder?: 'asc' | 'desc';
+}
+
+/** Số liệu tổng hợp cho tab lọc + header — tính theo phạm vi viewer (owner thấy
+ *  hết, member chỉ đếm active), KHÔNG theo search/status filter của trang. */
+export interface CompanyMemberListCounts {
+  all: number;
+  active: number;
+  pending: number;
+  ended: number;
+}
+
+/**
+ * Response của GET /companies/:companyId/members (server-side pagination).
+ *
+ * `owners` / `preview` / `me` đi kèm vì FE không còn giữ full list sau khi
+ * phân trang server-side: header cần danh sách owner active + avatar preview
+ * (4 active đầu) + row của chính viewer (check quyền, nhận diện "Bạn là ...").
+ */
+export interface ListCompanyMembersResponse {
+  /** Trang hiện tại (sau search/filter/sort/limit/offset). */
+  members: CompanyMemberWithUser[];
+  pagination: {
+    limit: number;
+    offset: number;
+    /** Tổng số bản ghi sau search/filter, TRƯỚC phân trang. */
+    total: number;
+  };
+  counts: CompanyMemberListCounts;
+  /** Row membership của chính viewer (null nếu không thuộc company). */
+  me: CompanyMemberWithUser | null;
+  /** Owner active của company (thường 1) — cho khối "Chủ sở hữu" ở header. */
+  owners: CompanyMemberUserInfo[];
+  /** Tối đa 4 member active đầu tiên — cho card avatar preview. */
+  preview: CompanyMemberUserInfo[];
+}
 
 /** GET /:companyId/members/public — member active rút gọn cho profile công khai. */
 export type ListPublicCompanyMembersResponse = PublicCompanyMember[];

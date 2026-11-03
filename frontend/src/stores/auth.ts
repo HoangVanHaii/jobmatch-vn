@@ -7,6 +7,7 @@ import { authApi } from '@services/auth.api';
 // Import bằng dynamic require-style để tránh circular dependency:
 // notification.ts → socket.ts (không phụ thuộc auth), an toàn.
 import { useNotificationStore } from './notification';
+import { useCompanyMemberStore } from './companyMember';
 import { disconnectSocket } from '@services/socket';
 
 /** OAuth provider enum — đồng bộ với backend `oauthProviderEnum`. */
@@ -171,6 +172,9 @@ export const useAuthStore = defineStore('auth', () => {
       // Unbind socket + reset notification list.
       const notif = useNotificationStore();
       notif.reset();
+      // Xóa cache members (gồm `me` dùng phân quyền) — tránh user khác login
+      // trên cùng tab đọc nhầm `me`/`owners` của tài khoản cũ.
+      useCompanyMemberStore().reset();
       // Ngắt hẳn socket — BẮT BUỘC, không chỉ unbind listener.
       //
       // Socket là singleton (services/socket.ts) và `auth` callback chỉ đọc

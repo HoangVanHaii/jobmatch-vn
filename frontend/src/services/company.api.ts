@@ -56,7 +56,13 @@ export const companyApi = {
     http.get<ApiResponse<CompanyInvite[]>>('/companies/me/invites'),
 
   /** GET /companies/:id — chi tiết (kèm jobs live) */
-  getById: (id: string) => http.get<ApiResponse<Company>>(`/companies/${id}`),
+  /**
+   * GET /companies/:id — chi tiết công ty.
+   * `includeJobs: false` → BE bỏ qua query jobs live (trang chỉ cần profile).
+   * Không truyền → BE trả kèm 10 jobs live như mặc định.
+   */
+  getById: (id: string, params?: { includeJobs?: boolean }) =>
+    http.get<ApiResponse<Company>>(`/companies/${id}`, { params }),
 
   /** GET /companies/by-slug/:slug — chi tiết theo slug (kèm jobs live) */
   getBySlug: (slug: string) => http.get<ApiResponse<Company>>(`/companies/by-slug/${slug}`),

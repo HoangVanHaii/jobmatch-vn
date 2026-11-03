@@ -38,14 +38,17 @@ import {
   users,
   userProfiles,
 } from '../db/schema';
-import { and, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
 import {
   type CompanyMember,
   type CompanyMemberErrorCode,
   type CompanyMemberRole,
   type CompanyMemberStatus,
+  type CompanyMemberUserInfo,
   type CompanyMemberWithUser,
+  type ListCompanyMembersQuery,
+  type ListCompanyMembersResponse,
   type MyInvitationItem,
   type PublicCompanyMember,
   type TransferCompanyOwnerResult,
@@ -1250,14 +1253,31 @@ export const companyMemberService = {
   },
 
   /* ==========================================================================
-   * GET /companies/:companyId/members — list members (giữ nguyên logic cũ nhưng
-   * trả về enriched với user info + support status filter cho owner xem mọi status)
+   * GET /companies/:companyId/members — list members (server-side pagination
+   * + search email + filter status + sort). Query đã được Zod middleware
+   * validate + chuẩn hoá (defaults); ở đây chỉ build điều kiện an toàn.
+   *
+   * Phạm vi (giữ nguyên logic cũ):
+   *   - Owner active: thấy TẤT CẢ status.
+   *   - Member active: chỉ thấy active (status filter từ client bị bỏ qua).
+   *   - Người khác: response rỗng (không 404 — không leak tồn tại của company).
    * ==========================================================================*/
   listByCompany: async (
     companyId: string,
     viewerUserId: string,
-  ): Promise<CompanyMemberWithUser[]> => {
-    // 1. Check viewer status — dùng regular query builder (an toàn hơn relational API)
+    query: ListCompanyMembersQuery = {},
+  ): Promise<ListCompanyMembersResponse> => {
+    /** Các status gộp vào tab "Đã kết thúc" — khớp với endedMembers ở FE. */
+    const ENDED_STATUSES: CompanyMemberStatus[] = [
+      'declined',
+      'removed',
+      'left',
+      'auto_cancelled',
+    ];
+
+    const emptyUserInfo: CompanyMemberUserInfo[] = [];
+
+    // 1. Check viewer status — người ngoài company nhận response rỗng.
     const viewerRows = await db
       .select({ role: companyMembers.role, status: companyMembers.status })
       .from(companyMembers)
@@ -1270,43 +1290,99 @@ export const companyMemberService = {
       .limit(1);
 
     const viewer = viewerRows[0];
-    if (!viewer || viewer.status !== 'active') return [];
+    const isOwner = !!viewer && viewer.role === 'owner';
+    if (!viewer || viewer.status !== 'active') {
+      return {
+        members: [],
+        pagination: { limit: 10, offset: 0, total: 0 },
+        counts: { all: 0, active: 0, pending: 0, ended: 0 },
+        me: null,
+        owners: emptyUserInfo,
+        preview: emptyUserInfo,
+      };
+    }
 
-    // 2. Query với LEFT JOIN users + user_profiles
-    const baseSelect = db
-      .select({
-        // Member fields
-        id: companyMembers.id,
-        companyId: companyMembers.companyId,
-        userId: companyMembers.userId,
-        role: companyMembers.role,
-        status: companyMembers.status,
-        invitedBy: companyMembers.invitedBy,
-        invitedAt: companyMembers.invitedAt,
-        respondedAt: companyMembers.respondedAt,
-        endedAt: companyMembers.endedAt,
-        updatedAt: companyMembers.updatedAt,
-        // User fields (LEFT JOIN)
-        userEmail: users.email,
-        userFullName: userProfiles.fullName,
-        userAvatarUrl: userProfiles.avatarUrl,
-      })
-      .from(companyMembers)
-      .leftJoin(users, eq(users.id, companyMembers.userId))
-      .leftJoin(userProfiles, eq(userProfiles.userId, users.id));
+    const limit = query.limit ?? 10;
+    const offset = query.offset ?? 0;
 
-    const rows =
-      viewer.role === 'owner'
-        ? await baseSelect.where(eq(companyMembers.companyId, companyId))
-        : await baseSelect.where(
-            and(
-              eq(companyMembers.companyId, companyId),
-              eq(companyMembers.status, 'active'),
-            ),
-          );
+    // 2. Điều kiện phạm vi (luôn áp dụng, kể cả cho count): company + role scope.
+    //    Member thường bị khoá cứng vào active — không cho client nới lỏng.
+    const scopeConditions = [
+      eq(companyMembers.companyId, companyId),
+      ...(isOwner ? [] : [eq(companyMembers.status, 'active' as CompanyMemberStatus)]),
+    ];
+    const scopeWhere = and(...scopeConditions);
 
-    // 3. Map to enriched rows
-    return rows.map((r) => ({
+    // 3. Điều kiện search + filter (chỉ áp dụng cho list query + total, KHÔNG
+    //    áp dụng cho counts — count tab giữ ngữ nghĩa tổng quan độc lập search,
+    //    giống hành vi cũ của FE khi còn filter client-side).
+    const listConditions = [...scopeConditions];
+    const search = (query.search ?? '').trim();
+    if (search) {
+      // Tìm chuỗi con thường (không wildcard): escape % _ \ trước khi ILIKE.
+      const escaped = search.replace(/[\\%_]/g, '\\$&');
+      listConditions.push(ilike(users.email, `%${escaped}%`));
+    }
+    if (isOwner) {
+      const status = query.status ?? 'all';
+      if (status === 'active') {
+        listConditions.push(eq(companyMembers.status, 'active'));
+      } else if (status === 'pending') {
+        listConditions.push(eq(companyMembers.status, 'pending'));
+      } else if (status === 'ended') {
+        listConditions.push(inArray(companyMembers.status, ENDED_STATUSES));
+      }
+    }
+    const listWhere = and(...listConditions);
+
+    // 4. Sort — whitelist sortBy → biểu thức SQL. Ngày dùng cùng nguồn với FE
+    //    (active→responded_at||invited_at, pending→invited_at, còn lại→ended_at||invited_at).
+    //    Thêm id asc làm khóa phụ để thứ tự ổn định giữa các trang.
+    const sortBy = query.sortBy ?? 'date';
+    const sortDir = query.sortOrder ?? 'desc';
+    const sortExpr = {
+      name: sql`lower(coalesce(${userProfiles.fullName}, ${users.email}, ''))`,
+      // Enum DB khai báo ['owner','member'] → asc cho owner lên trước (khớp FE cũ).
+      role: sql`${companyMembers.role}`,
+      status: sql`${companyMembers.status}`,
+      date: sql`case when ${companyMembers.status} = 'active'
+        then coalesce(${companyMembers.respondedAt}, ${companyMembers.invitedAt})
+        when ${companyMembers.status} = 'pending'
+        then ${companyMembers.invitedAt}
+        else coalesce(${companyMembers.endedAt}, ${companyMembers.invitedAt}) end`,
+    } as const;
+
+    // 5. SELECT trang + COUNT total (cùng điều kiện listWhere) chạy song song.
+    const memberColumns = {
+      id: companyMembers.id,
+      companyId: companyMembers.companyId,
+      userId: companyMembers.userId,
+      role: companyMembers.role,
+      status: companyMembers.status,
+      invitedBy: companyMembers.invitedBy,
+      invitedAt: companyMembers.invitedAt,
+      respondedAt: companyMembers.respondedAt,
+      endedAt: companyMembers.endedAt,
+      updatedAt: companyMembers.updatedAt,
+      userEmail: users.email,
+      userFullName: userProfiles.fullName,
+      userAvatarUrl: userProfiles.avatarUrl,
+    };
+    const mapRow = (r: {
+      id: string;
+      companyId: string;
+      userId: string;
+      role: CompanyMemberRole;
+      status: CompanyMemberStatus;
+      invitedBy: string | null;
+      invitedAt: Date;
+      respondedAt: Date | null;
+      endedAt: Date | null;
+      updatedAt: Date;
+      userEmail: string | null;
+      userFullName: string | null;
+      userAvatarUrl: string | null;
+    }): CompanyMemberWithUser => ({
       id: r.id,
       companyId: r.companyId,
       userId: r.userId,
@@ -1325,7 +1401,105 @@ export const companyMemberService = {
             avatarUrl: r.userAvatarUrl ?? null,
           }
         : null,
-    }));
+    });
+    const baseQuery = () =>
+      db
+        .select(memberColumns)
+        .from(companyMembers)
+        .leftJoin(users, eq(users.id, companyMembers.userId))
+        .leftJoin(userProfiles, eq(userProfiles.userId, users.id));
+
+    const [rows, totalRow] = await Promise.all([
+      baseQuery()
+        .where(listWhere)
+        .orderBy(
+          sortDir === 'asc' ? asc(sortExpr[sortBy]) : desc(sortExpr[sortBy]),
+          asc(companyMembers.id),
+        )
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(companyMembers)
+        .leftJoin(users, eq(users.id, companyMembers.userId))
+        .where(listWhere),
+    ]);
+
+    // 6. Counts tổng hợp theo phạm vi viewer (1 query, không N+1, không theo
+    //    search/filter của trang). Member thường chỉ đếm được active.
+    const [countsRow] = await db
+      .select({
+        all: sql<number>`CAST(COUNT(*) AS int)`,
+        active: sql<number>`CAST(COUNT(*) FILTER (WHERE ${companyMembers.status} = 'active') AS int)`,
+        pending: sql<number>`CAST(COUNT(*) FILTER (WHERE ${companyMembers.status} = 'pending') AS int)`,
+        ended: sql<number>`CAST(COUNT(*) FILTER (WHERE ${companyMembers.status} IN ('declined','removed','left','auto_cancelled')) AS int)`,
+      })
+      .from(companyMembers)
+      .where(scopeWhere);
+
+    // 7. Row của viewer + owner active + preview 4 active đầu (cho header FE).
+    const [meRows, ownerRows, previewRows] = await Promise.all([
+      baseQuery()
+        .where(
+          and(
+            eq(companyMembers.companyId, companyId),
+            eq(companyMembers.userId, viewerUserId),
+          ),
+        )
+        .limit(1),
+      baseQuery()
+        .where(
+          and(
+            eq(companyMembers.companyId, companyId),
+            eq(companyMembers.role, 'owner'),
+            eq(companyMembers.status, 'active'),
+          ),
+        )
+        .limit(5),
+      // Preview 4 active đầu — chạy cho CẢ member thường (không chỉ owner):
+      // card "Thành viên" ở header hiển thị với mọi viewer. Phạm vi vẫn bị
+      // giới hạn bởi companyId (+ member thường vốn chỉ thấy active).
+      baseQuery()
+        .where(
+          and(
+            eq(companyMembers.companyId, companyId),
+            eq(companyMembers.status, 'active'),
+          ),
+        )
+        .orderBy(desc(companyMembers.invitedAt))
+        .limit(4),
+    ]);
+
+    const toUserInfo = (r: CompanyMemberWithUser): CompanyMemberUserInfo | null =>
+      r.user
+        ? {
+            id: r.user.id,
+            email: r.user.email,
+            fullName: r.user.fullName,
+            avatarUrl: r.user.avatarUrl,
+          }
+        : null;
+
+    const me = meRows[0] ? mapRow(meRows[0]) : null;
+    return {
+      members: rows.map(mapRow),
+      pagination: { limit, offset, total: totalRow[0]?.count ?? 0 },
+      counts: {
+        all: countsRow?.all ?? 0,
+        active: countsRow?.active ?? 0,
+        pending: isOwner ? (countsRow?.pending ?? 0) : 0,
+        ended: isOwner ? (countsRow?.ended ?? 0) : 0,
+      },
+      me,
+      owners: ownerRows
+        .map(mapRow)
+        .map(toUserInfo)
+        .filter((u): u is CompanyMemberUserInfo => u !== null),
+      preview: (previewRows as typeof meRows)
+        .map(mapRow)
+        .map(toUserInfo)
+        .filter((u): u is CompanyMemberUserInfo => u !== null),
+    };
   },
 
   /* ==========================================================================

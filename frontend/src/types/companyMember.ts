@@ -107,3 +107,40 @@ export interface TransferCompanyOwnerResult {
   newOwner: CompanyMember;
   previousOwner: CompanyMember;
 }
+
+/* ============================================================================
+ * GET /companies/:id/members — server-side pagination + search + filter + sort
+ * ==========================================================================*/
+
+/** Query params list members — đồng bộ với backend ListCompanyMembersQuery. */
+export interface CompanyMemberListQuery {
+  limit?: number;
+  offset?: number;
+  /** Tìm kiếm email (substring, không phân biệt hoa thường). Rỗng = không lọc. */
+  search?: string;
+  /** Nhãn tab FE — BE ánh xạ 'ended' → IN (declined/removed/left/auto_cancelled). */
+  status?: 'all' | 'active' | 'pending' | 'ended';
+  sortBy?: 'name' | 'role' | 'status' | 'date';
+  sortOrder?: 'asc' | 'desc';
+}
+
+/** Counts tổng hợp cho tab lọc + header — theo phạm vi viewer, không theo search. */
+export interface CompanyMemberListCounts {
+  all: number;
+  active: number;
+  pending: number;
+  ended: number;
+}
+
+/** Response GET /companies/:id/members (phân trang server-side). */
+export interface CompanyMemberListResult {
+  members: CompanyMember[];
+  pagination: { limit: number; offset: number; total: number };
+  counts: CompanyMemberListCounts;
+  /** Row membership của chính viewer (null nếu không thuộc company). */
+  me: CompanyMember | null;
+  /** Owner active — cho khối "Chủ sở hữu" ở header. */
+  owners: CompanyMemberUserInfo[];
+  /** Tối đa 4 member active đầu — cho card avatar preview. */
+  preview: CompanyMemberUserInfo[];
+}

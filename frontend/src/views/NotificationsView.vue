@@ -1,16 +1,23 @@
 <script setup lang="ts">
 /**
-* NotificationsMockupView — Trang Thông báo của Employer Workspace (JobMatch VN).
-*
-* Giao diện SaaS tuyển dụng hiện đại, tinh tế, dễ đọc và tối ưu hiển thị:
-* - Typography chuẩn mực, khoảng trắng thoáng đãng, chiều cao dòng cân đối.
-* - Tỷ lệ cột tối ưu (32% tiêu đề, 13% ngày nhận, 35% tóm tắt, 14% trạng thái, 6% thao tác).
-* - Palette trắng/xám trung tính, dot + text cho trạng thái, nhấn nhẹ thông báo chưa đọc.
-* - Responsive hoàn chỉnh: Desktop giữ table chuẩn, Mobile chuyển sang card list trực quan.
-* - Animation mượt mà, hỗ trợ keyboard accessibility (⌘K/Ctrl+K, Enter, Escape).
-*/
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
-import { useRouter, type RouteLocationRaw } from 'vue-router';
+ * NotificationsMockupView — Trang Thông báo của Employer Workspace (JobMatch VN).
+ *
+ * Giao diện SaaS tuyển dụng hiện đại, tinh tế, dễ đọc và tối ưu hiển thị:
+ * - Typography chuẩn mực, khoảng trắng thoáng đãng, chiều cao dòng cân đối.
+ * - Tỷ lệ cột tối ưu (32% tiêu đề, 13% ngày nhận, 35% tóm tắt, 14% trạng thái, 6% thao tác).
+ * - Palette trắng/xám trung tính, dot + text cho trạng thái, nhấn nhẹ thông báo chưa đọc.
+ * - Responsive hoàn chỉnh: Desktop giữ table chuẩn, Mobile chuyển sang card list trực quan.
+ * - Animation mượt mà, hỗ trợ keyboard accessibility (⌘K/Ctrl+K, Enter, Escape).
+ */
+import {
+  ref,
+  computed,
+  watch,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+} from "vue";
+import { useRouter, type RouteLocationRaw } from "vue-router";
 import {
   Search,
   ArrowRight,
@@ -20,17 +27,19 @@ import {
   ChevronRight,
   RefreshCw,
   Sparkles,
-} from 'lucide-vue-next';
-import NotificationDetailModal, { type NotificationDetailItem } from '@components/notify/NotificationDetailModal.vue';
-import { useNotificationStore } from '@stores/notification';
-import { useAuthStore } from '@stores/auth';
-import { useToastStore } from '@stores/toast';
-import { getSocket } from '@services/socket';
-import type { Notification, NotificationType } from '@/types/notification';
-import dayjs from 'dayjs';
-import 'dayjs/locale/vi';
+} from "lucide-vue-next";
+import NotificationDetailModal, {
+  type NotificationDetailItem,
+} from "@components/notify/NotificationDetailModal.vue";
+import { useNotificationStore } from "@stores/notification";
+import { useAuthStore } from "@stores/auth";
+import { useToastStore } from "@stores/toast";
+import { getSocket } from "@services/socket";
+import type { Notification, NotificationType } from "@/types/notification";
+import dayjs from "dayjs";
+import "dayjs/locale/vi";
 
-dayjs.locale('vi');
+dayjs.locale("vi");
 
 const router = useRouter();
 const notificationStore = useNotificationStore();
@@ -50,24 +59,24 @@ export interface NotificationItem {
   details?: string;
 }
 
-type DisplayStatus = 'Reviewed' | 'Unread';
+type DisplayStatus = "Reviewed" | "Unread";
 
 const sanitizeJobTitle = (val?: unknown): string | null => {
-  if (typeof val !== 'string') return null;
+  if (typeof val !== "string") return null;
   const trimmed = val.trim();
   if (!trimmed) return null;
-  return trimmed.replace(/^vị\s+trí\s+/i, '').trim();
+  return trimmed.replace(/^vị\s+trí\s+/i, "").trim();
 };
 
 const sanitizeCandidateName = (val?: unknown): string | null => {
-  if (typeof val !== 'string') return null;
+  if (typeof val !== "string") return null;
   const trimmed = val.trim();
   if (!trimmed) return null;
-  return trimmed.replace(/^ứng\s+viên\s+/i, '').trim();
+  return trimmed.replace(/^ứng\s+viên\s+/i, "").trim();
 };
 
 const sanitizeText = (val?: unknown): string | null => {
-  if (typeof val !== 'string') return null;
+  if (typeof val !== "string") return null;
   const trimmed = val.trim();
   return trimmed ? trimmed : null;
 };
@@ -79,99 +88,132 @@ const sanitizeText = (val?: unknown): string | null => {
  * (có thể xoá bỏ sau khi DB chạy xong script backfill).
  */
 const formatSummary = (n: Notification): string => {
-  if (typeof n.message === 'string' && n.message.trim()) {
+  if (typeof n.message === "string" && n.message.trim()) {
     return n.message.trim();
   }
 
   const p = (n.payload ?? {}) as Record<string, unknown>;
-  if (typeof p.summary === 'string' && p.summary.trim()) return p.summary.trim();
-  if (typeof p.message === 'string' && p.message.trim()) return p.message.trim();
+  if (typeof p.summary === "string" && p.summary.trim())
+    return p.summary.trim();
+  if (typeof p.message === "string" && p.message.trim())
+    return p.message.trim();
 
   const candidateName = sanitizeCandidateName(p.candidateName);
   const jobTitle = sanitizeJobTitle(p.jobTitle);
   const companyName = sanitizeText(p.companyName);
 
   switch (n.type) {
-    case 'application_new': {
-      if (candidateName && jobTitle) return `Hồ sơ mới từ ${candidateName} ứng tuyển vị trí ${jobTitle}`;
+    case "application_new": {
+      if (candidateName && jobTitle)
+        return `Hồ sơ mới từ ${candidateName} ứng tuyển vị trí ${jobTitle}`;
       if (candidateName) return `Hồ sơ mới từ ${candidateName}`;
       if (jobTitle) return `Hồ sơ ứng tuyển mới cho vị trí ${jobTitle}`;
-      return 'Hồ sơ ứng tuyển mới';
+      return "Hồ sơ ứng tuyển mới";
     }
-    case 'application_withdrawn': {
-      if (candidateName && jobTitle) return `Ứng viên ${candidateName} đã rút hồ sơ ứng tuyển vị trí ${jobTitle}`;
-      if (candidateName) return `Ứng viên ${candidateName} đã rút hồ sơ ứng tuyển`;
+    case "application_withdrawn": {
+      if (candidateName && jobTitle)
+        return `Ứng viên ${candidateName} đã rút hồ sơ ứng tuyển vị trí ${jobTitle}`;
+      if (candidateName)
+        return `Ứng viên ${candidateName} đã rút hồ sơ ứng tuyển`;
       if (jobTitle) return `Hồ sơ ứng tuyển cho vị trí ${jobTitle} đã được rút`;
-      return 'Hồ sơ ứng tuyển đã được rút';
+      return "Hồ sơ ứng tuyển đã được rút";
     }
-    case 'application_match_ready': {
-      const matchPercent = typeof p.matchPercent === 'number' ? p.matchPercent : null;
+    case "application_match_ready": {
+      const matchPercent =
+        typeof p.matchPercent === "number" ? p.matchPercent : null;
       if (jobTitle) {
-        if (matchPercent !== null) return `AI Matching đã chấm ${matchPercent}% độ phù hợp cho vị trí ${jobTitle}`;
+        if (matchPercent !== null)
+          return `AI Matching đã chấm ${matchPercent}% độ phù hợp cho vị trí ${jobTitle}`;
         return `Hồ sơ ứng tuyển đã được ghi nhận, đánh giá AI Matching sẽ được cập nhật sau cho vị trí ${jobTitle}`;
       }
-      if (matchPercent !== null) return `AI Matching đã chấm ${matchPercent}% độ phù hợp cho hồ sơ của bạn`;
-      return 'Hồ sơ ứng tuyển đã được ghi nhận, đánh giá AI Matching sẽ được cập nhật sau';
+      if (matchPercent !== null)
+        return `AI Matching đã chấm ${matchPercent}% độ phù hợp cho hồ sơ của bạn`;
+      return "Hồ sơ ứng tuyển đã được ghi nhận, đánh giá AI Matching sẽ được cập nhật sau";
     }
-    case 'interview_scheduled': {
-      if (jobTitle) return `Lịch phỏng vấn mới đã được thiết lập cho vị trí ${jobTitle}`;
-      return 'Lịch phỏng vấn mới đã được thiết lập';
+    case "interview_scheduled": {
+      if (jobTitle)
+        return `Lịch phỏng vấn mới đã được thiết lập cho vị trí ${jobTitle}`;
+      return "Lịch phỏng vấn mới đã được thiết lập";
     }
-    case 'interview_updated': {
-      if (jobTitle) return `Lịch phỏng vấn cho vị trí ${jobTitle} đã được cập nhật`;
-      return 'Lịch phỏng vấn đã được cập nhật';
+    case "interview_updated": {
+      if (jobTitle)
+        return `Lịch phỏng vấn cho vị trí ${jobTitle} đã được cập nhật`;
+      return "Lịch phỏng vấn đã được cập nhật";
     }
-    case 'interview_cancelled': {
+    case "interview_cancelled": {
       const kind = p.kind as string | undefined;
-      if (kind === 'interview_declined_by_candidate') {
-        if (candidateName && jobTitle) return `Ứng viên ${candidateName} đã từ chối lịch phỏng vấn cho vị trí ${jobTitle}`;
-        if (candidateName) return `Ứng viên ${candidateName} đã từ chối lịch phỏng vấn`;
-        if (jobTitle) return `Ứng viên đã từ chối lịch phỏng vấn cho vị trí ${jobTitle}`;
-        return 'Ứng viên đã từ chối lịch phỏng vấn';
+      if (kind === "interview_declined_by_candidate") {
+        if (candidateName && jobTitle)
+          return `Ứng viên ${candidateName} đã từ chối lịch phỏng vấn cho vị trí ${jobTitle}`;
+        if (candidateName)
+          return `Ứng viên ${candidateName} đã từ chối lịch phỏng vấn`;
+        if (jobTitle)
+          return `Ứng viên đã từ chối lịch phỏng vấn cho vị trí ${jobTitle}`;
+        return "Ứng viên đã từ chối lịch phỏng vấn";
       }
-      if (kind === 'interview_cancelled_by_hr') {
+      if (kind === "interview_cancelled_by_hr") {
         if (jobTitle) return `Lịch phỏng vấn cho vị trí ${jobTitle} đã bị huỷ`;
-        return 'Lịch phỏng vấn đã bị huỷ';
+        return "Lịch phỏng vấn đã bị huỷ";
       }
       if (candidateName) {
-        if (jobTitle) return `Ứng viên ${candidateName} đã từ chối lịch phỏng vấn cho vị trí ${jobTitle}`;
+        if (jobTitle)
+          return `Ứng viên ${candidateName} đã từ chối lịch phỏng vấn cho vị trí ${jobTitle}`;
         return `Ứng viên ${candidateName} đã từ chối lịch phỏng vấn`;
       }
       if (jobTitle) return `Lịch phỏng vấn cho vị trí ${jobTitle} đã bị huỷ`;
-      return 'Lịch phỏng vấn đã bị huỷ';
+      return "Lịch phỏng vấn đã bị huỷ";
     }
-    case 'message':
-      return 'Bạn có tin nhắn mới trong phòng trao đổi';
-    case 'company':
-    case 'company_invite': {
+    case "message":
+      return "Bạn có tin nhắn mới trong phòng trao đổi";
+    case "company":
+    case "company_invite": {
       const kind = p.kind as string;
-      if (kind === 'company_invite_sent') return companyName ? `Lời mời tham gia công ty ${companyName}` : 'Lời mời tham gia công ty';
-      if (kind === 'company_invite_accepted') return companyName ? `Thành viên đã chấp nhận lời mời tham gia ${companyName}` : 'Thành viên đã chấp nhận lời mời tham gia công ty';
-      if (kind === 'company_invite_declined') return companyName ? `Lời mời tham gia công ty ${companyName} đã bị từ chối` : 'Lời mời tham gia công ty đã bị từ chối';
-      if (kind === 'removed_from_company') return companyName ? `Bạn đã bị xoá khỏi danh sách thành viên của ${companyName}` : 'Bạn đã bị xoá khỏi danh sách thành viên của công ty';
-      return n.title || 'Thông báo';
+      if (kind === "company_invite_sent")
+        return companyName
+          ? `Lời mời tham gia công ty ${companyName}`
+          : "Lời mời tham gia công ty";
+      if (kind === "company_invite_accepted")
+        return companyName
+          ? `Thành viên đã chấp nhận lời mời tham gia ${companyName}`
+          : "Thành viên đã chấp nhận lời mời tham gia công ty";
+      if (kind === "company_invite_declined")
+        return companyName
+          ? `Lời mời tham gia công ty ${companyName} đã bị từ chối`
+          : "Lời mời tham gia công ty đã bị từ chối";
+      if (kind === "removed_from_company")
+        return companyName
+          ? `Bạn đã bị xoá khỏi danh sách thành viên của ${companyName}`
+          : "Bạn đã bị xoá khỏi danh sách thành viên của công ty";
+      return n.title || "Thông báo";
     }
-    case 'job_match': {
-      if (jobTitle) return `Gợi ý hồ sơ tiềm năng phù hợp tiêu chí tuyển dụng ${jobTitle}`;
-      return 'Gợi ý hồ sơ tiềm năng phù hợp';
+    case "job_match": {
+      if (jobTitle)
+        return `Gợi ý hồ sơ tiềm năng phù hợp tiêu chí tuyển dụng ${jobTitle}`;
+      return "Gợi ý hồ sơ tiềm năng phù hợp";
     }
-    case 'system': {
-      if (p.planId) return 'Gói dịch vụ tuyển dụng Employer đã được cập nhật';
-      if (p.topic === 'terms-2026') return 'Cập nhật tiêu chuẩn an toàn bảo mật dữ liệu 2026';
-      if (p.kind === 'invite_auto_cancelled_on_create_company') return 'Lời mời của bạn đã bị huỷ do thành viên đã tạo công ty riêng';
-      return n.title || 'Thông báo hệ thống';
+    case "system": {
+      if (p.planId) return "Gói dịch vụ tuyển dụng Employer đã được cập nhật";
+      if (p.topic === "terms-2026")
+        return "Cập nhật tiêu chuẩn an toàn bảo mật dữ liệu 2026";
+      if (p.kind === "invite_auto_cancelled_on_create_company")
+        return "Lời mời của bạn đã bị huỷ do thành viên đã tạo công ty riêng";
+      return n.title || "Thông báo hệ thống";
     }
-    case 'reference_verified': {
+    case "reference_verified": {
       const refereeName = sanitizeText(p.refereeName);
       const isConfirmed = p.confirmed === true;
-      const targetPos = jobTitle ? ` cho vị trí ${jobTitle}` : '';
+      const targetPos = jobTitle ? ` cho vị trí ${jobTitle}` : "";
       if (isConfirmed) {
-        return refereeName ? `${refereeName} đã xác nhận tham chiếu${targetPos}` : `Tham chiếu đã được xác nhận${targetPos}`;
+        return refereeName
+          ? `${refereeName} đã xác nhận tham chiếu${targetPos}`
+          : `Tham chiếu đã được xác nhận${targetPos}`;
       }
-      return refereeName ? `${refereeName} đã từ chối xác nhận tham chiếu${targetPos}` : `Tham chiếu đã bị từ chối${targetPos}`;
+      return refereeName
+        ? `${refereeName} đã từ chối xác nhận tham chiếu${targetPos}`
+        : `Tham chiếu đã bị từ chối${targetPos}`;
     }
     default:
-      return n.title || 'Thông báo';
+      return n.title || "Thông báo";
   }
 };
 
@@ -182,35 +224,40 @@ const formatSummary = (n: Notification): string => {
  */
 const formatDetails = (n: Notification): string => {
   const p = (n.payload ?? {}) as Record<string, unknown>;
-  if (typeof p.details === 'string' && p.details.trim()) return p.details.trim();
-  if (typeof n.message === 'string' && n.message.trim()) return n.message.trim();
+  if (typeof p.details === "string" && p.details.trim())
+    return p.details.trim();
+  if (typeof n.message === "string" && n.message.trim())
+    return n.message.trim();
 
-  const candidateName = (p.candidateName as string) || 'Ứng viên';
-  const jobTitle = (p.jobTitle as string) || 'vị trí việc làm';
-  const companyName = (p.companyName as string) || 'doanh nghiệp';
+  const candidateName = (p.candidateName as string) || "Ứng viên";
+  const jobTitle = (p.jobTitle as string) || "vị trí việc làm";
+  const companyName = (p.companyName as string) || "doanh nghiệp";
 
   switch (n.type) {
-    case 'application_new':
+    case "application_new":
       return `Ứng viên ${candidateName} đã gửi hồ sơ ứng tuyển vào vị trí "${jobTitle}". Vui lòng kiểm tra danh sách đơn ứng tuyển để xem CV và đánh giá hồ sơ.`;
-    case 'application_withdrawn':
+    case "application_withdrawn":
       return `Ứng viên ${candidateName} đã rút đơn ứng tuyển vị trí "${jobTitle}". Hệ thống đã cập nhật trạng thái đơn ứng tuyển.`;
-    case 'application_match_ready':
+    case "application_match_ready":
       return `Hệ thống AI Matching đã hoàn thành phân tích độ tương thích giữa ứng viên và yêu cầu tuyển dụng của vị trí "${jobTitle}".`;
-    case 'interview_scheduled':
+    case "interview_scheduled":
       return `Lịch phỏng vấn cho vị trí "${jobTitle}" đã được lên lịch. Vui lòng kiểm tra mục Lịch phỏng vấn để xem chi tiết thời gian và phòng họp.`;
-    case 'message':
-      return 'Bạn vừa nhận được tin nhắn mới từ đối tác/ứng viên trong hệ thống trao đổi của JobMatch VN.';
-    case 'company':
-    case 'company_invite': {
+    case "message":
+      return "Bạn vừa nhận được tin nhắn mới từ đối tác/ứng viên trong hệ thống trao đổi của JobMatch VN.";
+    case "company":
+    case "company_invite": {
       const kind = p.kind as string;
-      if (kind === 'company_invite_sent') return `Bạn nhận được lời mời tham gia quản trị tuyển dụng tại công ty ${companyName}.`;
+      if (kind === "company_invite_sent")
+        return `Bạn nhận được lời mời tham gia quản trị tuyển dụng tại công ty ${companyName}.`;
       return `Thông báo cập nhật quản lý thành viên hoặc phân quyền truy cập tại ${companyName}.`;
     }
-    case 'job_match':
+    case "job_match":
       return `Hệ thống gợi ý ứng viên có kỹ năng và kinh nghiệm tương thích cao với tin tuyển dụng "${jobTitle}".`;
-    case 'system':
-      if (p.planId) return 'Gói dịch vụ đăng tin và tính năng tuyển dụng VIP của doanh nghiệp đã được kích hoạt thành công.';
-      if (p.topic === 'terms-2026') return 'JobMatch VN cập nhật chính sách bảo vệ dữ liệu cá nhân theo quy định an toàn bảo mật mới nhất.';
+    case "system":
+      if (p.planId)
+        return "Gói dịch vụ đăng tin và tính năng tuyển dụng VIP của doanh nghiệp đã được kích hoạt thành công.";
+      if (p.topic === "terms-2026")
+        return "JobMatch VN cập nhật chính sách bảo vệ dữ liệu cá nhân theo quy định an toàn bảo mật mới nhất.";
       return formatSummary(n);
     default:
       return formatSummary(n);
@@ -248,61 +295,71 @@ const sortedNotifications = computed(() => {
  * - Chưa đọc (readAt === null) -> "Unread"
  */
 const getStatus = (item: NotificationItem): DisplayStatus => {
-  return item.readAt !== null ? 'Reviewed' : 'Unread';
+  return item.readAt !== null ? "Reviewed" : "Unread";
 };
 
 /**
  * Trả về RouteLocationRaw đích trong Router của Employer dựa trên type và payload.
  * Nếu không có trang đích (như báo cáo, khảo sát), trả về null.
  */
-const getNotificationRoute = (item: NotificationItem): RouteLocationRaw | null => {
+const getNotificationRoute = (
+  item: NotificationItem,
+): RouteLocationRaw | null => {
   const p = (item.payload ?? {}) as Record<string, string | undefined>;
-  const isCandidate = authStore.user?.role === 'candidate';
+  const isCandidate = authStore.user?.role === "candidate";
 
   if (
-    item.type === 'application_new' ||
-    item.type === 'application_withdrawn' ||
-    item.type === 'application_match_ready'
+    item.type === "application_new" ||
+    item.type === "application_withdrawn" ||
+    item.type === "application_match_ready"
   ) {
-    return isCandidate ? { name: 'candidate-applications' } : { name: 'employer-applications' };
+    return isCandidate
+      ? { name: "candidate-applications" }
+      : { name: "employer-applications" };
   }
-  if (item.type === 'interview_scheduled') {
-    return isCandidate ? { name: 'candidate-applications' } : { name: 'employer-interviews' };
+  if (item.type === "interview_scheduled") {
+    return isCandidate
+      ? { name: "candidate-applications" }
+      : { name: "employer-interviews" };
   }
-  if (item.type === 'message') {
+  if (item.type === "message") {
     if (isCandidate) {
       if (p.conversationId) {
-        return { name: 'chat', params: { id: p.conversationId } };
+        return { name: "chat", params: { id: p.conversationId } };
       }
-      return { name: 'chat' };
+      return { name: "chat" };
     }
     if (p.conversationId) {
-      return { name: 'e-chat', params: { id: p.conversationId } };
+      return { name: "e-chat", params: { id: p.conversationId } };
     }
-    return { name: 'e-chat' };
+    return { name: "e-chat" };
   }
-  if (item.type === 'company' || (item.type as string) === 'company_invite') {
+  if (item.type === "company" || (item.type as string) === "company_invite") {
     if (isCandidate) return null;
-    if (p.kind === 'company_invite' || p.kind === 'company_invite_sent' || p.kind === 'members') {
-      return { name: 'employer-company-members' };
+    if (
+      p.kind === "company_invite" ||
+      p.kind === "company_invite_sent" ||
+      p.kind === "members"
+    ) {
+      return { name: "employer-company-members" };
     }
-    return { name: 'employer-company' };
+    return { name: "employer-company" };
   }
-  if (item.type === 'job_match' || (item.type === 'system' && p.jobId)) {
+  if (item.type === "job_match" || (item.type === "system" && p.jobId)) {
     if (isCandidate) {
-      return { name: 'candidate-jobs' };
+      return { name: "candidate-jobs" };
     }
     if (p.jobId) {
-      return { name: 'employer-job-detail', params: { id: p.jobId } };
+      return { name: "employer-job-detail", params: { id: p.jobId } };
     }
-    return { name: 'employer-jobs' };
+    return { name: "employer-jobs" };
   }
-  if (item.type === 'system') {
+  if (item.type === "system") {
     if (p.planId) {
-      return isCandidate ? { name: 'pricing' } : { name: 'employer-pricing' };
+      return isCandidate ? { name: "pricing" } : { name: "employer-pricing" };
     }
-    if (p.topic === 'terms-2026') {
-      return { name: 'terms' };
+    if (p.topic === "terms-2026") {
+      return { name: "terms" };
     }
     return null;
   }
@@ -318,33 +375,45 @@ const formatTime = (iso: string): string => {
   const diffMs = Math.max(0, Date.now() - new Date(iso).getTime());
   const hours = diffMs / (1000 * 60 * 60);
   if (hours < 24) {
-    if (diffMs < 60000) return 'Vừa xong';
+    if (diffMs < 60000) return "Vừa xong";
     const m = Math.floor(diffMs / 60000);
     if (m < 60) return `${m} phút trước`;
     const h = Math.floor(hours);
     return `${h} giờ trước`;
   }
-  return dayjs(iso).format('DD/MM/YYYY');
+  return dayjs(iso).format("DD/MM/YYYY");
 };
 
 const formatFullTime = (iso: string): string => {
-  return dayjs(iso).format('HH:mm · DD/MM/YYYY');
+  return dayjs(iso).format("HH:mm · DD/MM/YYYY");
 };
 
 const removeVietnameseTones = (str: string): string => {
   return str
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
     .toLowerCase()
     .trim();
 };
 
 // State tìm kiếm và lọc
-const searchQuery = ref('');
-type FilterType = 'All' | 'Unread' | 'Reviewed';
-const activeFilter = ref<FilterType>('All');
+const searchQuery = ref("");
+type FilterType = "All" | "Unread" | "Reviewed";
+const activeFilter = ref<FilterType>("All");
+const notificationTabAnimationCycle = ref(0);
+const pendingNotificationTabAnimationCycle = ref(false);
+const notificationRowAnimationClass = computed(() =>
+  notificationTabAnimationCycle.value % 2 === 0
+    ? "nt-row-fade-a"
+    : "nt-row-fade-b",
+);
+const notificationRowMobileAnimationClass = computed(() =>
+  notificationTabAnimationCycle.value % 2 === 0
+    ? "nt-row-m-fade-a"
+    : "nt-row-m-fade-b",
+);
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let switchToken = 0;
@@ -420,17 +489,17 @@ const triggerSearchImmediately = (): void => {
 };
 
 const clearSearch = (): void => {
-  searchQuery.value = '';
+  searchQuery.value = "";
   searchInputRef.value?.focus();
-  void executeSearch('');
+  void executeSearch("");
 };
 
 const unreadCount = computed(() => notificationStore.unreadCount);
 
 const filterTabs: { label: string; value: FilterType }[] = [
-  { label: 'Tất cả', value: 'All' },
-  { label: 'Chưa đọc', value: 'Unread' },
-  { label: 'Đã đọc', value: 'Reviewed' },
+  { label: "Tất cả", value: "All" },
+  { label: "Chưa đọc", value: "Unread" },
+  { label: "Đã đọc", value: "Reviewed" },
 ];
 
 // Highlight dòng mới qua Socket.IO (giữ nguyên animation, modifier is-new nền mờ dần sau 1.5s)
@@ -442,9 +511,9 @@ const handleSocketNewNotification = (notif: Notification): void => {
 
   const isUnread = notif.readAt === null;
   const matchesCurrentFilter =
-    activeFilter.value === 'All' ||
-    (activeFilter.value === 'Unread' && isUnread) ||
-    (activeFilter.value === 'Reviewed' && !isUnread);
+    activeFilter.value === "All" ||
+    (activeFilter.value === "Unread" && isUnread) ||
+    (activeFilter.value === "Reviewed" && !isUnread);
 
   // Chỉ kích hoạt khi đang ở trang 1 và không có từ khóa tìm kiếm (theo đúng điều kiện chèn danh sách của store)
   const isAtFirstPageWithoutSearch =
@@ -453,7 +522,9 @@ const handleSocketNewNotification = (notif: Notification): void => {
   if (matchesCurrentFilter && isAtFirstPageWithoutSearch) {
     void nextTick(() => {
       // Xác nhận thông báo thực sự đã nằm trong danh sách hiển thị
-      const isVisibleInList = paginatedNotifications.value.some((item) => item.id === notif.id);
+      const isVisibleInList = paginatedNotifications.value.some(
+        (item) => item.id === notif.id,
+      );
       if (isVisibleInList) {
         recentNewId.value = notif.id;
         if (clearRecentNewTimer) clearTimeout(clearRecentNewTimer);
@@ -471,20 +542,29 @@ const handleFilterChange = async (tab: FilterType): Promise<void> => {
   const token = ++switchToken;
   activeFilter.value = tab; // Đổi tab ngay để tab đổi màu active
   isSwitchingTab.value = true;
+  pendingNotificationTabAnimationCycle.value = true;
   startDelayedSkeleton();
 
-  const unreadParam = tab === 'Unread' ? true : tab === 'Reviewed' ? false : undefined;
+  const unreadParam =
+    tab === "Unread" ? true : tab === "Reviewed" ? false : undefined;
   notificationStore.setQuery({ unread: unreadParam });
 
   try {
     await notificationStore.fetchFirstPage();
     if (token !== switchToken) return;
+    if (notificationStore.error !== null) return;
+
+    // Chỉ tăng cycle sau khi request chuyển tab thành công, không phụ thuộc việc
+    // row có cùng ID với tab trước. Cách này buộc browser restart animation cho mọi item.
+    notificationTabAnimationCycle.value += 1;
+    pendingNotificationTabAnimationCycle.value = false;
 
     // Đặt currentPage = 1 cùng tick với lúc danh sách được thay
     currentPage.value = 1;
     viewKey.value++;
   } finally {
     if (token === switchToken) {
+      pendingNotificationTabAnimationCycle.value = false;
       isSwitchingTab.value = false;
       stopDelayedSkeleton();
     }
@@ -519,18 +599,25 @@ const pageStart = computed(() => {
 });
 
 const pageEnd = computed(() => {
-  return Math.min(currentPage.value * pageSize, sortedNotifications.value.length);
+  return Math.min(
+    currentPage.value * pageSize,
+    sortedNotifications.value.length,
+  );
 });
 
 const canGoPrev = computed(() => currentPage.value > 1);
 
 const canGoNext = computed(() => {
-  return currentPage.value * pageSize < sortedNotifications.value.length || notificationStore.hasMore;
+  return (
+    currentPage.value * pageSize < sortedNotifications.value.length ||
+    notificationStore.hasMore
+  );
 });
 
 /** Prefetch ngầm trang kế tiếp khi còn không quá 1 trang dữ liệu phía sau (<= pageSize) để bấm Sau mượt mà */
 const triggerPrefetch = (): void => {
-  const remaining = sortedNotifications.value.length - currentPage.value * pageSize;
+  const remaining =
+    sortedNotifications.value.length - currentPage.value * pageSize;
   if (
     remaining <= pageSize &&
     notificationStore.hasMore &&
@@ -576,7 +663,10 @@ const goNext = async (): Promise<void> => {
     u: notificationStore.query.unread,
     s: notificationStore.query.search,
   });
-  if (currentPage.value !== pageAtClick || currentQuerySnapshot !== querySnapshot) {
+  if (
+    currentPage.value !== pageAtClick ||
+    currentQuerySnapshot !== querySnapshot
+  ) {
     return;
   }
 
@@ -656,7 +746,9 @@ const activeModalItem = ref<NotificationItem | null>(null);
 
 const selectedItem = computed<NotificationItem | null>(() => {
   if (!selectedNotificationId.value) return null;
-  const fromList = notifications.value.find((n) => n.id === selectedNotificationId.value);
+  const fromList = notifications.value.find(
+    (n) => n.id === selectedNotificationId.value,
+  );
   return fromList ?? activeModalItem.value;
 });
 
@@ -683,7 +775,7 @@ const handleDeleteNotification = async (id: string): Promise<void> => {
     const success = await notificationStore.removeNotification(id);
     if (success) {
       closeDetailModal();
-      toast.success('Đã xóa thông báo');
+      toast.success("Đã xóa thông báo");
       triggerPrefetch();
     } else if (notificationStore.error) {
       toast.error(notificationStore.error);
@@ -696,7 +788,7 @@ const handleDeleteNotification = async (id: string): Promise<void> => {
 // Click handler trên hàng: mở component xem thông báo
 const handleRowClick = (item: NotificationItem, e: MouseEvent): void => {
   const target = e.target as HTMLElement | null;
-  if (target?.closest('a') || target?.closest('button')) {
+  if (target?.closest("a") || target?.closest("button")) {
     return;
   }
   openDetailModal(item);
@@ -708,15 +800,22 @@ const handleEnterKey = (item: NotificationItem): void => {
 
 // Skeleton loading có độ trễ
 const isLoading = computed(() => showSkeleton.value);
-const isWaitingNewData = computed(() => (isSwitchingTab.value || isSearching.value) && !showSkeleton.value);
+const isWaitingNewData = computed(
+  () => (isSwitchingTab.value || isSearching.value) && !showSkeleton.value,
+);
 const isListFaded = computed(() => {
-  return isPaging.value || ((isSwitchingTab.value || isSearching.value) && hasLoadedOnce.value && sortedNotifications.value.length > 0);
+  return (
+    isPaging.value ||
+    ((isSwitchingTab.value || isSearching.value) &&
+      hasLoadedOnce.value &&
+      sortedNotifications.value.length > 0)
+  );
 });
 
 const searchInputRef = ref<HTMLInputElement | null>(null);
 
 const handleGlobalKeyDown = (e: KeyboardEvent): void => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
     searchInputRef.value?.focus();
     searchInputRef.value?.select();
@@ -724,15 +823,19 @@ const handleGlobalKeyDown = (e: KeyboardEvent): void => {
 };
 
 onMounted(async () => {
-  window.addEventListener('keydown', handleGlobalKeyDown);
+  window.addEventListener("keydown", handleGlobalKeyDown);
   notificationStore.bindSocket();
   notificationStore.insertGate = true;
   notificationStore.pendingNew = 0;
-  getSocket().on('notification:new', handleSocketNewNotification);
+  getSocket().on("notification:new", handleSocketNewNotification);
 
   if (authStore.isAuthenticated) {
     startDelayedSkeleton();
-    notificationStore.setQuery({ limit: 30, unread: undefined, search: searchQuery.value.trim() || undefined });
+    notificationStore.setQuery({
+      limit: 30,
+      unread: undefined,
+      search: searchQuery.value.trim() || undefined,
+    });
     try {
       await notificationStore.fetchFirstPage();
     } finally {
@@ -745,8 +848,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleGlobalKeyDown);
-  getSocket().off('notification:new', handleSocketNewNotification);
+  window.removeEventListener("keydown", handleGlobalKeyDown);
+  getSocket().off("notification:new", handleSocketNewNotification);
   if (markedTimer) clearTimeout(markedTimer);
   if (debounceTimer) clearTimeout(debounceTimer);
   if (skeletonDelayTimer) clearTimeout(skeletonDelayTimer);
@@ -757,26 +860,35 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-<div class="font-poppins min-h-full bg-white py-6 sm:py-9 px-3 sm:px-6 lg:px-10 font-sans text-gray-800 antialiased">
+  <div
+    class="font-poppins min-h-full bg-white py-6 sm:py-9 px-3 sm:px-6 lg:px-10 font-sans text-gray-800 antialiased"
+  >
     <div class="max-w-[1100px] mx-auto space-y-6">
-
-    <!-- ================= 1. Tiêu đề trang ================= -->
-    <header class="nt-rise">
-        <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight leading-tight">
-        Trung tâm thông báo
+      <!-- ================= 1. Tiêu đề trang ================= -->
+      <header class="nt-rise">
+        <h1
+          class="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight leading-tight"
+        >
+          Trung tâm thông báo
         </h1>
         <p class="text-sm text-gray-500 mt-1 font-normal leading-normal">
-        Các cập nhật về tuyển dụng, hồ sơ ứng viên và lịch phỏng vấn sẽ hiển thị tại đây.
+          Các cập nhật về tuyển dụng, hồ sơ ứng viên và lịch phỏng vấn sẽ hiển
+          thị tại đây.
         </p>
-    </header>
+      </header>
 
-
-    <!-- ================= 2. Thanh tìm kiếm & Bộ lọc Chips ================= -->
-    <div class="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 nt-rise nt-delay-1">
-        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:w-auto">
-        <!-- Ô tìm kiếm bo góc vừa vặn rounded-lg, pl-9, có nút xóa từ khóa -->
-        <div class="relative w-full sm:w-[250px] xl:w-[290px] shrink-0">
-            <Search class="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      <!-- ================= 2. Thanh tìm kiếm & Bộ lọc Chips ================= -->
+      <div
+        class="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 nt-rise nt-delay-1"
+      >
+        <div
+          class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:w-auto"
+        >
+          <!-- Ô tìm kiếm bo góc vừa vặn rounded-lg, pl-9, có nút xóa từ khóa -->
+          <div class="relative w-full sm:w-[250px] xl:w-[290px] shrink-0">
+            <Search
+              class="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+            />
             <input
               ref="searchInputRef"
               v-model="searchQuery"
@@ -798,34 +910,40 @@ onBeforeUnmount(() => {
             >
               <X class="w-3.5 h-3.5" />
             </button>
-        </div>
+          </div>
 
-        <!-- Filter tabs gãy gọn hiện đại (h-9 trên mobile để touch target tốt hơn) -->
-        <div class="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none min-w-0">
+          <!-- Filter tabs gãy gọn hiện đại (h-9 trên mobile để touch target tốt hơn) -->
+          <div
+            class="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none min-w-0"
+          >
             <button
-            v-for="tab in filterTabs"
-            :key="tab.value"
-            type="button"
-            class="h-9 sm:h-8 px-3 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer select-none inline-flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 border shrink-0"
-            :class="[
+              v-for="tab in filterTabs"
+              :key="tab.value"
+              type="button"
+              class="h-9 sm:h-8 px-3 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer select-none inline-flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 border shrink-0"
+              :class="[
                 tab.value === 'Unread' ? 'min-w-[88px] justify-center' : '',
                 activeFilter === tab.value
-                ? 'bg-[#5b4eea] text-white border-[#5b4eea] shadow-2xs'
-                : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100 hover:text-gray-900 hover:border-gray-300'
-            ]"
-            @click="handleFilterChange(tab.value)"
+                  ? 'bg-[#5b4eea] text-white border-[#5b4eea] shadow-2xs'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100 hover:text-gray-900 hover:border-gray-300',
+              ]"
+              @click="handleFilterChange(tab.value)"
             >
-            <span>{{ tab.label }}</span>
-            <!-- Badge số lượng cho Chưa đọc (nâng lên text-[11px] dễ đọc) -->
-            <span
+              <span>{{ tab.label }}</span>
+              <!-- Badge số lượng cho Chưa đọc (nâng lên text-[11px] dễ đọc) -->
+              <span
                 v-if="tab.value === 'Unread' && unreadCount > 0"
                 class="px-1.5 py-0.5 rounded-md text-[11px] font-semibold border leading-tight"
-                :class="activeFilter === 'Unread' ? 'bg-white/20 text-white border-transparent' : 'bg-red-50 text-red-600 border-red-100'"
-            >
+                :class="
+                  activeFilter === 'Unread'
+                    ? 'bg-white/20 text-white border-transparent'
+                    : 'bg-red-50 text-red-600 border-red-100'
+                "
+              >
                 {{ unreadCount }}
-            </span>
+              </span>
             </button>
-        </div>
+          </div>
         </div>
 
         <!-- Nút Đánh dấu tất cả đã đọc (rõ nét, đồng bộ với toolbar, phản hồi mượt mà) -->
@@ -836,10 +954,20 @@ onBeforeUnmount(() => {
           :class="[
             isJustMarkedAll
               ? 'bg-emerald-50 text-emerald-700 border-emerald-200 cursor-default'
-              : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100 hover:border-gray-400 hover:text-gray-900 disabled:hover:bg-white disabled:hover:border-gray-300 disabled:hover:text-gray-800 disabled:cursor-not-allowed cursor-pointer'
+              : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100 hover:border-gray-400 hover:text-gray-900 disabled:hover:bg-white disabled:hover:border-gray-300 disabled:hover:text-gray-800 disabled:cursor-not-allowed cursor-pointer',
           ]"
-          :title="hasUnread ? 'Đánh dấu tất cả thông báo là đã đọc' : isJustMarkedAll ? 'Đã đánh dấu tất cả thành công' : 'Không có thông báo chưa đọc'"
-          :aria-label="hasUnread ? 'Đánh dấu tất cả thông báo là đã đọc' : 'Không có thông báo chưa đọc'"
+          :title="
+            hasUnread
+              ? 'Đánh dấu tất cả thông báo là đã đọc'
+              : isJustMarkedAll
+                ? 'Đã đánh dấu tất cả thành công'
+                : 'Không có thông báo chưa đọc'
+          "
+          :aria-label="
+            hasUnread
+              ? 'Đánh dấu tất cả thông báo là đã đọc'
+              : 'Không có thông báo chưa đọc'
+          "
           @click="markAllAsReviewed"
         >
           <CheckCheck
@@ -847,54 +975,63 @@ onBeforeUnmount(() => {
             :class="[
               isJustMarkedAll
                 ? 'text-emerald-600'
-                : 'text-gray-700 group-hover:text-gray-900'
+                : 'text-gray-700 group-hover:text-gray-900',
             ]"
           />
           <span>Đánh dấu tất cả đã đọc</span>
         </button>
-    </div>
+      </div>
 
-    <!-- Chip thông báo realtime mới (chống trôi dòng / page drift khi ở trang >= 2 hoặc lệch filter) -->
-    <div
-      v-if="notificationStore.pendingNew > 0"
-      role="status"
-      aria-live="polite"
-      class="flex items-center justify-center nt-rise"
-    >
-      <button
-        type="button"
-        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium text-[#5b4eea] bg-[#5b4eea]/10 border border-[#5b4eea]/20 hover:bg-[#5b4eea]/15 transition-colors shadow-2xs cursor-pointer select-none"
-        @click="handleViewPendingNew"
+      <!-- Chip thông báo realtime mới (chống trôi dòng / page drift khi ở trang >= 2 hoặc lệch filter) -->
+      <div
+        v-if="notificationStore.pendingNew > 0"
+        role="status"
+        aria-live="polite"
+        class="flex items-center justify-center nt-rise"
       >
-        <Sparkles class="w-3.5 h-3.5 text-[#5b4eea]" />
-        <span>Có {{ notificationStore.pendingNew }} thông báo mới · <span class="font-semibold underline">Xem</span></span>
-      </button>
-    </div>
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium text-[#5b4eea] bg-[#5b4eea]/10 border border-[#5b4eea]/20 hover:bg-[#5b4eea]/15 transition-colors shadow-2xs cursor-pointer select-none"
+          @click="handleViewPendingNew"
+        >
+          <Sparkles class="w-3.5 h-3.5 text-[#5b4eea]" />
+          <span
+            >Có {{ notificationStore.pendingNew }} thông báo mới ·
+            <span class="font-semibold underline">Xem</span></span
+          >
+        </button>
+      </div>
 
-    <!-- ================= 3. Card danh sách thông báo ================= -->
-    <div class="bg-white rounded-xl border border-gray-200/90 shadow-2xs overflow-hidden nt-panel nt-delay-2">
+      <!-- ================= 3. Card danh sách thông báo ================= -->
+      <div
+        class="bg-white rounded-xl border border-gray-200/90 shadow-2xs overflow-hidden nt-panel nt-delay-2"
+      >
         <!-- ================= A. Desktop: Table 4 Cột Chuẩn SaaS (Tiêu đề & Nội dung 1 Cột) ================= -->
         <div
           class="hidden lg:block overflow-hidden"
           :class="{ 'pointer-events-none': isListFaded }"
         >
-        <table class="w-full min-w-[640px] table-fixed text-left border-collapse">
+          <table
+            class="w-full min-w-[640px] table-fixed text-left border-collapse"
+          >
             <!-- Colgroup cố định chính xác độ rộng từng cột, không xê dịch khi đổi nội dung -->
             <colgroup>
-            <col class="w-[62%]" />
-            <col class="w-[14%]" />
-            <col class="w-[14%]" />
-            <col class="w-[10%]" />
+              <col class="w-[62%]" />
+              <col class="w-[14%]" />
+              <col class="w-[14%]" />
+              <col class="w-[10%]" />
             </colgroup>
 
             <!-- Table Header (Chiều cao cố định 38px) -->
             <thead>
-            <tr class="h-[38px] border-b border-gray-100 text-xs font-medium text-gray-600 bg-gray-50/50">
+              <tr
+                class="h-[38px] border-b border-gray-100 text-xs font-medium text-gray-600 bg-gray-50/50"
+              >
                 <th scope="col" class="py-2 px-5">Thông báo</th>
                 <th scope="col" class="py-2 px-4">Ngày nhận</th>
                 <th scope="col" class="py-2 px-4">Trạng thái</th>
                 <th scope="col" class="py-2 px-5 text-right">Thao tác</th>
-            </tr>
+              </tr>
             </thead>
 
             <!-- Table Body mượt mà với chuyển động hàng và mờ khi phân trang/lọc -->
@@ -905,31 +1042,31 @@ onBeforeUnmount(() => {
             >
               <!-- Skeleton Loading (6 dòng, mỗi dòng cố định h-[58px]) -->
               <tr
-                  v-if="isLoading"
-                  v-for="n in 6"
-                  :key="'skel-d-' + n"
-                  class="h-[58px] animate-pulse"
+                v-if="isLoading"
+                v-for="n in 6"
+                :key="'skel-d-' + n"
+                class="h-[58px] animate-pulse"
               >
-                  <td class="h-[58px] py-2 px-5 align-middle">
+                <td class="h-[58px] py-2 px-5 align-middle">
                   <div class="flex flex-col gap-1.5">
-                      <div class="h-3.5 bg-gray-200/70 rounded w-2/5" />
-                      <div class="h-3 bg-gray-200/50 rounded w-3/4" />
+                    <div class="h-3.5 bg-gray-200/70 rounded w-2/5" />
+                    <div class="h-3 bg-gray-200/50 rounded w-3/4" />
                   </div>
-                  </td>
-                  <td class="h-[58px] py-2 px-4 align-middle">
+                </td>
+                <td class="h-[58px] py-2 px-4 align-middle">
                   <div class="h-3.5 bg-gray-200/70 rounded w-16" />
-                  </td>
-                  <td class="h-[58px] py-2 px-4 align-middle">
+                </td>
+                <td class="h-[58px] py-2 px-4 align-middle">
                   <div class="h-3.5 bg-gray-200/70 rounded w-16" />
-                  </td>
-                  <td class="h-[58px] py-2 px-5 text-right align-middle">
+                </td>
+                <td class="h-[58px] py-2 px-5 text-right align-middle">
                   <div class="h-3.5 bg-gray-200/70 rounded w-5 ml-auto" />
-                  </td>
+                </td>
               </tr>
 
               <!-- Dữ liệu thông báo thực tế -->
               <template v-else>
-                  <tr
+                <tr
                   v-for="(item, index) in paginatedNotifications"
                   :key="item.id"
                   tabindex="0"
@@ -937,139 +1074,163 @@ onBeforeUnmount(() => {
                   class="h-[58px] transition-colors group cursor-pointer hover:bg-gray-100/60 focus-visible:outline-none focus-visible:bg-gray-100/60 focus-visible:ring-1 focus-visible:ring-gray-300 nt-row"
                   :style="{ animationDelay: `${Math.min(300, index * 40)}ms` }"
                   :class="[
-                      item.readAt === null
-                      ? 'bg-blue-50/20'
-                      : 'bg-white',
-                      recentNewId === item.id ? 'is-new' : ''
+                    item.readAt === null ? 'bg-blue-50/20' : 'bg-white',
+                    recentNewId === item.id ? 'is-new' : '',
+                    notificationRowAnimationClass,
                   ]"
                   @click="handleRowClick(item, $event)"
                   @keydown.enter.prevent="handleEnterKey(item)"
                   @keydown.space.prevent="handleEnterKey(item)"
-                  >
-                <!-- Tiêu đề ở trên, nội dung tóm tắt ở dưới (trong cùng 1 cột) -->
-                <td class="h-[58px] py-2 px-5 align-middle">
+                >
+                  <!-- Tiêu đề ở trên, nội dung tóm tắt ở dưới (trong cùng 1 cột) -->
+                  <td class="h-[58px] py-2 px-5 align-middle">
                     <div class="flex flex-col gap-0.5 max-w-full">
-                    <span
+                      <span
                         class="text-[13px] font-semibold text-gray-900 leading-snug truncate transition-colors group-hover:text-blue-600"
                         :title="item.title"
-                    >
+                      >
                         {{ item.title }}
-                    </span>
-                    <span
+                      </span>
+                      <span
                         v-if="item.summary && item.summary !== '-'"
                         class="text-xs text-gray-500 font-normal truncate group-hover:text-gray-600 leading-tight"
                         :title="item.summary"
-                    >
+                      >
                         {{ item.summary }}
-                    </span>
+                      </span>
                     </div>
-                </td>
+                  </td>
 
-                <!-- Ngày nhận (hiển thị tương đối trong 24h, tooltip chi tiết, tương phản chuẩn WCAG AA) -->
-                <td class="h-[58px] py-2 px-4 text-gray-600 font-normal truncate align-middle" :title="formatFullTime(item.createdAt)">
+                  <!-- Ngày nhận (hiển thị tương đối trong 24h, tooltip chi tiết, tương phản chuẩn WCAG AA) -->
+                  <td
+                    class="h-[58px] py-2 px-4 text-gray-600 font-normal truncate align-middle"
+                    :title="formatFullTime(item.createdAt)"
+                  >
                     {{ formatTime(item.createdAt) }}
-                </td>
+                  </td>
 
-                <!-- Badge trạng thái (Dot + Text tinh tế) -->
-                <td class="h-[58px] py-2 px-4 whitespace-nowrap align-middle">
+                  <!-- Badge trạng thái (Dot + Text tinh tế) -->
+                  <td class="h-[58px] py-2 px-4 whitespace-nowrap align-middle">
                     <!-- Đã đọc (Xanh lá) -->
                     <span
-                    v-if="getStatus(item) === 'Reviewed'"
-                    class="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"
+                      v-if="getStatus(item) === 'Reviewed'"
+                      class="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"
                     >
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                    Đã đọc
+                      <span
+                        class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"
+                      />
+                      Đã đọc
                     </span>
 
                     <!-- Chưa đọc (Xanh dương) -->
                     <span
-                    v-else
-                    class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700"
+                      v-else
+                      class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700"
                     >
-                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                    Chưa đọc
+                      <span
+                        class="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
+                      />
+                      Chưa đọc
                     </span>
-                </td>
+                  </td>
 
-                <!-- Cột Thao tác: Bấm mũi tên trỏ tới trang tương ứng (tabindex=-1 để tránh double focus stop) -->
-                <td class="h-[58px] py-2 px-5 text-right whitespace-nowrap align-middle">
+                  <!-- Cột Thao tác: Bấm mũi tên trỏ tới trang tương ứng (tabindex=-1 để tránh double focus stop) -->
+                  <td
+                    class="h-[58px] py-2 px-5 text-right whitespace-nowrap align-middle"
+                  >
                     <router-link
-                    v-if="getNotificationRoute(item)"
-                    :to="getNotificationRoute(item)!"
-                    tabindex="-1"
-                    aria-hidden="true"
-                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 group-hover:text-gray-900 hover:text-gray-900 hover:bg-gray-200/60 transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 cursor-pointer"
-                    title="Đi đến trang tương ứng"
-                    @click.stop="markAsReviewed(item.id)"
+                      v-if="getNotificationRoute(item)"
+                      :to="getNotificationRoute(item)!"
+                      tabindex="-1"
+                      aria-hidden="true"
+                      class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 group-hover:text-gray-900 hover:text-gray-900 hover:bg-gray-200/60 transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 cursor-pointer"
+                      title="Đi đến trang tương ứng"
+                      @click.stop="markAsReviewed(item.id)"
                     >
-                    <ArrowRight
+                      <ArrowRight
                         :size="15"
                         :stroke-width="2"
                         class="transition-transform duration-150 ease-out group-hover:translate-x-0.5"
-                    />
+                      />
                     </router-link>
 
                     <button
-                    v-else
-                    type="button"
-                    tabindex="-1"
-                    aria-hidden="true"
-                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 group-hover:text-gray-900 hover:text-gray-900 hover:bg-gray-200/60 transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 cursor-pointer"
-                    title="Xem chi tiết thông báo"
-                    @click.stop="openDetailModal(item)"
+                      v-else
+                      type="button"
+                      tabindex="-1"
+                      aria-hidden="true"
+                      class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 group-hover:text-gray-900 hover:text-gray-900 hover:bg-gray-200/60 transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 cursor-pointer"
+                      title="Xem chi tiết thông báo"
+                      @click.stop="openDetailModal(item)"
                     >
-                    <ArrowRight
+                      <ArrowRight
                         :size="15"
                         :stroke-width="2"
                         class="transition-transform duration-150 ease-out group-hover:translate-x-0.5"
-                    />
+                      />
                     </button>
-                </td>
+                  </td>
                 </tr>
 
                 <!-- Dòng đệm giữ chỗ (Spacer Rows): Đảm bảo bảng luôn cố định 6 dòng, kích thước bằng nhau tuyệt đối giữa các trang -->
                 <tr
-                v-if="paginatedNotifications.length > 0 && paginatedNotifications.length < pageSize"
-                v-for="emptyIdx in (pageSize - paginatedNotifications.length)"
-                :key="`spacer-${emptyIdx}`"
-                class="h-[58px] pointer-events-none select-none"
-                aria-hidden="true"
+                  v-if="
+                    paginatedNotifications.length > 0 &&
+                    paginatedNotifications.length < pageSize
+                  "
+                  v-for="emptyIdx in pageSize - paginatedNotifications.length"
+                  :key="`spacer-${emptyIdx}`"
+                  class="h-[58px] pointer-events-none select-none"
+                  aria-hidden="true"
                 >
-                <td class="h-[58px] py-2 px-5">&nbsp;</td>
-                <td class="h-[58px] py-2 px-4">&nbsp;</td>
-                <td class="h-[58px] py-2 px-4">&nbsp;</td>
-                <td class="h-[58px] py-2 px-5 text-right">&nbsp;</td>
+                  <td class="h-[58px] py-2 px-5">&nbsp;</td>
+                  <td class="h-[58px] py-2 px-4">&nbsp;</td>
+                  <td class="h-[58px] py-2 px-4">&nbsp;</td>
+                  <td class="h-[58px] py-2 px-5 text-right">&nbsp;</td>
                 </tr>
 
                 <!-- Empty Results Desktop (Chiều cao h-[348px] bảo toàn đúng 6x58px không giật card) -->
                 <tr v-if="sortedNotifications.length === 0" class="h-[348px]">
-                <td colspan="4" class="h-[348px] py-14 px-4 text-center text-gray-500 align-middle anim-empty-fade">
-                    <p class="text-sm font-medium text-gray-700">Không tìm thấy thông báo phù hợp.</p>
-                    <p v-if="searchQuery.trim()" class="text-xs text-gray-500 mt-1 break-words max-w-md mx-auto">
-                    Không có kết quả khớp với từ khóa "{{ searchQuery.trim() }}".
-                    <button
+                  <td
+                    colspan="4"
+                    class="h-[348px] py-14 px-4 text-center text-gray-500 align-middle anim-empty-fade"
+                  >
+                    <p class="text-sm font-medium text-gray-700">
+                      Không tìm thấy thông báo phù hợp.
+                    </p>
+                    <p
+                      v-if="searchQuery.trim()"
+                      class="text-xs text-gray-500 mt-1 break-words max-w-md mx-auto"
+                    >
+                      Không có kết quả khớp với từ khóa "{{
+                        searchQuery.trim()
+                      }}".
+                      <button
                         type="button"
                         class="text-blue-600 hover:underline font-medium ml-1 cursor-pointer focus-visible:outline-none"
                         @click="clearSearch"
-                    >
+                      >
                         Xóa tìm kiếm
-                    </button>
+                      </button>
                     </p>
-                    <p v-else-if="activeFilter !== 'All'" class="text-xs text-gray-500 mt-1">
-                    Không có thông báo nào trong mục này.
-                    <button
+                    <p
+                      v-else-if="activeFilter !== 'All'"
+                      class="text-xs text-gray-500 mt-1"
+                    >
+                      Không có thông báo nào trong mục này.
+                      <button
                         type="button"
                         class="text-blue-600 hover:underline font-medium ml-1 cursor-pointer focus-visible:outline-none"
                         @click="handleFilterChange('All')"
-                    >
+                      >
                         Xem tất cả
-                    </button>
+                      </button>
                     </p>
-                </td>
+                  </td>
                 </tr>
-            </template>
+              </template>
             </tbody>
-        </table>
+          </table>
         </div>
 
         <!-- ================= B. Mobile / Tablet: Responsive Notification Card List ================= -->
@@ -1086,47 +1247,58 @@ onBeforeUnmount(() => {
             <!-- Skeleton Loading Mobile (4 cards giảm chiều cao) -->
             <template v-if="isLoading">
               <div
-                  v-for="n in 4"
-                  :key="'skel-m-' + n"
-                  class="p-3.5 sm:p-4 space-y-2.5 animate-pulse"
+                v-for="n in 4"
+                :key="'skel-m-' + n"
+                class="p-3.5 sm:p-4 space-y-2.5 animate-pulse"
               >
-                  <div class="flex justify-between items-center">
+                <div class="flex justify-between items-center">
                   <div class="h-3 bg-gray-200 rounded w-20" />
                   <div class="h-3 bg-gray-200 rounded w-16" />
-                  </div>
-                  <div class="h-4 bg-gray-200 rounded w-3/4" />
-                  <div class="h-3 bg-gray-200 rounded w-5/6" />
+                </div>
+                <div class="h-4 bg-gray-200 rounded w-3/4" />
+                <div class="h-3 bg-gray-200 rounded w-5/6" />
               </div>
             </template>
 
             <!-- Empty Results Mobile / Tablet -->
-            <div v-else-if="sortedNotifications.length === 0" class="flex flex-col items-center justify-center min-h-[260px] py-12 px-4 text-center text-gray-500 anim-empty-fade">
-                <p class="text-sm font-medium text-gray-700">Không tìm thấy thông báo phù hợp.</p>
-                <p v-if="searchQuery.trim()" class="text-xs text-gray-500 mt-1 break-words max-w-md mx-auto">
+            <div
+              v-else-if="sortedNotifications.length === 0"
+              class="flex flex-col items-center justify-center min-h-[260px] py-12 px-4 text-center text-gray-500 anim-empty-fade"
+            >
+              <p class="text-sm font-medium text-gray-700">
+                Không tìm thấy thông báo phù hợp.
+              </p>
+              <p
+                v-if="searchQuery.trim()"
+                class="text-xs text-gray-500 mt-1 break-words max-w-md mx-auto"
+              >
                 Không có kết quả khớp với từ khóa "{{ searchQuery.trim() }}".
                 <button
-                    type="button"
-                    class="text-blue-600 hover:underline font-medium ml-1 cursor-pointer focus-visible:outline-none"
-                    @click="clearSearch"
+                  type="button"
+                  class="text-blue-600 hover:underline font-medium ml-1 cursor-pointer focus-visible:outline-none"
+                  @click="clearSearch"
                 >
-                    Xóa tìm kiếm
+                  Xóa tìm kiếm
                 </button>
-                </p>
-                <p v-else-if="activeFilter !== 'All'" class="text-xs text-gray-500 mt-1">
+              </p>
+              <p
+                v-else-if="activeFilter !== 'All'"
+                class="text-xs text-gray-500 mt-1"
+              >
                 Không có thông báo nào trong mục này.
                 <button
-                    type="button"
-                    class="text-blue-600 hover:underline font-medium ml-1 cursor-pointer focus-visible:outline-none"
-                    @click="handleFilterChange('All')"
+                  type="button"
+                  class="text-blue-600 hover:underline font-medium ml-1 cursor-pointer focus-visible:outline-none"
+                  @click="handleFilterChange('All')"
                 >
-                    Xem tất cả
+                  Xem tất cả
                 </button>
-                </p>
+              </p>
             </div>
 
             <!-- Danh sách cards mobile / tablet -->
             <template v-else>
-                <div
+              <div
                 v-for="(item, index) in paginatedNotifications"
                 :key="`m-${item.id}`"
                 tabindex="0"
@@ -1135,75 +1307,84 @@ onBeforeUnmount(() => {
                 class="p-3.5 sm:p-4 transition-colors cursor-pointer hover:bg-gray-100/60 active:bg-gray-100/80 focus-visible:outline-none focus-visible:bg-gray-100/60 nt-row-m"
                 :style="{ animationDelay: `${Math.min(300, index * 40)}ms` }"
                 :class="[
-                    item.readAt === null
-                    ? 'bg-blue-50/20'
-                    : 'bg-white',
-                    recentNewId === item.id ? 'is-new' : ''
+                  item.readAt === null ? 'bg-blue-50/20' : 'bg-white',
+                  recentNewId === item.id ? 'is-new' : '',
+                  notificationRowMobileAnimationClass,
                 ]"
                 @click="handleRowClick(item, $event)"
                 @keydown.enter.prevent="handleEnterKey(item)"
                 @keydown.space.prevent="handleEnterKey(item)"
-                >
+              >
                 <!-- Hàng trạng thái + Ngày nhận -->
-            <div class="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-                <!-- Đã đọc -->
-                <span
-                v-if="getStatus(item) === 'Reviewed'"
-                class="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"
+                <div
+                  class="flex items-center justify-between gap-2 mb-1.5 flex-wrap"
                 >
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" /> Đã đọc
-                </span>
-                <!-- Chưa đọc -->
-                <span
-                v-else
-                class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700"
+                  <!-- Đã đọc -->
+                  <span
+                    v-if="getStatus(item) === 'Reviewed'"
+                    class="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"
+                  >
+                    <span
+                      class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"
+                    />
+                    Đã đọc
+                  </span>
+                  <!-- Chưa đọc -->
+                  <span
+                    v-else
+                    class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700"
+                  >
+                    <span
+                      class="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
+                    />
+                    Chưa đọc
+                  </span>
+
+                  <span class="text-xs text-gray-600 font-normal">
+                    {{ formatTime(item.createdAt) }}
+                  </span>
+                </div>
+
+                <!-- Tiêu đề (In đậm đồng nhất) -->
+                <h4
+                  class="text-sm font-semibold text-gray-900 leading-snug line-clamp-2 break-words"
                 >
-                <span class="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" /> Chưa đọc
-                </span>
+                  {{ item.title }}
+                </h4>
 
-                <span class="text-xs text-gray-600 font-normal">
-                {{ formatTime(item.createdAt) }}
-                </span>
-            </div>
-
-            <!-- Tiêu đề (In đậm đồng nhất) -->
-            <h4 class="text-sm font-semibold text-gray-900 leading-snug line-clamp-2 break-words">
-                {{ item.title }}
-            </h4>
-
-            <!-- Tóm tắt -->
-            <p
-                v-if="item.summary && item.summary !== '-'"
-                class="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed break-words"
-            >
-                {{ item.summary }}
-            </p>
-
-            <!-- Footer mobile: Bấm nút Xem chi tiết trỏ tới trang tương ứng (vùng bấm tối thiểu 40px) -->
-            <div class="mt-2.5 flex items-center justify-end">
-                <router-link
-                v-if="getNotificationRoute(item)"
-                :to="getNotificationRoute(item)!"
-                class="inline-flex items-center gap-1 min-h-[40px] sm:min-h-[36px] py-1.5 px-3 rounded-lg text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200/60 font-medium transition cursor-pointer"
-                aria-label="Đi đến trang tương ứng"
-                @click.stop="markAsReviewed(item.id)"
+                <!-- Tóm tắt -->
+                <p
+                  v-if="item.summary && item.summary !== '-'"
+                  class="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed break-words"
                 >
-                <span>Xem chi tiết</span>
-                <ArrowRight :size="13" />
-                </router-link>
-                <button
-                v-else
-                type="button"
-                class="inline-flex items-center gap-1 min-h-[40px] sm:min-h-[36px] py-1.5 px-3 rounded-lg text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200/60 font-medium transition cursor-pointer"
-                aria-label="Xem chi tiết thông báo"
-                @click.stop="openDetailModal(item)"
-                >
-                <span>Xem chi tiết</span>
-                <ArrowRight :size="13" />
-                </button>
-            </div>
-            </div>
-        </template>
+                  {{ item.summary }}
+                </p>
+
+                <!-- Footer mobile: Bấm nút Xem chi tiết trỏ tới trang tương ứng (vùng bấm tối thiểu 40px) -->
+                <div class="mt-2.5 flex items-center justify-end">
+                  <router-link
+                    v-if="getNotificationRoute(item)"
+                    :to="getNotificationRoute(item)!"
+                    class="inline-flex items-center gap-1 min-h-[40px] sm:min-h-[36px] py-1.5 px-3 rounded-lg text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200/60 font-medium transition cursor-pointer"
+                    aria-label="Đi đến trang tương ứng"
+                    @click.stop="markAsReviewed(item.id)"
+                  >
+                    <span>Xem chi tiết</span>
+                    <ArrowRight :size="13" />
+                  </router-link>
+                  <button
+                    v-else
+                    type="button"
+                    class="inline-flex items-center gap-1 min-h-[40px] sm:min-h-[36px] py-1.5 px-3 rounded-lg text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-200/60 font-medium transition cursor-pointer"
+                    aria-label="Xem chi tiết thông báo"
+                    @click.stop="openDetailModal(item)"
+                  >
+                    <span>Xem chi tiết</span>
+                    <ArrowRight :size="13" />
+                  </button>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -1217,9 +1398,9 @@ onBeforeUnmount(() => {
           <template v-if="isLoading">
             <div class="h-3.5 bg-gray-200/70 rounded w-28 animate-pulse" />
             <div class="flex items-center gap-2">
-                <div class="w-7 h-7 bg-gray-200/60 rounded-lg animate-pulse" />
-                <div class="h-3.5 bg-gray-200/60 rounded w-14 animate-pulse" />
-                <div class="w-7 h-7 bg-gray-200/60 rounded-lg animate-pulse" />
+              <div class="w-7 h-7 bg-gray-200/60 rounded-lg animate-pulse" />
+              <div class="h-3.5 bg-gray-200/60 rounded w-14 animate-pulse" />
+              <div class="w-7 h-7 bg-gray-200/60 rounded-lg animate-pulse" />
             </div>
           </template>
 
@@ -1227,41 +1408,48 @@ onBeforeUnmount(() => {
           <template v-else-if="sortedNotifications.length > 0">
             <!-- Text trái: Hiển thị {pageStart}-{pageEnd} -->
             <div class="text-center sm:text-left text-gray-600 font-normal">
-                Hiển thị <span class="font-medium text-gray-900">{{ pageStart }}</span> -
-                <span class="font-medium text-gray-900">{{ pageEnd }}</span>
+              Hiển thị
+              <span class="font-medium text-gray-900">{{ pageStart }}</span> -
+              <span class="font-medium text-gray-900">{{ pageEnd }}</span>
             </div>
 
             <!-- Bên phải: Nút Trước, Nhãn Trang, Nút Sau -->
             <div class="flex items-center gap-1.5 select-none text-gray-500">
-                <!-- Nút Trước (touch target tối ưu trên mobile) -->
-                <button
+              <!-- Nút Trước (touch target tối ưu trên mobile) -->
+              <button
                 type="button"
                 class="w-8 h-8 sm:w-7 sm:h-7 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-100 hover:border-gray-300 hover:text-gray-900 disabled:opacity-35 disabled:cursor-not-allowed transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 relative before:absolute before:-inset-1.5"
                 :disabled="!canGoPrev"
                 aria-label="Trang trước"
                 title="Trang trước"
                 @click="goPrev"
-                >
+              >
                 <ChevronLeft :size="14" />
-                </button>
+              </button>
 
-                <!-- Nhãn Trang hiện tại -->
-                <span class="px-2 text-xs font-medium text-gray-700 min-w-[54px] text-center">
+              <!-- Nhãn Trang hiện tại -->
+              <span
+                class="px-2 text-xs font-medium text-gray-700 min-w-[54px] text-center"
+              >
                 Trang {{ currentPage }}
-                </span>
+              </span>
 
-                <!-- Nút Sau (touch target tối ưu trên mobile) -->
-                <button
+              <!-- Nút Sau (touch target tối ưu trên mobile) -->
+              <button
                 type="button"
                 class="w-8 h-8 sm:w-7 sm:h-7 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-100 hover:border-gray-300 hover:text-gray-900 disabled:opacity-35 disabled:cursor-not-allowed transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 relative before:absolute before:-inset-1.5"
                 :disabled="!canGoNext || isPaging"
                 aria-label="Trang sau"
                 title="Trang sau"
                 @click="goNext"
-                >
-                <RefreshCw v-if="isPaging" :size="12" class="animate-spin text-gray-500" />
+              >
+                <RefreshCw
+                  v-if="isPaging"
+                  :size="12"
+                  class="animate-spin text-gray-500"
+                />
                 <ChevronRight v-else :size="14" />
-                </button>
+              </button>
             </div>
           </template>
 
@@ -1270,15 +1458,17 @@ onBeforeUnmount(() => {
             <div class="invisible select-none" aria-hidden="true">
               Hiển thị 0 - 0
             </div>
-            <div class="invisible select-none flex items-center gap-1.5" aria-hidden="true">
+            <div
+              class="invisible select-none flex items-center gap-1.5"
+              aria-hidden="true"
+            >
               <div class="w-8 h-8 sm:w-7 sm:h-7" />
               <span class="px-2 text-xs min-w-[54px]">Trang 1</span>
               <div class="w-8 h-8 sm:w-7 sm:h-7" />
             </div>
           </template>
         </div>
-    </div>
-
+      </div>
     </div>
 
     <!-- ================= Component xem thông báo (Detail Modal) ================= -->
@@ -1288,16 +1478,16 @@ onBeforeUnmount(() => {
       @close="closeDetailModal"
       @delete="handleDeleteNotification"
     />
-</div>
+  </div>
 </template>
 
 <style scoped>
 .scrollbar-none::-webkit-scrollbar {
-display: none;
+  display: none;
 }
 .scrollbar-none {
--ms-overflow-style: none;
-scrollbar-width: none;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* ============================================================================
@@ -1307,19 +1497,31 @@ scrollbar-width: none;
   .nt-rise {
     animation: nt-rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
-  .nt-delay-1 { animation-delay: 70ms; }
-  .nt-delay-2 { animation-delay: 140ms; }
+  .nt-delay-1 {
+    animation-delay: 70ms;
+  }
+  .nt-delay-2 {
+    animation-delay: 140ms;
+  }
 
   .nt-panel {
     animation: nt-rise-sm 0.2s ease-out both;
   }
 
-  .nt-row {
-    animation: nt-fade 0.25s ease-out both;
+  .nt-row-fade-a {
+    animation: nt-fade-a 0.25s ease-out both;
   }
 
-  .nt-row-m {
-    animation: nt-rise-sm 0.25s ease-out both;
+  .nt-row-fade-b {
+    animation: nt-fade-b 0.25s ease-out both;
+  }
+
+  .nt-row-m-fade-a {
+    animation: nt-rise-sm-a 0.25s ease-out both;
+  }
+
+  .nt-row-m-fade-b {
+    animation: nt-rise-sm-b 0.25s ease-out both;
   }
 }
 
@@ -1334,7 +1536,7 @@ scrollbar-width: none;
   }
 }
 
-@keyframes nt-rise-sm {
+@keyframes nt-rise-sm-a {
   from {
     opacity: 0;
     transform: translateY(4px);
@@ -1345,7 +1547,27 @@ scrollbar-width: none;
   }
 }
 
-@keyframes nt-fade {
+@keyframes nt-rise-sm-b {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes nt-fade-a {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes nt-fade-b {
   from {
     opacity: 0;
   }
@@ -1379,6 +1601,10 @@ scrollbar-width: none;
   .nt-panel,
   .nt-row,
   .nt-row-m,
+  .nt-row-fade-a,
+  .nt-row-fade-b,
+  .nt-row-m-fade-a,
+  .nt-row-m-fade-b,
   .anim-empty-fade {
     animation: none !important;
     opacity: 1 !important;

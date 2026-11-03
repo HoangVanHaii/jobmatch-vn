@@ -22,6 +22,7 @@ import {
   validateInviteMember,
   validateCompanyMemberUserParams,
   validateCompanyIdParams,
+  validateListMembersQuery,
   requireCompanyOwner,
   requireActiveMember,
 } from '../middleware/companyMember';
@@ -64,12 +65,15 @@ companyMemberRouter.post(
 );
 
 /* ============================================================================
- * GET /companies/:companyId/members — list members
- * (Filter status ở service theo role viewer — owner thấy hết, member chỉ thấy active)
+ * GET /companies/:companyId/members — list members (server-side pagination)
+ * Query: limit, offset, search (email), status (all/active/pending/ended),
+ * sortBy (name/role/status/date), sortOrder (asc/desc) — Zod validate + defaults.
+ * (Phạm vi theo role viewer ở service — owner thấy hết, member chỉ thấy active)
  * ==========================================================================*/
 companyMemberRouter.get(
   '/:companyId/members',
   validateCompanyIdParams,
+  validateListMembersQuery,
   companyMemberController.list,
 );
 

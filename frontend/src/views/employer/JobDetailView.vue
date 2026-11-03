@@ -351,8 +351,17 @@ const fetchCompanyMembers = async (): Promise<void> => {
   if (!cId) return;
   membersLoading.value = true;
   try {
-    const { data } = await companyMemberApi.list(cId);
-    const rawList = Array.isArray(data.data) ? data.data : [];
+    // Contract mới (server-side pagination): data.data = { members, pagination, ... }.
+    // limit 100 = max của BE — danh sách assignee cần đủ active members, không
+    // chỉ 10 row mặc định.
+    const { data } = await companyMemberApi.list(cId, { limit: 100 });
+    const rawList = Array.isArray(data.data.members) ? data.data.members : [];
+    if (data.data.pagination?.total > rawList.length) {
+      // Không âm thầm coi trang đầu là toàn bộ — công ty >100 thành viên.
+      console.warn(
+        `[JobDetailView] Company có ${data.data.pagination.total} members, mới tải được ${rawList.length} (giới hạn phân trang BE).`,
+      );
+    }
     companyMembers.value = rawList.filter((m) => m.status === 'active');
   } catch (err) {
     console.error('Failed to load company members:', err);
