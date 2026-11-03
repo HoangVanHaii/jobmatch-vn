@@ -9,9 +9,16 @@
  * được truyền vào qua `actionsFor` (do View cung cấp theo quyền) hoặc emit
  * lên View. KHÔNG tự gọi API.
  */
-import { ArrowDown, ArrowUp, ArrowUpDown, Crown, User as UserIcon } from 'lucide-vue-next';
-import MemberRowMenu from '@components/employer/MemberRowMenu.vue';
-import type { CompanyMember } from '@/types/companyMember';
+import { computed } from "vue";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Crown,
+  User as UserIcon,
+} from "lucide-vue-next";
+import MemberRowMenu from "@components/employer/MemberRowMenu.vue";
+import type { CompanyMember } from "@/types/companyMember";
 import {
   dateMeta,
   displayName,
@@ -20,7 +27,7 @@ import {
   STATUS_BADGE,
   STATUS_LABELS,
   type RowActionItem,
-} from '@/utils/companyMemberDisplay';
+} from "@/utils/companyMemberDisplay";
 
 const props = defineProps<{
   members: CompanyMember[];
@@ -30,27 +37,34 @@ const props = defineProps<{
   page: number;
   pageSize: number;
   totalPages: number;
-  sortKey: 'name' | 'role' | 'status' | 'date';
-  sortDir: 'asc' | 'desc';
+  sortKey: "name" | "role" | "status" | "date";
+  sortDir: "asc" | "desc";
+  animationCycle: number;
   /** Trả về action cho 1 row — do View build theo quyền owner/member. */
   actionsFor: (row: CompanyMember) => RowActionItem[];
 }>();
 
 const emit = defineEmits<{
-  'page-change': [page: number];
-  'clear-filters': [];
-  sort: [key: 'role' | 'status' | 'date'];
+  "page-change": [page: number];
+  "clear-filters": [];
+  sort: [key: "role" | "status" | "date"];
 }>();
 
-const toggleSort = (key: 'role' | 'status' | 'date'): void => {
+const toggleSort = (key: "role" | "status" | "date"): void => {
   // Đổi chiều asc/desc do View quyết định (toggleSort của View).
-  emit('sort', key);
+  emit("sort", key);
 };
 
+const rowAnimationClass = computed(() =>
+  props.animationCycle % 2 === 0 ? "ml-row-fade-a" : "ml-row-fade-b",
+);
+
 /** aria-sort theo trạng thái sort thực tế của cột (a11y — WAI-ARIA). */
-const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending' | 'none' => {
-  if (props.sortKey !== key) return 'none';
-  return props.sortDir === 'asc' ? 'ascending' : 'descending';
+const ariaSortFor = (
+  key: "role" | "status" | "date",
+): "ascending" | "descending" | "none" => {
+  if (props.sortKey !== key) return "none";
+  return props.sortDir === "asc" ? "ascending" : "descending";
 };
 </script>
 
@@ -59,16 +73,22 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
   <div class="hidden overflow-x-auto md:block">
     <table class="w-full table-fixed text-sm">
       <colgroup>
-        <col class="w-[44%]">
-        <col class="w-[12%]">
-        <col class="w-[18%]">
-        <col class="w-[16%]">
-        <col class="w-[10%]">
+        <col class="w-[44%]" />
+        <col class="w-[12%]" />
+        <col class="w-[18%]" />
+        <col class="w-[16%]" />
+        <col class="w-[10%]" />
       </colgroup>
       <thead class="border-b border-slate-200">
-        <tr class="text-left text-[11px] uppercase tracking-wider font-medium text-slate-600">
+        <tr
+          class="text-left text-[11px] uppercase tracking-wider font-medium text-slate-600"
+        >
           <th scope="col" class="px-4 py-2.5 font-medium">Thành viên</th>
-          <th scope="col" class="px-4 py-2.5 font-medium" :aria-sort="ariaSortFor('role')">
+          <th
+            scope="col"
+            class="px-4 py-2.5 font-medium"
+            :aria-sort="ariaSortFor('role')"
+          >
             <button
               type="button"
               class="inline-flex cursor-pointer items-center gap-1 transition-colors duration-150 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
@@ -76,12 +96,33 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
               @click="toggleSort('role')"
             >
               Vai trò
-              <ArrowUp v-if="sortKey === 'role' && sortDir === 'asc'" :size="12" stroke-width="2.5" class="text-slate-900" aria-hidden="true" />
-              <ArrowDown v-else-if="sortKey === 'role'" :size="12" stroke-width="2.5" class="text-slate-900" aria-hidden="true" />
-              <ArrowUpDown v-else :size="11" class="text-slate-400" aria-hidden="true" />
+              <ArrowUp
+                v-if="sortKey === 'role' && sortDir === 'asc'"
+                :size="12"
+                stroke-width="2.5"
+                class="text-slate-900"
+                aria-hidden="true"
+              />
+              <ArrowDown
+                v-else-if="sortKey === 'role'"
+                :size="12"
+                stroke-width="2.5"
+                class="text-slate-900"
+                aria-hidden="true"
+              />
+              <ArrowUpDown
+                v-else
+                :size="11"
+                class="text-slate-400"
+                aria-hidden="true"
+              />
             </button>
           </th>
-          <th scope="col" class="px-4 py-2.5 font-medium" :aria-sort="ariaSortFor('status')">
+          <th
+            scope="col"
+            class="px-4 py-2.5 font-medium"
+            :aria-sort="ariaSortFor('status')"
+          >
             <button
               type="button"
               class="inline-flex cursor-pointer items-center gap-1 transition-colors duration-150 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
@@ -89,12 +130,33 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
               @click="toggleSort('status')"
             >
               Trạng thái
-              <ArrowUp v-if="sortKey === 'status' && sortDir === 'asc'" :size="12" stroke-width="2.5" class="text-slate-900" aria-hidden="true" />
-              <ArrowDown v-else-if="sortKey === 'status'" :size="12" stroke-width="2.5" class="text-slate-900" aria-hidden="true" />
-              <ArrowUpDown v-else :size="11" class="text-slate-400" aria-hidden="true" />
+              <ArrowUp
+                v-if="sortKey === 'status' && sortDir === 'asc'"
+                :size="12"
+                stroke-width="2.5"
+                class="text-slate-900"
+                aria-hidden="true"
+              />
+              <ArrowDown
+                v-else-if="sortKey === 'status'"
+                :size="12"
+                stroke-width="2.5"
+                class="text-slate-900"
+                aria-hidden="true"
+              />
+              <ArrowUpDown
+                v-else
+                :size="11"
+                class="text-slate-400"
+                aria-hidden="true"
+              />
             </button>
           </th>
-          <th scope="col" class="px-4 py-2.5 font-medium" :aria-sort="ariaSortFor('date')">
+          <th
+            scope="col"
+            class="px-4 py-2.5 font-medium"
+            :aria-sort="ariaSortFor('date')"
+          >
             <button
               type="button"
               class="inline-flex cursor-pointer items-center gap-1 transition-colors duration-150 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
@@ -102,12 +164,31 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
               @click="toggleSort('date')"
             >
               Ngày
-              <ArrowUp v-if="sortKey === 'date' && sortDir === 'asc'" :size="12" stroke-width="2.5" class="text-slate-900" aria-hidden="true" />
-              <ArrowDown v-else-if="sortKey === 'date'" :size="12" stroke-width="2.5" class="text-slate-900" aria-hidden="true" />
-              <ArrowUpDown v-else :size="11" class="text-slate-400" aria-hidden="true" />
+              <ArrowUp
+                v-if="sortKey === 'date' && sortDir === 'asc'"
+                :size="12"
+                stroke-width="2.5"
+                class="text-slate-900"
+                aria-hidden="true"
+              />
+              <ArrowDown
+                v-else-if="sortKey === 'date'"
+                :size="12"
+                stroke-width="2.5"
+                class="text-slate-900"
+                aria-hidden="true"
+              />
+              <ArrowUpDown
+                v-else
+                :size="11"
+                class="text-slate-400"
+                aria-hidden="true"
+              />
             </button>
           </th>
-          <th scope="col" class="px-4 py-2.5 text-right font-medium">Thao tác</th>
+          <th scope="col" class="px-4 py-2.5 text-right font-medium">
+            Thao tác
+          </th>
         </tr>
       </thead>
       <!-- Khi đổi tab/trang/search, hàng cũ patch tại chỗ (không remount).
@@ -125,7 +206,9 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
           <!-- py-6 (không py-12): empty row cao ≈ một hàng data (63px) →
                chuyển 0↔có kết quả không làm tbody co/giãn đột ngột. -->
           <td colspan="5" class="px-4 py-6 text-center">
-            <p class="m-0 text-sm text-slate-500">Không có thành viên phù hợp</p>
+            <p class="m-0 text-sm text-slate-500">
+              Không có thành viên phù hợp
+            </p>
             <button
               type="button"
               class="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] text-slate-700 transition-colors duration-150 hover:border-slate-300 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
@@ -138,7 +221,12 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
         <tr
           v-for="(row, i) in members"
           :key="row.userId"
-          class="ml-row transition hover:bg-slate-50/60"
+          :class="[
+            'ml-row',
+            rowAnimationClass,
+            'transition',
+            'hover:bg-slate-50/60',
+          ]"
           :style="{ animationDelay: `${i * 60}ms` }"
         >
           <!-- Thành viên (+ vai trò) -->
@@ -159,7 +247,9 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
                 <UserIcon v-else :size="15" class="text-slate-400" />
               </div>
               <div class="min-w-0 flex-1">
-                <p class="m-0 truncate text-sm font-medium text-slate-900">{{ primaryName(row) }}</p>
+                <p class="m-0 truncate text-sm font-medium text-slate-900">
+                  {{ primaryName(row) }}
+                </p>
                 <p class="m-0 mt-0.5 truncate text-[12.5px] text-slate-500">
                   {{ row.user?.email ?? `ID: ${row.userId.slice(0, 8)}…` }}
                 </p>
@@ -176,7 +266,9 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
               <Crown :size="11" aria-hidden="true" />
               {{ ROLE_LABELS.owner }}
             </span>
-            <span v-else class="text-[13px] text-slate-500">{{ ROLE_LABELS.member }}</span>
+            <span v-else class="text-[13px] text-slate-500">{{
+              ROLE_LABELS.member
+            }}</span>
           </td>
 
           <!-- Trạng thái: badge -->
@@ -184,12 +276,16 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
             <span
               class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
               :class="STATUS_BADGE[row.status].cls"
-            >{{ STATUS_LABELS[row.status] }}</span>
+              >{{ STATUS_LABELS[row.status] }}</span
+            >
           </td>
 
           <!-- Ngày: nhãn theo trạng thái + ngày ngắn (giờ đầy đủ trong title) -->
           <td class="px-4 py-2.5 align-middle">
-            <span class="text-[13px] text-slate-500" :title="dateMeta(row).title">
+            <span
+              class="text-[13px] text-slate-500"
+              :title="dateMeta(row).title"
+            >
               {{ dateMeta(row).label }} {{ dateMeta(row).short }}
             </span>
           </td>
@@ -212,7 +308,7 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
     <div
       v-for="(row, i) in members"
       :key="row.userId"
-      class="ml-row space-y-2 p-4"
+      :class="['ml-row', rowAnimationClass, 'space-y-2', 'p-4']"
       :style="{ animationDelay: `${i * 60}ms` }"
     >
       <div class="flex items-start gap-3">
@@ -231,7 +327,9 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
           <UserIcon v-else :size="15" class="text-slate-400" />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="m-0 truncate text-sm font-medium text-slate-900">{{ primaryName(row) }}</p>
+          <p class="m-0 truncate text-sm font-medium text-slate-900">
+            {{ primaryName(row) }}
+          </p>
           <p class="m-0 mt-0.5 truncate text-[12.5px] text-slate-500">
             {{ row.user?.email ?? `ID: ${row.userId.slice(0, 8)}…` }}
           </p>
@@ -253,11 +351,15 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
         <span
           class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
           :class="STATUS_BADGE[row.status].cls"
-        >{{ STATUS_LABELS[row.status] }}</span>
+          >{{ STATUS_LABELS[row.status] }}</span
+        >
         <span class="text-[11px] text-slate-500" :title="dateMeta(row).title">
           {{ dateMeta(row).label }} {{ dateMeta(row).short }}
         </span>
-        <span v-if="!(row.role === 'owner' && row.status === 'active')" class="text-[11px] text-slate-500">
+        <span
+          v-if="!(row.role === 'owner' && row.status === 'active')"
+          class="text-[11px] text-slate-500"
+        >
           · {{ ROLE_LABELS.member }}
         </span>
       </div>
@@ -281,7 +383,9 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
     class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3"
   >
     <p class="m-0 text-[13px] text-slate-500">
-      Hiển thị {{ (page - 1) * pageSize + 1 }}–{{ Math.min(page * pageSize, total) }}
+      Hiển thị {{ (page - 1) * pageSize + 1 }}–{{
+        Math.min(page * pageSize, total)
+      }}
       trong {{ total }} thành viên
     </p>
     <div class="flex items-center gap-2">
@@ -293,7 +397,9 @@ const ariaSortFor = (key: 'role' | 'status' | 'date'): 'ascending' | 'descending
       >
         Trước
       </button>
-      <span class="text-[13px] text-slate-600">Trang {{ page }} / {{ totalPages }}</span>
+      <span class="text-[13px] text-slate-600"
+        >Trang {{ page }} / {{ totalPages }}</span
+      >
       <button
         type="button"
         class="inline-flex h-8 cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 text-[13px] text-slate-700 transition-colors duration-150 hover:border-slate-300 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"

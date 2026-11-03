@@ -11,7 +11,7 @@
  *   - InviteMemberModal     : modal mời thành viên
  * Helper hiển thị thuần nằm ở utils/companyMemberDisplay.ts.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   AlertCircle,
   Building2,
@@ -24,33 +24,33 @@ import {
   UserRoundCheck,
   Users,
   XCircle,
-} from 'lucide-vue-next';
-import { storeToRefs } from 'pinia';
-import { useRoute, useRouter } from 'vue-router';
-import { useCompanyStore } from '@stores/company';
-import { useCompanyMemberStore } from '@stores/companyMember';
-import { useAuthStore } from '@stores/auth';
-import { useToastStore } from '@stores/toast';
-import { useSocket } from '@composables/useSocket';
-import ConfirmModal from '@components/common/ConfirmModal.vue';
-import CompanyMembersSkeleton from '@components/employer/CompanyMembersSkeleton.vue';
-import CompanyMembersHeader from '@components/employer/CompanyMembersHeader.vue';
-import CompanyMembersToolbar from '@components/employer/CompanyMembersToolbar.vue';
-import CompanyMembersTable from '@components/employer/CompanyMembersTable.vue';
-import InviteMemberModal from '@components/employer/InviteMemberModal.vue';
-import TransferOwnershipModal from '@components/employer/TransferOwnershipModal.vue';
-import DeleteMemberModal from '@components/employer/DeleteMemberModal.vue';
-import type { RowActionItem } from '@/utils/companyMemberDisplay';
+} from "lucide-vue-next";
+import { storeToRefs } from "pinia";
+import { useRoute, useRouter } from "vue-router";
+import { useCompanyStore } from "@stores/company";
+import { useCompanyMemberStore } from "@stores/companyMember";
+import { useAuthStore } from "@stores/auth";
+import { useToastStore } from "@stores/toast";
+import { useSocket } from "@composables/useSocket";
+import ConfirmModal from "@components/common/ConfirmModal.vue";
+import CompanyMembersSkeleton from "@components/employer/CompanyMembersSkeleton.vue";
+import CompanyMembersHeader from "@components/employer/CompanyMembersHeader.vue";
+import CompanyMembersToolbar from "@components/employer/CompanyMembersToolbar.vue";
+import CompanyMembersTable from "@components/employer/CompanyMembersTable.vue";
+import InviteMemberModal from "@components/employer/InviteMemberModal.vue";
+import TransferOwnershipModal from "@components/employer/TransferOwnershipModal.vue";
+import DeleteMemberModal from "@components/employer/DeleteMemberModal.vue";
+import type { RowActionItem } from "@/utils/companyMemberDisplay";
 import type {
   CompanyMember,
   CompanyMemberListCounts,
   CompanyMemberRole,
   CompanyMemberUserInfo,
-} from '@/types/companyMember';
+} from "@/types/companyMember";
 
 /* ============================================================================
-* Stores
-* ==========================================================================*/
+ * Stores
+ * ==========================================================================*/
 const route = useRoute();
 const router = useRouter();
 const companyStore = useCompanyStore();
@@ -60,10 +60,10 @@ const auth = useAuthStore();
 const toast = useToastStore();
 
 /* ============================================================================
-* State
-* ==========================================================================*/
-type LoadState = 'loading' | 'no-company' | 'ready';
-const loadState = ref<LoadState>('loading');
+ * State
+ * ==========================================================================*/
+type LoadState = "loading" | "no-company" | "ready";
+const loadState = ref<LoadState>("loading");
 const companyId = ref<string | null>(null);
 const loadError = ref<string | null>(null);
 const inviteOpen = ref(false);
@@ -76,8 +76,8 @@ const removeSaving = ref(false);
 const removeError = ref<string | null>(null);
 
 /* ============================================================================
-* Lifecycle
-* ==========================================================================*/
+ * Lifecycle
+ * ==========================================================================*/
 /**
  * Hard ceiling cho tổng thời gian loadData. Nếu vượt quá (vd BE /companies/:id
  * treo do `withLiveJobs` chạy query chậm, hoặc network issue), force chuyển
@@ -92,7 +92,7 @@ let loadTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
 const loadData = async (): Promise<void> => {
   const seq = ++loadDataSeq;
-  loadState.value = 'loading';
+  loadState.value = "loading";
   loadError.value = null;
   // Chỉ reset members cache — KHÔNG reset company store vì trang
   // /employer/company (CompanyView) dùng chung state đó.
@@ -102,9 +102,9 @@ const loadData = async (): Promise<void> => {
   // UI hiện banner lỗi + "Thử lại" thay vì spinner vô hạn.
   if (loadTimeoutTimer) clearTimeout(loadTimeoutTimer);
   loadTimeoutTimer = setTimeout(() => {
-    if (seq === loadDataSeq && loadState.value === 'loading') {
-      loadError.value = 'Tải dữ liệu lâu hơn dự kiến — bạn có thể thử lại.';
-      loadState.value = 'ready';
+    if (seq === loadDataSeq && loadState.value === "loading") {
+      loadError.value = "Tải dữ liệu lâu hơn dự kiến — bạn có thể thử lại.";
+      loadState.value = "ready";
     }
   }, LOAD_HARD_TIMEOUT_MS);
 
@@ -115,12 +115,13 @@ const loadData = async (): Promise<void> => {
     if (seq !== loadDataSeq) return;
     if (companyStore.companyNotFound) {
       companyId.value = null;
-      loadState.value = 'no-company';
+      loadState.value = "no-company";
       return;
     }
     if (!okCompany || !company.value) {
-      loadError.value = companyStore.companyLoadError ?? 'Không thể tải dữ liệu công ty.';
-      loadState.value = 'ready';
+      loadError.value =
+        companyStore.companyLoadError ?? "Không thể tải dữ liệu công ty.";
+      loadState.value = "ready";
       return;
     }
     companyId.value = company.value.id;
@@ -128,12 +129,12 @@ const loadData = async (): Promise<void> => {
     if (seq !== loadDataSeq) return;
     if (memberStore.error) loadError.value = memberStore.error;
     membersLoadedOnce = true;
-    loadState.value = 'ready';
+    loadState.value = "ready";
   } catch (e) {
-    console.error('[CompanyMembersView.loadData] error:', e);
+    console.error("[CompanyMembersView.loadData] error:", e);
     if (seq === loadDataSeq) {
-      loadError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
-      loadState.value = 'ready';
+      loadError.value = e instanceof Error ? e.message : "Đã có lỗi xảy ra.";
+      loadState.value = "ready";
     }
   } finally {
     if (seq === loadDataSeq && loadTimeoutTimer) {
@@ -171,10 +172,10 @@ const reloadMembersAndCheck = async (): Promise<void> => {
   if (!companyId.value) return;
   await fetchMembers();
   const me = currentUserMember.value;
-  if (!me || me.status !== 'active') {
+  if (!me || me.status !== "active") {
     await companyStore.fetchCompany();
-    if (route.name !== 'employer-company') {
-      await router.push({ name: 'employer-company' });
+    if (route.name !== "employer-company") {
+      await router.push({ name: "employer-company" });
     }
   }
 };
@@ -189,33 +190,33 @@ const onMembershipChange = (payloadCompanyId: string): void => {
   }, 300);
 };
 
-useSocket('notification:new', (n: unknown) => {
+useSocket("notification:new", (n: unknown) => {
   const notif = n as {
     type?: string;
     payload?: { kind?: string; companyId?: string };
   };
   const reloadKinds = new Set([
-    'company_invite_accepted',
-    'company_invite_declined',
+    "company_invite_accepted",
+    "company_invite_declined",
     // User thực sự decline — row chuyển sang 'declined'.
     // Tách riêng với auto-cancelled (xem dưới) — khác về ngữ nghĩa.
-    'company_invite_auto_cancelled',
+    "company_invite_auto_cancelled",
     // User bị xoá khỏi company (case soft delete active row).
-    'removed_from_company',
+    "removed_from_company",
     // Invite pending bị owner huỷ (case soft delete pending row).
-    'invite_cancelled',
-    'company_member_left',
-    'company_owner_transferred',
-    'company_owner_transferred_to_you',
-    'company_owner_transferred_from_you',
+    "invite_cancelled",
+    "company_member_left",
+    "company_owner_transferred",
+    "company_owner_transferred_to_you",
+    "company_owner_transferred_from_you",
     // userA tạo company mới → các pending invite của userA ở company khác
     // bị auto-cancel → inviter (owner) nhận kind này và cần reload list.
-    'invite_auto_cancelled_on_create_company',
+    "invite_auto_cancelled_on_create_company",
   ]);
   // Sau refactor 0032: company-member lifecycle đi qua type='company' + kind.
   // Vẫn accept type='system' cho rows cũ chưa migrate; cùng một handler.
   if (
-    (notif?.type === 'system' || notif?.type === 'company') &&
+    (notif?.type === "system" || notif?.type === "company") &&
     notif.payload?.kind &&
     reloadKinds.has(notif.payload.kind) &&
     notif.payload?.companyId
@@ -225,22 +226,27 @@ useSocket('notification:new', (n: unknown) => {
 });
 
 /** Mất kết nối rồi nối lại → refetch một lần (bỏ qua lần connect đầu). */
-useSocket('connect', () => {
-  if (membersLoadedOnce && loadState.value === 'ready') {
-    onMembershipChange(companyId.value ?? '');
+useSocket("connect", () => {
+  if (membersLoadedOnce && loadState.value === "ready") {
+    onMembershipChange(companyId.value ?? "");
   }
 });
 
 /* ============================================================================
-* Danh sách thành viên — server-side pagination + search + filter + sort
-* ==========================================================================*/
+ * Danh sách thành viên — server-side pagination + search + filter + sort
+ * ==========================================================================*/
 /** Kích thước trang — BE clamp limit tối đa 100. */
 const PAGE_SIZE = 10;
 
 /** Dữ liệu trang hiện tại — chỉ được ghi bởi lần fetchMembers() mới nhất. */
 const members = ref<CompanyMember[]>([]);
 const total = ref(0);
-const counts = ref<CompanyMemberListCounts>({ all: 0, active: 0, pending: 0, ended: 0 });
+const counts = ref<CompanyMemberListCounts>({
+  all: 0,
+  active: 0,
+  pending: 0,
+  ended: 0,
+});
 /** Row membership của chính viewer (từ response `me`) — không phụ thuộc page. */
 const meMember = ref<CompanyMember | null>(null);
 /** Owner active + avatar preview (4 active đầu) cho header. */
@@ -261,8 +267,8 @@ const listInit = ref(false);
  * = '' trong khi `total` vẫn là 0 của truy vấn trước), big-empty sẽ lóe
  * lên sai trong khoảng debounce + fetch.
  */
-const appliedSearch = ref('');
-const appliedFilter = ref<'all' | 'active' | 'pending' | 'ended'>('all');
+const appliedSearch = ref("");
+const appliedFilter = ref<"all" | "active" | "pending" | "ended">("all");
 /**
  * Cờ fetch do VIEW sở hữu: bật sync trước request, tắt SAU KHI state
  * (members/total/counts) đã được gán. Không dùng `memberStore.loading`
@@ -271,15 +277,23 @@ const appliedFilter = ref<'all' | 'active' | 'pending' | 'ended'>('all');
  * `total` cũ + `!loading` → big-empty card lóe lên rồi biến mất (nháy).
  */
 const fetchingList = ref(false);
+/**
+ * Chu kỳ animation của hàng khi chuyển tab trạng thái. Mỗi lần chuyển tab
+ * mới, cycle tăng lên 1 để đổi tên animation (`ml-row-fade-a`/`b`).
+ * Điều này buộc browser khởi chạy lại animation cho cả row đã có cùng
+ * `userId`, dù DOM được Vue reuse giữa các tab.
+ */
+const memberTabAnimationCycle = ref(0);
+const pendingTabAnimationCycle = ref(false);
 
 /** Trạng thái query hiện tại — mọi thay đổi đều kích hoạt fetchMembers(). */
-type MemberFilter = 'all' | 'active' | 'pending' | 'ended';
-const memberFilter = ref<MemberFilter>('all');
+type MemberFilter = "all" | "active" | "pending" | "ended";
+const memberFilter = ref<MemberFilter>("all");
 /** Ô tìm kiếm theo email (không phân biệt hoa thường). */
-const memberSearchEmail = ref('');
-type SortKey = 'name' | 'role' | 'status' | 'date';
-const sortKey = ref<SortKey>('date');
-const sortDir = ref<'asc' | 'desc'>('desc');
+const memberSearchEmail = ref("");
+type SortKey = "name" | "role" | "status" | "date";
+const sortKey = ref<SortKey>("date");
+const sortDir = ref<"asc" | "desc">("desc");
 const page = ref(1);
 
 /** Chống race: chỉ response của lần fetch mới nhất được ghi state. */
@@ -314,7 +328,8 @@ const fetchMembers = async (): Promise<void> => {
   if (seq !== fetchSeq) return; // response cũ — bỏ qua
   if (!result) {
     // Lỗi đã ghi vào loadError → banner "Thử lại" trong template.
-    loadError.value = memberStore.error ?? 'Không thể tải danh sách thành viên.';
+    loadError.value =
+      memberStore.error ?? "Không thể tải danh sách thành viên.";
     members.value = [];
     total.value = 0;
     fetchingList.value = false;
@@ -345,6 +360,10 @@ const fetchMembers = async (): Promise<void> => {
   if (result.total === 0 && page.value !== 1) {
     page.value = 1;
   }
+  if (pendingTabAnimationCycle.value) {
+    memberTabAnimationCycle.value += 1;
+    pendingTabAnimationCycle.value = false;
+  }
   fetchingList.value = false;
 };
 
@@ -354,21 +373,25 @@ const currentUserMember = computed<CompanyMember | null>(() => meMember.value);
 /** Current user là owner active? */
 const isCurrentUserOwner = computed<boolean>(() => {
   const m = currentUserMember.value;
-  return !!m && m.role === 'owner' && m.status === 'active';
+  return !!m && m.role === "owner" && m.status === "active";
 });
 
 /* ============================================================================
-* Header — owner list + member avatar preview (card "Thành viên")
-* ==========================================================================*/
+ * Header — owner list + member avatar preview (card "Thành viên")
+ * ==========================================================================*/
 /** Danh sách owner active — hiển thị ở khối "Chủ sở hữu" dưới mô tả. */
 const owners = computed<CompanyMember[]>(() =>
-  ownerInfos.value.map((u) => ({ userId: u.id, user: u }) as unknown as CompanyMember),
+  ownerInfos.value.map(
+    (u) => ({ userId: u.id, user: u }) as unknown as CompanyMember,
+  ),
 );
 
 /** Số ô avatar tối đa trong card preview; phần thừa gộp vào chip "+N". */
 const PREVIEW_MAX = 4;
 const previewMembers = computed<CompanyMember[]>(() =>
-  previewInfos.value.map((u) => ({ userId: u.id, user: u }) as unknown as CompanyMember),
+  previewInfos.value.map(
+    (u) => ({ userId: u.id, user: u }) as unknown as CompanyMember,
+  ),
 );
 const previewOverflowCount = computed<number>(() =>
   Math.max(0, counts.value.active - previewMembers.value.length),
@@ -388,41 +411,43 @@ const copyCompanyLink = async (): Promise<void> => {
       await navigator.clipboard.writeText(url);
     } else {
       // Fallback cho context không có Clipboard API (http, iframe cũ...)
-      const ta = document.createElement('textarea');
+      const ta = document.createElement("textarea");
       ta.value = url;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
       document.body.appendChild(ta);
       ta.select();
-      document.execCommand('copy');
+      document.execCommand("copy");
       document.body.removeChild(ta);
     }
-    toast.success('Đã sao chép website công ty');
+    toast.success("Đã sao chép website công ty");
   } catch {
-    toast.error('Không thể sao chép liên kết');
+    toast.error("Không thể sao chép liên kết");
   }
 };
 
 /* ============================================================================
-* Filter tabs — count tổng hợp từ BE (counts), không từ members.length
-* ==========================================================================*/
+ * Filter tabs — count tổng hợp từ BE (counts), không từ members.length
+ * ==========================================================================*/
 
 /** Tab hiển thị: LUÔN hiện đủ 4 tab cho owner (kể cả tab 0 mục — empty state
  *  hiển thị trong khu vực nội dung, không ẩn tab làm layout nhảy). Member
  *  thường vẫn chỉ nhận scope active từ BE nên các tab pending/ended luôn 0 —
  *  tabs này vốn bị ẩn theo quyền, giữ nguyên hành vi đó. */
-const filterTabs = computed<{ key: MemberFilter; label: string; count: number }[]>(() => {
+const filterTabs = computed<
+  { key: MemberFilter; label: string; count: number }[]
+>(() => {
   if (!isCurrentUserOwner.value) {
     return [
-      { key: 'all', label: 'Tất cả', count: counts.value.all },
-      { key: 'active', label: 'Đang hoạt động', count: counts.value.active },
+      { key: "all", label: "Tất cả", count: counts.value.all },
+      { key: "active", label: "Đang hoạt động", count: counts.value.active },
     ];
   }
   return [
-    { key: 'all', label: 'Tất cả', count: counts.value.all },
-    { key: 'active', label: 'Đang hoạt động', count: counts.value.active },
-    { key: 'pending', label: 'Chờ chấp nhận', count: counts.value.pending },
-    { key: 'ended', label: 'Đã kết thúc', count: counts.value.ended },
+    { key: "all", label: "Tất cả", count: counts.value.all },
+    { key: "active", label: "Đang hoạt động", count: counts.value.active },
+    { key: "pending", label: "Chờ chấp nhận", count: counts.value.pending },
+    { key: "ended", label: "Đã kết thúc", count: counts.value.ended },
   ];
 });
 
@@ -441,16 +466,16 @@ const clearFilters = (): void => {
     clearTimeout(searchTimer);
     searchTimer = null;
   }
-  memberFilter.value = 'all';
-  memberSearchEmail.value = '';
+  memberFilter.value = "all";
+  memberSearchEmail.value = "";
   void fetchMembers();
 };
 
 /* ============================================================================
-* Modals — điều phối mở/đóng; nội dung modal nằm ở component riêng
-* ==========================================================================*/
+ * Modals — điều phối mở/đóng; nội dung modal nằm ở component riêng
+ * ==========================================================================*/
 /* ---------- Invite modal (InviteMemberModal) ---------- */
-const inviteInitialEmail = ref('');
+const inviteInitialEmail = ref("");
 const inviteSaving = ref(false);
 const inviteError = ref<string | null>(null);
 let inviteReturnFocusEl: HTMLElement | null = null;
@@ -462,7 +487,7 @@ let inviteReturnFocusEl: HTMLElement | null = null;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const openInvite = (): void => {
-  inviteInitialEmail.value = '';
+  inviteInitialEmail.value = "";
   inviteError.value = null;
   inviteSaving.value = false;
   memberStore.error = null;
@@ -504,15 +529,15 @@ const submitInvite = async (payload: {
   memberStore.error = null;
   const email = payload.email;
   if (!email) {
-    inviteError.value = 'Vui lòng nhập email.';
+    inviteError.value = "Vui lòng nhập email.";
     return;
   }
   if (!EMAIL_REGEX.test(email)) {
-    inviteError.value = 'Email không hợp lệ.';
+    inviteError.value = "Email không hợp lệ.";
     return;
   }
   if (!companyId.value) {
-    inviteError.value = 'Không xác định được công ty.';
+    inviteError.value = "Không xác định được công ty.";
     return;
   }
 
@@ -532,13 +557,14 @@ const submitInvite = async (payload: {
       // invite mới + cập nhật total/counts đúng.
       await fetchMembers();
     } else {
-      inviteError.value = friendlyInviteError(memberStore.error) ?? 'Không thể gửi lời mời.';
+      inviteError.value =
+        friendlyInviteError(memberStore.error) ?? "Không thể gửi lời mời.";
       // Dọn sạch memberStore.error để không rò rỉ sang banner trang cha hoặc các thao tác khác
       memberStore.error = null;
     }
   } catch (e) {
     if (seq !== inviteSeq) return;
-    inviteError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+    inviteError.value = e instanceof Error ? e.message : "Đã có lỗi xảy ra.";
     memberStore.error = null;
   } finally {
     if (seq === inviteSeq) {
@@ -560,28 +586,28 @@ const submitInvite = async (payload: {
  * ảo tưởng rằng mapping đang chạy. Chỉ cần fallback message gốc.
  */
 const friendlyInviteError = (raw: string | null): string => {
-  if (!raw) return 'Đã có lỗi xảy ra.';
+  if (!raw) return "Đã có lỗi xảy ra.";
   return raw;
 };
 
 /* ============================================================================
-* Inline actions — hard delete + re-invite model (menu trên từng row)
-* ==========================================================================*/
+ * Inline actions — hard delete + re-invite model (menu trên từng row)
+ * ==========================================================================*/
 
 /**
  * Owner có thể xoá member này không? (active/pending; không xoá owner active)
  */
 const canRemoveMember = (row: CompanyMember): boolean => {
   if (!isCurrentUserOwner.value) return false;
-  if (row.role === 'owner' && row.status === 'active') return false;
-  if (row.status !== 'active' && row.status !== 'pending') return false;
+  if (row.role === "owner" && row.status === "active") return false;
+  if (row.status !== "active" && row.status !== "pending") return false;
   return true;
 };
 
 /** Owner có thể mời lại user này không? — Cần email để pre-fill invite. */
 const canReinviteMember = (row: CompanyMember): boolean => {
   if (!isCurrentUserOwner.value) return false;
-  if (row.status === 'active') return false; // Đã active, không cần mời lại
+  if (row.status === "active") return false; // Đã active, không cần mời lại
   if (!row.user?.email) return false; // Cần email để pre-fill
   return true;
 };
@@ -590,8 +616,8 @@ const canReinviteMember = (row: CompanyMember): boolean => {
 const canTransferOwnership = (row: CompanyMember): boolean => {
   if (!isCurrentUserOwner.value) return false;
   if (row.userId === auth.user?.id) return false;
-  if (row.role === 'owner') return false;
-  if (row.status !== 'active') return false;
+  if (row.role === "owner") return false;
+  if (row.status !== "active") return false;
   return true;
 };
 
@@ -601,8 +627,8 @@ const canTransferOwnership = (row: CompanyMember): boolean => {
  */
 const canLeaveCompany = (row: CompanyMember): boolean => {
   if (row.userId !== auth.user?.id) return false;
-  if (row.role !== 'member') return false;
-  if (row.status !== 'active') return false;
+  if (row.role !== "member") return false;
+  if (row.status !== "active") return false;
   return true;
 };
 
@@ -613,7 +639,7 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
   // 1. Transfer ownership — chỉ owner mới thấy + chỉ active non-owner (không phải self)
   if (isCurrentUserOwner.value && canTransferOwnership(row)) {
     items.push({
-      label: 'Chuyển quyền',
+      label: "Chuyển quyền",
       icon: UserRoundCheck,
       handler: () => openTransfer(row),
     });
@@ -622,16 +648,16 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
   // 2. Delete — status='pending' → "Hủy lời mời"; status='active' → "Xóa khỏi công ty".
   //    Status khác (đã soft-delete) → BE reject, dùng "Mời lại" thay thế.
   if (canRemoveMember(row)) {
-    if (row.status === 'pending') {
+    if (row.status === "pending") {
       items.push({
-        label: 'Hủy lời mời',
+        label: "Hủy lời mời",
         danger: true,
         icon: XCircle,
         handler: () => removeMember(row),
       });
     } else {
       items.push({
-        label: 'Xóa khỏi công ty',
+        label: "Xóa khỏi công ty",
         danger: true,
         icon: Trash2,
         handler: () => removeMember(row),
@@ -640,9 +666,13 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
   }
 
   // 3. Re-invite — chỉ non-active có email. Đặt SAU để không trùng "Xoá".
-  if (canReinviteMember(row) && row.status !== 'active' && row.status !== 'pending') {
+  if (
+    canReinviteMember(row) &&
+    row.status !== "active" &&
+    row.status !== "pending"
+  ) {
     items.push({
-      label: 'Mời lại',
+      label: "Mời lại",
       icon: MailPlus,
       handler: () => reinviteMember(row),
     });
@@ -651,7 +681,7 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
   // 4. Leave company — chỉ hiện cho CHÍNH current user khi họ là member active.
   if (canLeaveCompany(row)) {
     items.push({
-      label: 'Rời công ty',
+      label: "Rời công ty",
       danger: true,
       icon: LogOut,
       handler: () => openLeave(),
@@ -686,8 +716,8 @@ const confirmRemoveMember = async (): Promise<void> => {
     const ok = await memberStore.remove(companyId.value, row.userId);
     if (seq !== removeSeq) return;
     if (ok) {
-      const name = row.user?.fullName ?? row.user?.email ?? 'thành viên';
-      if (row.status === 'pending') {
+      const name = row.user?.fullName ?? row.user?.email ?? "thành viên";
+      if (row.status === "pending") {
         toast.success(`Đã huỷ lời mời tới ${name}.`);
       } else {
         toast.success(`Đã xoá ${name} khỏi công ty.`);
@@ -699,12 +729,12 @@ const confirmRemoveMember = async (): Promise<void> => {
       // fetchMembers tự kẹp page về phạm vi hợp lệ nếu trang cuối không còn row.
       await fetchMembers();
     } else {
-      removeError.value = memberStore.error ?? 'Không thể xoá thành viên.';
+      removeError.value = memberStore.error ?? "Không thể xoá thành viên.";
       memberStore.error = null;
     }
   } catch (e) {
     if (seq !== removeSeq) return;
-    removeError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+    removeError.value = e instanceof Error ? e.message : "Đã có lỗi xảy ra.";
     memberStore.error = null;
   } finally {
     if (seq === removeSeq) {
@@ -734,7 +764,7 @@ watch(removeTarget, (target) => {
 /** Handler: mở InviteModal pre-fill với email user để mời lại. */
 const reinviteMember = (row: CompanyMember): void => {
   if (!row.user?.email) {
-    toast.error('User chưa có email — không thể mời lại.');
+    toast.error("User chưa có email — không thể mời lại.");
     return;
   }
   inviteInitialEmail.value = row.user.email;
@@ -748,7 +778,7 @@ const reinviteMember = (row: CompanyMember): void => {
 /** Email owner mới hiển thị trong modal (fallback userId nếu user chưa có email). */
 const transferEmail = computed<string>(() => {
   const t = transferTarget.value;
-  if (!t) return '';
+  if (!t) return "";
   return t.user?.email ?? t.userId;
 });
 
@@ -769,23 +799,24 @@ const openTransfer = (row: CompanyMember): void => {
  */
 const removeEmail = computed<string>(() => {
   const t = removeTarget.value;
-  if (!t) return '';
+  if (!t) return "";
   return t.user?.email ?? t.userId;
 });
 
 const removeTitle = computed<string>(() =>
-  removeTarget.value?.status === 'pending' ? 'Huỷ lời mời?' : 'Xóa thành viên?',
+  removeTarget.value?.status === "pending" ? "Huỷ lời mời?" : "Xóa thành viên?",
 );
 
 const removeDescription = computed<string>(() => {
   const t = removeTarget.value;
-  if (!t || t.status !== 'pending') return '';
-  const name = t.user?.fullName ?? t.user?.email ?? `User ID ${t.userId.slice(0, 8)}…`;
+  if (!t || t.status !== "pending") return "";
+  const name =
+    t.user?.fullName ?? t.user?.email ?? `User ID ${t.userId.slice(0, 8)}…`;
   return `Bạn có chắc chắn muốn huỷ lời mời đã gửi tới ${name}? Hành động này không thể hoàn tác — nếu muốn mời lại, bạn phải tạo invite mới.`;
 });
 
 const removeConfirmText = computed<string>(() =>
-  removeTarget.value?.status === 'pending' ? 'Huỷ lời mời' : 'Xóa thành viên',
+  removeTarget.value?.status === "pending" ? "Huỷ lời mời" : "Xóa thành viên",
 );
 
 /** Đóng modal (nút Hủy / nút X / backdrop / ESC — component tự chặn khi loading). */
@@ -819,19 +850,20 @@ const submitTransfer = async (): Promise<void> => {
     });
     if (seq !== transferSeq) return;
     if (result) {
-      toast.success('Đã chuyển quyền sở hữu công ty.');
+      toast.success("Đã chuyển quyền sở hữu công ty.");
       transferTarget.value = null;
       transferError.value = null;
       memberStore.error = null;
       // Refetch trang hiện tại để refresh cache + đảm bảo consistency sau swap.
       await fetchMembers();
     } else {
-      transferError.value = memberStore.error ?? 'Không thể chuyển quyền sở hữu.';
+      transferError.value =
+        memberStore.error ?? "Không thể chuyển quyền sở hữu.";
       memberStore.error = null;
     }
   } catch (e) {
     if (seq !== transferSeq) return;
-    transferError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+    transferError.value = e instanceof Error ? e.message : "Đã có lỗi xảy ra.";
     memberStore.error = null;
   } finally {
     if (seq === transferSeq) {
@@ -856,23 +888,26 @@ const submitLeave = async (): Promise<void> => {
   leaveSaving.value = true;
   leaveError.value = null;
   try {
-    const result = await memberStore.leaveCompany(companyId.value, auth.user.id);
+    const result = await memberStore.leaveCompany(
+      companyId.value,
+      auth.user.id,
+    );
     if (result) {
-      toast.success('Đã rời công ty.');
+      toast.success("Đã rời công ty.");
       leaveOpen.value = false;
       // Reload company context → state 'no-company' sẽ tự động.
       await companyStore.fetchById(companyId.value, { includeJobs: false });
       // Navigate về /employer/company để thấy empty state + modal tạo company.
       // (Không navigate nếu đang ở đúng route đó.)
-      if (route.name !== 'employer-company') {
-        await router.push({ name: 'employer-company' });
+      if (route.name !== "employer-company") {
+        await router.push({ name: "employer-company" });
       }
     } else {
-      leaveError.value = memberStore.error ?? 'Không thể rời công ty.';
+      leaveError.value = memberStore.error ?? "Không thể rời công ty.";
       memberStore.error = null;
     }
   } catch (e) {
-    leaveError.value = e instanceof Error ? e.message : 'Đã có lỗi xảy ra.';
+    leaveError.value = e instanceof Error ? e.message : "Đã có lỗi xảy ra.";
     memberStore.error = null;
   } finally {
     leaveSaving.value = false;
@@ -880,8 +915,8 @@ const submitLeave = async (): Promise<void> => {
 };
 
 /* ============================================================================
-* Pagination + sort — điều phối qua events từ CompanyMembersTable
-* ==========================================================================*/
+ * Pagination + sort — điều phối qua events từ CompanyMembersTable
+ * ==========================================================================*/
 const totalPages = computed<number>(() =>
   Math.max(1, Math.ceil(total.value / PAGE_SIZE)),
 );
@@ -893,13 +928,13 @@ const goToPage = (n: number): void => {
   void fetchMembers();
 };
 
-const toggleSort = (key: 'role' | 'status' | 'date'): void => {
+const toggleSort = (key: "role" | "status" | "date"): void => {
   if (sortKey.value === key) {
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
+    sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
   } else {
     sortKey.value = key;
     // Ngày: mặc định mới nhất lên đầu; tên/trạng thái: A→Z.
-    sortDir.value = key === 'date' ? 'desc' : 'asc';
+    sortDir.value = key === "date" ? "desc" : "asc";
   }
 };
 
@@ -916,7 +951,7 @@ const toggleSort = (key: 'role' | 'status' | 'date'): void => {
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 const queryKey = () =>
   `${memberFilter.value}|${sortKey.value}|${sortDir.value}|${(page.value - 1) * PAGE_SIZE}|${memberSearchEmail.value.trim()}`;
-let lastQueryKey = '';
+let lastQueryKey = "";
 watch(memberSearchEmail, () => {
   if (searchTimer !== null) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
@@ -927,10 +962,21 @@ watch(memberSearchEmail, () => {
   }, 300);
 });
 
-/** Đổi tab filter hoặc sort → về trang 1 + fetch lại (server-side).
- *  Guard lastQueryKey: sau "Xóa bộ lọc" (fetch trực tiếp), watcher filter
- *  vẫn fire nhưng query trùng khít → bỏ qua, không fetch/request thừa. */
-watch([memberFilter, sortKey, sortDir], () => {
+/** Chuyển tab trạng thái: bắt đầu request mới + đánh dấu cycle animation
+ *  chỉ khi tab đổi. Sort/search/paging không kích hoạt animation. */
+watch(memberFilter, (next, prev) => {
+  if (next === prev) return;
+  page.value = 1;
+  pendingTabAnimationCycle.value = true;
+  if (queryKey() === lastQueryKey && listInit.value) {
+    pendingTabAnimationCycle.value = false;
+    return;
+  }
+  void fetchMembers();
+});
+
+/** Đổi sort → về trang 1 + fetch lại, nhưng không ảnh hưởng animation hàng. */
+watch([sortKey, sortDir], () => {
   page.value = 1;
   if (queryKey() === lastQueryKey && listInit.value) return;
   void fetchMembers();
@@ -938,25 +984,44 @@ watch([memberFilter, sortKey, sortDir], () => {
 </script>
 
 <template>
-  <div id="members-page-root" class="font-poppins min-h-screen bg-white p-5 text-slate-900 antialiased md:p-8">
+  <div
+    id="members-page-root"
+    class="font-poppins min-h-screen bg-white p-5 text-slate-900 antialiased md:p-8"
+  >
     <div class="mx-auto max-w-6xl space-y-6">
       <!-- =================== Header =================== -->
       <!-- Skeleton placeholder cho toàn khối header khi loading -->
-      <div v-if="loadState === 'loading'" class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]">
+      <div
+        v-if="loadState === 'loading'"
+        class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]"
+      >
         <div class="flex items-start gap-4">
-          <div class="h-20 w-20 shrink-0 animate-pulse rounded-2xl bg-slate-100 motion-reduce:animate-none" />
+          <div
+            class="h-20 w-20 shrink-0 animate-pulse rounded-2xl bg-slate-100 motion-reduce:animate-none"
+          />
           <div class="min-w-0 flex-1 space-y-2 pt-1">
-            <div class="h-7 w-56 animate-pulse rounded-md bg-slate-100 motion-reduce:animate-none" />
-            <div class="h-4 w-72 animate-pulse rounded-md bg-slate-100 motion-reduce:animate-none" />
+            <div
+              class="h-7 w-56 animate-pulse rounded-md bg-slate-100 motion-reduce:animate-none"
+            />
+            <div
+              class="h-4 w-72 animate-pulse rounded-md bg-slate-100 motion-reduce:animate-none"
+            />
           </div>
         </div>
-        <div class="h-48 animate-pulse rounded-2xl bg-slate-100 motion-reduce:animate-none" />
+        <div
+          class="h-48 animate-pulse rounded-2xl bg-slate-100 motion-reduce:animate-none"
+        />
       </div>
 
       <!-- No company: giữ tiêu đề đơn giản như cũ -->
-      <header v-else-if="loadState === 'no-company'" class="flex flex-wrap items-center justify-between gap-4">
+      <header
+        v-else-if="loadState === 'no-company'"
+        class="flex flex-wrap items-center justify-between gap-4"
+      >
         <div class="min-w-0">
-          <h1 class="text-lg font-semibold tracking-[-0.01em] text-slate-900">Thành viên công ty</h1>
+          <h1 class="text-lg font-semibold tracking-[-0.01em] text-slate-900">
+            Thành viên công ty
+          </h1>
           <p class="mt-0.5 text-[13px] text-slate-500">
             Quản lý thành viên và quyền truy cập của công ty.
           </p>
@@ -967,12 +1032,21 @@ watch([memberFilter, sortKey, sortDir], () => {
       <CompanyMembersSkeleton v-if="loadState === 'loading'" />
 
       <!-- =================== No company =================== -->
-      <div v-else-if="loadState === 'no-company'" class="rounded-xl border border-slate-200 bg-white">
-        <div class="flex flex-col items-center justify-center px-6 py-16 text-center">
-          <div class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#5b4eea]/10">
+      <div
+        v-else-if="loadState === 'no-company'"
+        class="rounded-xl border border-slate-200 bg-white"
+      >
+        <div
+          class="flex flex-col items-center justify-center px-6 py-16 text-center"
+        >
+          <div
+            class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#5b4eea]/10"
+          >
             <Building2 class="h-7 w-7 text-[#5b4eea]" />
           </div>
-          <h2 class="text-base font-semibold text-slate-900">Bạn chưa thuộc công ty nào</h2>
+          <h2 class="text-base font-semibold text-slate-900">
+            Bạn chưa thuộc công ty nào
+          </h2>
           <p class="mt-2 max-w-md text-sm text-slate-500">
             Bạn cần thuộc một công ty để mời và quản lý thành viên.
           </p>
@@ -994,7 +1068,12 @@ watch([memberFilter, sortKey, sortDir], () => {
           class="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3"
         >
           <AlertCircle :size="16" class="mt-0.5 shrink-0 text-red-500" />
-          <p class="m-0 flex-1 text-[13px] leading-[1.6] text-red-700" role="alert">{{ loadError }}</p>
+          <p
+            class="m-0 flex-1 text-[13px] leading-[1.6] text-red-700"
+            role="alert"
+          >
+            {{ loadError }}
+          </p>
           <button
             type="button"
             class="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] text-slate-700 transition-colors duration-150 hover:border-slate-300 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
@@ -1030,14 +1109,27 @@ watch([memberFilter, sortKey, sortDir], () => {
 
         <!-- ============ Empty (chỉ khi không có filter/search nào) ============ -->
         <div
-          v-else-if="total === 0 && !fetchingList && memberFilter === 'all' && memberSearchEmail.trim() === '' && appliedSearch === '' && appliedFilter === 'all'"
+          v-else-if="
+            total === 0 &&
+            !fetchingList &&
+            memberFilter === 'all' &&
+            memberSearchEmail.trim() === '' &&
+            appliedSearch === '' &&
+            appliedFilter === 'all'
+          "
           class="rounded-xl border border-slate-200 bg-white"
         >
-          <div class="flex flex-col items-center justify-center px-6 py-14 text-center">
-            <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#5b4eea]/10">
+          <div
+            class="flex flex-col items-center justify-center px-6 py-14 text-center"
+          >
+            <div
+              class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#5b4eea]/10"
+            >
               <Users class="h-6 w-6 text-[#5b4eea]" />
             </div>
-            <h3 class="text-sm font-semibold text-slate-900">Chưa có thành viên</h3>
+            <h3 class="text-sm font-semibold text-slate-900">
+              Chưa có thành viên
+            </h3>
             <p class="mt-1 max-w-sm text-xs text-slate-500">
               Mời đồng đội tham gia để cùng quản lý công ty.
             </p>
@@ -1060,7 +1152,11 @@ watch([memberFilter, sortKey, sortDir], () => {
           v-else
           id="company-members-content"
           role="tabpanel"
-          :aria-labelledby="isCurrentUserOwner ? `company-members-tab-${memberFilter}` : undefined"
+          :aria-labelledby="
+            isCurrentUserOwner
+              ? `company-members-tab-${memberFilter}`
+              : undefined
+          "
           class="c3-fade c3-d1 overflow-hidden scroll-mt-6"
         >
           <CompanyMembersToolbar
@@ -1081,6 +1177,7 @@ watch([memberFilter, sortKey, sortDir], () => {
             :total-pages="totalPages"
             :sort-key="sortKey"
             :sort-dir="sortDir"
+            :animation-cycle="memberTabAnimationCycle"
             :actions-for="getRowActions"
             @page-change="goToPage"
             @clear-filters="clearFilters"
@@ -1127,7 +1224,11 @@ watch([memberFilter, sortKey, sortDir], () => {
     <ConfirmModal
       :open="leaveOpen"
       title="Rời công ty?"
-      :message="leaveError ? leaveError : `Sau khi rời, bạn sẽ mất quyền truy cập vào các tính năng dành cho thành viên của công ty này. Nếu muốn quay lại, bạn cần được owner mời lại.`"
+      :message="
+        leaveError
+          ? leaveError
+          : `Sau khi rời, bạn sẽ mất quyền truy cập vào các tính năng dành cho thành viên của công ty này. Nếu muốn quay lại, bạn cần được owner mời lại.`
+      "
       confirm-text="Rời công ty"
       variant="danger"
       :loading="leaveSaving"
@@ -1211,17 +1312,46 @@ html:has(#members-page-root)::-webkit-scrollbar {
    nháy (search, tab, phân trang, realtime như nhau).
    Delay 60ms/hàng binding qua :style trên từng phần tử (không dùng JS timer). */
 .ml-row {
-  animation: ml-row-fade 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: opacity;
 }
-@keyframes ml-row-fade {
+
+.ml-row-fade-a,
+.ml-row-fade-b {
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+
+.ml-row-fade-a {
+  animation-name: ml-row-fade-a;
+}
+
+.ml-row-fade-b {
+  animation-name: ml-row-fade-b;
+}
+
+@keyframes ml-row-fade-a {
   from {
     opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ml-row-fade-b {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .c3-fade,
-  .ml-row {
+  .ml-row-fade-a,
+  .ml-row-fade-b {
     animation: none;
   }
 }
