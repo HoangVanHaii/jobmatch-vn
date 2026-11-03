@@ -3,6 +3,7 @@
  * CompanyMembersView và các component con (header, toolbar, table).
  * Không chứa state/logic nghiệp vụ — chỉ format dữ liệu CompanyMember.
  */
+import type { Component } from 'vue';
 import { formatDate } from './format';
 import type {
   CompanyMember,
@@ -14,6 +15,7 @@ import type {
 export interface RowActionItem {
   label: string;
   danger?: boolean;
+  icon?: Component;
   handler: () => void;
 }
 

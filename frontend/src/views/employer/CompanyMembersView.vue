@@ -12,7 +12,19 @@
  * Helper hiển thị thuần nằm ở utils/companyMemberDisplay.ts.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { AlertCircle, Building2, Loader2, RefreshCw, UserPlus, Users } from 'lucide-vue-next';
+import {
+  AlertCircle,
+  Building2,
+  Loader2,
+  LogOut,
+  MailPlus,
+  RefreshCw,
+  Trash2,
+  UserPlus,
+  UserRoundCheck,
+  Users,
+  XCircle,
+} from 'lucide-vue-next';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import { useCompanyStore } from '@stores/company';
@@ -602,6 +614,7 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
   if (isCurrentUserOwner.value && canTransferOwnership(row)) {
     items.push({
       label: 'Chuyển quyền',
+      icon: UserRoundCheck,
       handler: () => openTransfer(row),
     });
   }
@@ -613,12 +626,14 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
       items.push({
         label: 'Hủy lời mời',
         danger: true,
+        icon: XCircle,
         handler: () => removeMember(row),
       });
     } else {
       items.push({
         label: 'Xóa khỏi công ty',
         danger: true,
+        icon: Trash2,
         handler: () => removeMember(row),
       });
     }
@@ -628,6 +643,7 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
   if (canReinviteMember(row) && row.status !== 'active' && row.status !== 'pending') {
     items.push({
       label: 'Mời lại',
+      icon: MailPlus,
       handler: () => reinviteMember(row),
     });
   }
@@ -637,6 +653,7 @@ const getRowActions = (row: CompanyMember): RowActionItem[] => {
     items.push({
       label: 'Rời công ty',
       danger: true,
+      icon: LogOut,
       handler: () => openLeave(),
     });
   }
