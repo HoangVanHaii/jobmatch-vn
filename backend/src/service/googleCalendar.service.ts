@@ -3,6 +3,8 @@
  * Xử lý OAuth authorization, lưu trữ token mã hóa, kiểm tra trạng thái và đồng bộ
  */
 import { OAuth2Client } from 'google-auth-library';
+import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { db } from '../config/database';
 import { userCalendarIntegrations } from '../db/schema/interview';
@@ -210,5 +212,200 @@ export const googleCalendarService = {
     });
 
     return client;
+  },
+
+  /**
+   * Tạo sự kiện phỏng vấn trên Google Calendar + sinh link Google Meet tự động
+   */
+  createEvent: async (params: {
+    userId: string;
+    summary: string;
+    description?: string;
+    location?: string;
+    scheduledAt: Date;
+    durationMin: number;
+    attendeeEmail?: string;
+    createMeet?: boolean;
+  }): Promise<{ eventId: string; meetingLink: string | null; htmlLink?: string } | null> => {
+    try {
+      const client = await googleCalendarService.getAuthenticatedClient(params.userId);
+      if (!client) return null;
+
+      const tokenRes = await client.getAccessToken();
+      const accessToken = tokenRes.token;
+      if (!accessToken) return null;
+
+      const startIso = params.scheduledAt.toISOString();
+      const endIso = new Date(params.scheduledAt.getTime() + params.durationMin * 60 * 1000).toISOString();
+
+      const requestBody: Record<string, unknown> = {
+        summary: params.summary,
+        description: params.description ?? '',
+        location: params.location ?? '',
+        start: { dateTime: startIso },
+        end: { dateTime: endIso },
+        attendees: params.attendeeEmail ? [{ email: params.attendeeEmail }] : [],
+      };
+
+      if (params.createMeet !== false) {
+        requestBody.conferenceData = {
+          createRequest: {
+            requestId: uuidv4(),
+            conferenceSolutionKey: { type: 'hangoutsMeet' },
+          },
+        };
+      }
+
+      const res = await axios.post<{
+        id: string;
+        hangoutLink?: string;
+        htmlLink?: string;
+        conferenceData?: {
+          entryPoints?: Array<{ entryPointType: string; uri: string }>;
+        };
+      }>(
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1',
+        requestBody,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      const meetingLink =
+        res.data.hangoutLink ??
+        res.data.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')?.uri ??
+        null;
+
+      return {
+        eventId: res.data.id,
+        meetingLink,
+        htmlLink: res.data.htmlLink,
+      };
+    } catch (err) {
+      logger.error({ err, userId: params.userId }, 'googleCalendarService.createEvent failed');
+      return null;
+    }
+  },
+
+  /**
+   * Cập nhật thời gian hoặc nội dung sự kiện trên Google Calendar
+   */
+  updateEvent: async (params: {
+    userId: string;
+    eventId: string;
+    summary?: string;
+    description?: string;
+    location?: string;
+    scheduledAt?: Date;
+    durationMin?: number;
+  }): Promise<boolean> => {
+    try {
+      const client = await googleCalendarService.getAuthenticatedClient(params.userId);
+      if (!client) return false;
+
+      const tokenRes = await client.getAccessToken();
+      const accessToken = tokenRes.token;
+      if (!accessToken) return false;
+
+      const patchBody: Record<string, unknown> = {};
+      if (params.summary) patchBody.summary = params.summary;
+      if (params.description !== undefined) patchBody.description = params.description;
+      if (params.location !== undefined) patchBody.location = params.location;
+      if (params.scheduledAt && params.durationMin) {
+        patchBody.start = { dateTime: params.scheduledAt.toISOString() };
+        patchBody.end = {
+          dateTime: new Date(params.scheduledAt.getTime() + params.durationMin * 60 * 1000).toISOString(),
+        };
+      }
+
+      await axios.patch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(params.eventId)}`,
+        patchBody,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      return true;
+    } catch (err) {
+      logger.error({ err, userId: params.userId, eventId: params.eventId }, 'googleCalendarService.updateEvent failed');
+      return false;
+    }
+  },
+
+  /**
+   * Huỷ / Xoá sự kiện trên Google Calendar
+   */
+  deleteEvent: async (params: { userId: string; eventId: string }): Promise<boolean> => {
+    try {
+      const client = await googleCalendarService.getAuthenticatedClient(params.userId);
+      if (!client) return false;
+
+      const tokenRes = await client.getAccessToken();
+      const accessToken = tokenRes.token;
+      if (!accessToken) return false;
+
+      await axios.delete(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(params.eventId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        },
+      );
+      return true;
+    } catch (err) {
+      logger.error({ err, userId: params.userId, eventId: params.eventId }, 'googleCalendarService.deleteEvent failed');
+      return false;
+    }
+  },
+
+  /**
+   * Lấy danh sách khung giờ bận trong ngày của HR (Google Calendar FreeBusy query)
+   */
+  getBusyTimes: async (params: {
+    userId: string;
+    timeMin: Date;
+    timeMax: Date;
+  }): Promise<Array<{ start: string; end: string }>> => {
+    try {
+      const client = await googleCalendarService.getAuthenticatedClient(params.userId);
+      if (!client) return [];
+
+      const tokenRes = await client.getAccessToken();
+      const accessToken = tokenRes.token;
+      if (!accessToken) return [];
+
+      const res = await axios.post<{
+        calendars?: {
+          primary?: {
+            busy?: Array<{ start: string; end: string }>;
+          };
+        };
+      }>(
+        'https://www.googleapis.com/calendar/v3/freeBusy',
+        {
+          timeMin: params.timeMin.toISOString(),
+          timeMax: params.timeMax.toISOString(),
+          items: [{ id: 'primary' }],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      return res.data?.calendars?.primary?.busy ?? [];
+    } catch (err) {
+      logger.error({ err, userId: params.userId }, 'googleCalendarService.getBusyTimes failed');
+      return [];
+    }
   },
 };

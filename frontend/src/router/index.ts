@@ -23,6 +23,8 @@ const routes: RouteRecordRaw[] = [
   // có tài khoản). Token 64 hex trong URL là proof-of-access duy nhất.
   // Link đến từ email n8n `reference_verify` (xem referenceVerify service).
   { path: '/verify/reference/:token', name: 'reference-verify', component: () => import('@views/public/RefereeVerifyView.vue') },
+  // Phỏng vấn — trang PUBLIC cho ứng viên phản hồi lời mời qua link email (Xác nhận / Đổi lịch / Từ chối)
+  { path: '/interviews/respond', name: 'interview-respond', component: () => import('@views/public/InterviewResponseView.vue') },
   // AI test — trang PUBLIC cho candidate làm bài qua link email (n8n
   // `ai_test_assign`). Token = proof-of-access, không login.
   { path: '/test/:token', name: 'take-test', component: () => import('@views/public/TakeTestView.vue') },

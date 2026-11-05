@@ -10,6 +10,7 @@ export const interviews = pgTable('interviews', {
   durationMin: integer('duration_min').default(60),
   location: text('location'),
   meetingLink: text('meeting_link'),
+  googleEventId: text('google_event_id'),
   status: text('status').default('pending'),
   confirmationToken: text('confirmation_token').unique(),
   confirmedAt: timestamp('confirmed_at', { withTimezone: true }),

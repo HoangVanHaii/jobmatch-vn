@@ -27,6 +27,8 @@ import {
   listInterviewQuerySchema,
   listCandidateInterviewQuerySchema,
   rejectInterviewBodySchema,
+  publicInterviewTokenQuerySchema,
+  publicInterviewRespondBodySchema,
 } from '../middleware/interview';
 import { interviewController } from '../controller/interview.controller';
 
@@ -64,6 +66,24 @@ interviewRouter.get(
   interviewController.handleCalendarCallback,
 );
 
+// ============================================================================
+// Public Token-based routes (Ứng viên nhận link từ Email, KHÔNG cần auth)
+// ============================================================================
+
+// GET /public/details — Lấy thông tin phỏng vấn theo token
+interviewRouter.get(
+  '/public/details',
+  validate(publicInterviewTokenQuerySchema, 'query'),
+  interviewController.getPublicByToken,
+);
+
+// POST /public/respond — Xác nhận / Xin đổi lịch / Từ chối theo token
+interviewRouter.post(
+  '/public/respond',
+  validate(publicInterviewRespondBodySchema),
+  interviewController.respondPublicByToken,
+);
+
 // GET /calendar/connect-url — HR lấy link OAuth Google Calendar
 interviewRouter.get(
   '/calendar/connect-url',
@@ -86,6 +106,14 @@ interviewRouter.delete(
   auth,
   requireRole('employer', 'admin'),
   interviewController.disconnectCalendar,
+);
+
+// GET /calendar/busy-times — HR lấy danh sách khung giờ bận trong ngày
+interviewRouter.get(
+  '/calendar/busy-times',
+  auth,
+  requireRole('employer', 'admin'),
+  interviewController.getBusyTimes,
 );
 
 // PUT /:id/cancel — TRƯỚC /:id để Express không nuốt

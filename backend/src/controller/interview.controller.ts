@@ -246,4 +246,54 @@ export const interviewController = {
       next(err);
     }
   },
+
+  getBusyTimes: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+
+      const dateStr = typeof req.query.date === 'string' ? req.query.date : new Date().toISOString().split('T')[0];
+      const startOfDay = new Date(`${dateStr}T00:00:00+07:00`);
+      const endOfDay = new Date(`${dateStr}T23:59:59+07:00`);
+
+      const busyTimes = await googleCalendarService.getBusyTimes({
+        userId,
+        timeMin: startOfDay,
+        timeMax: endOfDay,
+      });
+
+      res.json({ success: true, data: { busyTimes } });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // --------------------------------------------------------------------------
+  // Public Token Controllers
+  // --------------------------------------------------------------------------
+
+  getPublicByToken: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const token = req.query.token as string;
+      const data = await interviewService.getPublicByToken(token);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  respondPublicByToken: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { token, action, reason, proposedTime } = req.body;
+      const result = await interviewService.respondPublicByToken({
+        token,
+        action,
+        reason,
+        proposedTime,
+      });
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
 };

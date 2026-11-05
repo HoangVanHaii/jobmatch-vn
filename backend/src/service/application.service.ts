@@ -21,6 +21,7 @@ import {
   users,
   userProfiles,
   companyMembers,
+  interviews,
 } from '../db/schema';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { AppError } from '../middleware/errorHandler';
@@ -667,13 +668,38 @@ export const getById = async (
     }
   }
 
+  // Lấy lịch phỏng vấn mới nhất liên kết với application (nếu có)
+  const [latestInterview] = await db
+    .select({
+      id: interviews.id,
+      status: interviews.status,
+      scheduledAt: interviews.scheduledAt,
+      durationMin: interviews.durationMin,
+      location: interviews.location,
+      meetingLink: interviews.meetingLink,
+      confirmedAt: interviews.confirmedAt,
+      cancelledAt: interviews.cancelledAt,
+      cancelReason: interviews.cancelReason,
+    })
+    .from(interviews)
+    .where(eq(interviews.applicationId, applicationId))
+    .orderBy(desc(interviews.createdAt))
+    .limit(1);
+
   // Strip helper fields `candidateId` và `jobAssignedTo` (chỉ dùng cho auth scoping, không
   // nằm trong ApplicationDetail public shape). `jobPostedBy` GIỮ LẠI vì FE
   // dùng để bấm "Liên hệ" → tạo conversation với employer đăng job.
   const { candidateId: _candidateId, jobAssignedTo: _jobAssignedTo, ...rest } = row;
   void _candidateId;
   void _jobAssignedTo;
-  return rest as unknown as ApplicationDetail;
+  return {
+    ...rest,
+    interview: latestInterview ? {
+      ...latestInterview,
+      status: latestInterview.status ?? 'pending',
+      durationMin: latestInterview.durationMin ?? 60,
+    } : null,
+  } as unknown as ApplicationDetail;
 };
 
 /**
