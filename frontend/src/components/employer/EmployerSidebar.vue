@@ -234,10 +234,10 @@ const groups: MenuGroup[] = [
         activeOn: ['/employer/chat'],
       },
       {
-        label: 'Cài đặt',
+        label: 'Hồ sơ & Cài đặt',
         icon: Settings,
         to: '/employer/settings',
-        activeOn: ['/employer/settings'],
+        activeOn: ['/employer/settings', '/employer/profile'],
       },
     ],
   },
@@ -414,16 +414,23 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
       <!-- Expanded: avatar + (name + role) + icon logout (cùng hàng) -->
       <div v-if="!collapsed" class="px-3 py-3">
         <div class="flex items-center gap-2.5">
-          <div
-            :title="displayName"
-            class="w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-semibold shrink-0"
+          <router-link
+            to="/employer/profile"
+            title="Xem hồ sơ cá nhân"
+            class="flex items-center gap-2.5 flex-1 min-w-0 hover:opacity-85 transition group"
           >
-            {{ initials }}
-          </div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-gray-900 truncate leading-tight">{{ displayName }}</p>
-            <p class="text-xs text-gray-500 truncate leading-tight mt-0.5">{{ roleLabel }}</p>
-          </div>
+            <div
+              :title="displayName"
+              class="w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden ring-2 ring-transparent group-hover:ring-primary-500/20"
+            >
+              <img v-if="user?.avatarUrl" :src="user.avatarUrl" class="w-full h-full object-cover" />
+              <span v-else>{{ initials }}</span>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-gray-900 truncate leading-tight group-hover:text-primary-600 transition">{{ displayName }}</p>
+              <p class="text-xs text-gray-500 truncate leading-tight mt-0.5">{{ roleLabel }}</p>
+            </div>
+          </router-link>
           <button
             type="button"
             title="Đăng xuất"

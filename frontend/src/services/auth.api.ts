@@ -65,4 +65,6 @@ export const authApi = {
     http.post<ApiResponseEnvelope<EmptyData>>('/auth/reset-password', { email, otp, newPassword }),
   me: () => http.get<ApiResponseEnvelope<MeResponse>>('/users/me'),
   usage: () => http.get<ApiResponseEnvelope<EmptyData>>('/users/me/usage'),
+  getProfile: () => http.get<ApiResponseEnvelope<any>>('/auth/profile'),
+  upsertProfile: (data: any) => http.post<ApiResponseEnvelope<{ message: string }>>('/auth/upsert-profile', data),
 };

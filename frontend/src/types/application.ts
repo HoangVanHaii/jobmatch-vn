@@ -180,6 +180,18 @@ export interface ApplicationDetail {
   appliedAt: string;
   viewedAt: string | null;
   updatedAt: string;
+  /** Thông tin lịch phỏng vấn mới nhất (nếu có) */
+  interview?: {
+    id: string;
+    status: string;
+    scheduledAt: string;
+    durationMin: number;
+    location: string | null;
+    meetingLink: string | null;
+    confirmedAt: string | null;
+    cancelledAt: string | null;
+    cancelReason: string | null;
+  } | null;
 }
 
 /**

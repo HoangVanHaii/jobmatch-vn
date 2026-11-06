@@ -191,4 +191,16 @@ export interface ApplicationDetail {
   appliedAt: Date;
   viewedAt: Date | null;
   updatedAt: Date;
+  /** Thông tin lịch phỏng vấn mới nhất (nếu có) */
+  interview?: {
+    id: string;
+    status: string;
+    scheduledAt: Date;
+    durationMin: number;
+    location: string | null;
+    meetingLink: string | null;
+    confirmedAt: Date | null;
+    cancelledAt: Date | null;
+    cancelReason: string | null;
+  } | null;
 }

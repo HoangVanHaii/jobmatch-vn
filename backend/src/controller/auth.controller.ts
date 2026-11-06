@@ -363,8 +363,16 @@ export const authController = {
     try {
       const userId = req.user?.userId;
       if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Vui lòng đăng nhập để tiếp tục.');
-      const { fullName, phone, location, social, preference } = req.body;
-      await authService.upsertProfile(userId, { fullName, phone, location, social, preference });
+      const { fullName, phone, location, social, preference, preferences, coverUrl, metadata } = req.body;
+      await authService.upsertProfile(userId, {
+        ...(fullName !== undefined ? { fullName } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+        ...(location !== undefined ? { location } : {}),
+        ...(social !== undefined ? { social } : {}),
+        ...((preference !== undefined || preferences !== undefined) ? { preferences: preferences ?? preference } : {}),
+        ...(coverUrl !== undefined ? { coverUrl } : {}),
+        ...(metadata !== undefined ? { metadata } : {}),
+      });
       res.json({ success: true, message: 'Profile updated successfully' });
     } catch (err) { next(err); }
   },

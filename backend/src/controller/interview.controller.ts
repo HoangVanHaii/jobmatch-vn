@@ -5,6 +5,8 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import { interviewService } from '../service/interview.service';
+import { googleCalendarService } from '../service/googleCalendar.service';
+import { env } from '../config/env';
 import { AppError } from '../middleware/errorHandler';
 import type {
   CreateInterviewBody,
@@ -171,6 +173,124 @@ export const interviewController = {
       const { reason } = req.body as RejectInterviewBody;
 
       const result = await interviewService.reject(id, userId, reason);
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // --------------------------------------------------------------------------
+  // Google Calendar Integration
+  // --------------------------------------------------------------------------
+
+  getCalendarConnectUrl: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+
+      const returnTo = typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined;
+      const url = googleCalendarService.getConnectUrl(userId, returnTo);
+      res.json({ success: true, data: { url } });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  handleCalendarCallback: async (req: Request, res: Response): Promise<void> => {
+    const frontendUrl = env.FRONTEND_URL || 'http://localhost:5173';
+    try {
+      const { code, state, error } = req.query as { code?: string; state?: string; error?: string };
+
+      if (error) {
+        console.error('Calendar OAuth error:', error);
+        res.redirect(`${frontendUrl}/employer/settings?tab=dich-vu&calendar_error=${encodeURIComponent(error)}`);
+        return;
+      }
+
+      if (!code || !state) {
+        res.redirect(`${frontendUrl}/employer/settings?tab=dich-vu&calendar_error=missing_code_or_state`);
+        return;
+      }
+
+      const { returnTo } = await googleCalendarService.handleCallback(code, state);
+      const targetPath = returnTo || '/employer/settings?tab=dich-vu';
+      const separator = targetPath.includes('?') ? '&' : '?';
+      res.redirect(`${frontendUrl}${targetPath}${separator}calendar_connected=success`);
+    } catch (err: any) {
+      const msg = err?.message || 'connect_failed';
+      console.error('Calendar OAuth error:', msg);
+      res.redirect(`${frontendUrl}/employer/settings?tab=dich-vu&calendar_error=${encodeURIComponent(msg)}`);
+    }
+  },
+
+  getCalendarStatus: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+
+      const data = await googleCalendarService.getStatus(userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  disconnectCalendar: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+
+      await googleCalendarService.disconnect(userId);
+      res.json({ success: true, message: 'Đã hủy kết nối Google Calendar' });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  getBusyTimes: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
+
+      const dateStr = typeof req.query.date === 'string' ? req.query.date : new Date().toISOString().split('T')[0];
+      const startOfDay = new Date(`${dateStr}T00:00:00+07:00`);
+      const endOfDay = new Date(`${dateStr}T23:59:59+07:00`);
+
+      const busyTimes = await googleCalendarService.getBusyTimes({
+        userId,
+        timeMin: startOfDay,
+        timeMax: endOfDay,
+      });
+
+      res.json({ success: true, data: { busyTimes } });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // --------------------------------------------------------------------------
+  // Public Token Controllers
+  // --------------------------------------------------------------------------
+
+  getPublicByToken: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const token = req.query.token as string;
+      const data = await interviewService.getPublicByToken(token);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  respondPublicByToken: async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { token, action, reason, proposedTime } = req.body;
+      const result = await interviewService.respondPublicByToken({
+        token,
+        action,
+        reason,
+        proposedTime,
+      });
       res.json({ success: true, data: result });
     } catch (err) {
       next(err);

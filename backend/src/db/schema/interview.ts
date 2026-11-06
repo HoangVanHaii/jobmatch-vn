@@ -1,4 +1,4 @@
-import { pgTable, uuid, integer, text, boolean, timestamp, jsonb, time, date, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, integer, text, boolean, timestamp, jsonb, time, date, index, unique } from 'drizzle-orm/pg-core';
 import { applications } from './applications';
 import { users } from './users';
 
@@ -10,6 +10,7 @@ export const interviews = pgTable('interviews', {
   durationMin: integer('duration_min').default(60),
   location: text('location'),
   meetingLink: text('meeting_link'),
+  googleEventId: text('google_event_id'),
   status: text('status').default('pending'),
   confirmationToken: text('confirmation_token').unique(),
   confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
@@ -40,3 +41,20 @@ export const interviewerAvailability = pgTable('interviewer_availability', {
   specificDate: date('specific_date'),
   isRecurring: boolean('is_recurring').default(true),
 });
+
+export const userCalendarIntegrations = pgTable('user_calendar_integrations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull().default('google'),
+  calendarEmail: text('calendar_email'),
+  accessTokenEncrypted: text('access_token_encrypted'),
+  refreshTokenEncrypted: text('refresh_token_encrypted').notNull(),
+  tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }),
+  scope: text('scope'),
+  isConnected: boolean('is_connected').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  userProviderIdx: unique('uniq_user_calendar_provider').on(t.userId, t.provider),
+  userIdx: index('idx_user_calendar_user').on(t.userId),
+}));

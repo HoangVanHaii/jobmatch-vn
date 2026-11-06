@@ -56,15 +56,18 @@ export const createInterviewBodySchema = z
     interviewerId: z.string().uuid(),
     scheduledAt: z
       .string()
-      .datetime({ offset: true })
-      .refine((v) => new Date(v) > new Date()),
+      .refine((v) => !isNaN(Date.parse(v)) && new Date(v) > new Date(), {
+        message: 'Thời gian phỏng vấn phải ở tương lai.',
+      }),
     durationMin: z.number().int().min(15).max(480).default(60),
     location: z.string().trim().max(500).optional(),
     meetingLink: z.string().url().optional(),
     notes: z.string().trim().max(2000).optional(),
+    autoCreateMeet: z.boolean().optional(),
   })
-  .refine((d) => d.location || d.meetingLink, {
+  .refine((d) => Boolean(d.location || d.meetingLink || d.autoCreateMeet), {
     path: ['location'],
+    message: 'Vui lòng nhập địa điểm, link họp hoặc chọn tự động tạo Google Meet.',
   });
 
 export type CreateInterviewBody = z.infer<typeof createInterviewBodySchema>;
@@ -142,3 +145,20 @@ export const rejectInterviewBodySchema = z.object({
 });
 
 export type RejectInterviewBody = z.infer<typeof rejectInterviewBodySchema>;
+
+// ---------------------------------------------------------------------------
+// Public token-based schemas
+// ---------------------------------------------------------------------------
+
+export const publicInterviewTokenQuerySchema = z.object({
+  token: z.string().trim().min(1, 'Token là bắt buộc'),
+});
+
+export const publicInterviewRespondBodySchema = z.object({
+  token: z.string().trim().min(1, 'Token là bắt buộc'),
+  action: z.enum(['confirm', 'reschedule', 'reject']),
+  reason: z.string().trim().max(1000).optional(),
+  proposedTime: z.string().trim().max(500).optional(),
+});
+
+export type PublicInterviewRespondBody = z.infer<typeof publicInterviewRespondBodySchema>;

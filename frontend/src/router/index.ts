@@ -23,6 +23,8 @@ const routes: RouteRecordRaw[] = [
   // có tài khoản). Token 64 hex trong URL là proof-of-access duy nhất.
   // Link đến từ email n8n `reference_verify` (xem referenceVerify service).
   { path: '/verify/reference/:token', name: 'reference-verify', component: () => import('@views/public/RefereeVerifyView.vue') },
+  // Phỏng vấn — trang PUBLIC cho ứng viên phản hồi lời mời qua link email (Xác nhận / Đổi lịch / Từ chối)
+  { path: '/interviews/respond', name: 'interview-respond', component: () => import('@views/public/InterviewResponseView.vue') },
   // AI test — trang PUBLIC cho candidate làm bài qua link email (n8n
   // `ai_test_assign`). Token = proof-of-access, không login.
   { path: '/test/:token', name: 'take-test', component: () => import('@views/public/TakeTestView.vue') },
@@ -128,7 +130,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'chat/:id?', name: 'e-chat', component: ChatView },
       //{ path: 'notifications', name: 'employer-notifications', component: () => import('@views/notifications/NotificationsView.vue') },
       { path: 'notifications', name: 'employer-notifications', component: () => import('@views/NotificationsView.vue') },
-      { path: 'settings', name: 'employer-settings', component: () => import('@views/employer/SettingsView.vue') },
+      { path: 'settings', name: 'employer-settings', alias: ['profile'], component: () => import('@views/employer/SettingsView.vue') },
+      { path: 'profile', name: 'employer-profile', component: () => import('@views/employer/SettingsView.vue') },
 
       // Gói dịch vụ / billing
       { path: 'pricing', name: 'employer-pricing', component: () => import('@views/employer/PricingView.vue') },

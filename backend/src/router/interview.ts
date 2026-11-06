@@ -27,6 +27,8 @@ import {
   listInterviewQuerySchema,
   listCandidateInterviewQuerySchema,
   rejectInterviewBodySchema,
+  publicInterviewTokenQuerySchema,
+  publicInterviewRespondBodySchema,
 } from '../middleware/interview';
 import { interviewController } from '../controller/interview.controller';
 
@@ -52,6 +54,66 @@ interviewRouter.get(
   requireRole('employer', 'admin'),
   validate(listInterviewQuerySchema, 'query'),
   interviewController.list,
+);
+
+// ============================================================================
+// Google Calendar Integration routes (TRƯỚC /:id)
+// ============================================================================
+
+// GET /calendar/callback — Google redirect về sau khi user cấp quyền (Public endpoint)
+interviewRouter.get(
+  '/calendar/callback',
+  interviewController.handleCalendarCallback,
+);
+
+// ============================================================================
+// Public Token-based routes (Ứng viên nhận link từ Email, KHÔNG cần auth)
+// ============================================================================
+
+// GET /public/details — Lấy thông tin phỏng vấn theo token
+interviewRouter.get(
+  '/public/details',
+  validate(publicInterviewTokenQuerySchema, 'query'),
+  interviewController.getPublicByToken,
+);
+
+// POST /public/respond — Xác nhận / Xin đổi lịch / Từ chối theo token
+interviewRouter.post(
+  '/public/respond',
+  validate(publicInterviewRespondBodySchema),
+  interviewController.respondPublicByToken,
+);
+
+// GET /calendar/connect-url — HR lấy link OAuth Google Calendar
+interviewRouter.get(
+  '/calendar/connect-url',
+  auth,
+  requireRole('employer', 'admin'),
+  interviewController.getCalendarConnectUrl,
+);
+
+// GET /calendar/status — Kiểm tra trạng thái kết nối Google Calendar của HR
+interviewRouter.get(
+  '/calendar/status',
+  auth,
+  requireRole('employer', 'admin'),
+  interviewController.getCalendarStatus,
+);
+
+// DELETE /calendar/disconnect — HR ngắt kết nối Google Calendar
+interviewRouter.delete(
+  '/calendar/disconnect',
+  auth,
+  requireRole('employer', 'admin'),
+  interviewController.disconnectCalendar,
+);
+
+// GET /calendar/busy-times — HR lấy danh sách khung giờ bận trong ngày
+interviewRouter.get(
+  '/calendar/busy-times',
+  auth,
+  requireRole('employer', 'admin'),
+  interviewController.getBusyTimes,
 );
 
 // PUT /:id/cancel — TRƯỚC /:id để Express không nuốt

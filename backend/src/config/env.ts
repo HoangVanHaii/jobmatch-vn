@@ -52,6 +52,7 @@ const envSchema = z.object({
   // OAuth
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_CALENDAR_CALLBACK_URL: z.string().url().default("http://localhost:5000/api/v1/interviews/calendar/callback"),
   FACEBOOK_APP_ID: z.string().optional(),
   FACEBOOK_APP_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),

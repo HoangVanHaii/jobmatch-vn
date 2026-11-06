@@ -18,6 +18,12 @@ import {
   AlertCircle,
   Inbox,
   X,
+  Clock,
+  Video,
+  CheckCircle2,
+  Maximize2,
+  Minimize2,
+  Columns2,
 } from 'lucide-vue-next';
 import { applicationApi } from '@services/application.api';
 import { cvApi } from '@services/cv.api';
@@ -27,6 +33,7 @@ import { useToastStore } from '@stores/toast';
 import ReferencesModal from '@components/employer/ReferencesModal.vue';
 import AiTestReviewModal from '@components/employer/AiTestReviewModal.vue';
 import AiTestResultModal from '@components/employer/AiTestResultModal.vue';
+import ScheduleInterviewModal from '@components/employer/ScheduleInterviewModal.vue';
 import {
   aiTestApi,
   type AiTestSummary,
@@ -59,6 +66,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'status-changed': [payload: { applicationId: string; status: ApplicationStatus; stage?: string | null }];
   'recompute-match': [applicationId: string];
+  'wide-change': [isWide: boolean];
   'close': [];
 }>();
 
@@ -184,7 +192,8 @@ const parsedData = ref<CvParsedShape | null>(null);
 const detailData = ref<ApplicationDetail | null>(null);
 
 const loadDetail = async (appId?: string): Promise<void> => {
-  if (!appId || appId.startsWith('mock-app-')) {
+  const targetId = appId || props.application?.applicationId;
+  if (!targetId || targetId.startsWith('mock-app-')) {
     detailData.value = null;
     parsedData.value = null;
     skills.value = MOCK_SKILLS;
@@ -193,7 +202,7 @@ const loadDetail = async (appId?: string): Promise<void> => {
   const seq = ++detailReqSeq;
   detailLoading.value = true;
   try {
-    const { data } = await applicationApi.getById(appId);
+    const { data } = await applicationApi.getById(targetId);
     if (seq !== detailReqSeq) return;
     const detail: ApplicationDetail = data.data;
     detailData.value = detail;
@@ -312,6 +321,74 @@ const changeStatus = async (next: ApplicationStatus): Promise<void> => {
   } finally {
     updatingStatus.value = false;
   }
+};
+
+const scheduleInterviewOpen = ref(false);
+
+/** Kiểm tra thông tin phỏng vấn hiện tại của application */
+const currentInterview = computed(() => detailData.value?.interview ?? null);
+
+const isInterviewRescheduleRequested = computed(() => {
+  const reason = currentInterview.value?.cancelReason;
+  return Boolean(reason && reason.startsWith('Xin dời lịch:'));
+});
+
+const rescheduleRequestText = computed(() => {
+  const reason = currentInterview.value?.cancelReason || '';
+  return reason.replace('Xin dời lịch:', '').trim();
+});
+
+const isSendOfferDisabled = computed(() => {
+  if (updatingStatus.value) return true;
+  if (!currentInterview.value) return true;
+  if (currentInterview.value.status === 'pending') return true;
+  if (isInterviewRescheduleRequested.value) return true;
+  if (currentInterview.value.status === 'cancelled') return true;
+  return false;
+});
+
+const sendOfferTooltip = computed(() => {
+  if (updatingStatus.value) return 'Đang cập nhật...';
+  if (!currentInterview.value || currentInterview.value.status === 'pending') {
+    return 'Cần chờ ứng viên xác nhận tham gia trước khi gửi Offer';
+  }
+  if (isInterviewRescheduleRequested.value) {
+    return 'Ứng viên đã đề xuất đổi lịch, vui lòng xếp lại lịch hẹn trước khi gửi Offer';
+  }
+  if (currentInterview.value.status === 'cancelled') {
+    return 'Buổi phỏng vấn đã bị huỷ hoặc ứng viên đã từ chối';
+  }
+  return 'Chuyển đơn sang Đã offer';
+});
+
+const handleNextAction = (): void => {
+  if (!nextAction.value) return;
+  if (nextAction.value.next === 'interview') {
+    scheduleInterviewOpen.value = true;
+    return;
+  }
+  void changeStatus(nextAction.value.next);
+};
+
+const onInterviewScheduled = (payload?: { interviewId?: string; meetingLink?: string | null }): void => {
+  const appId = props.application?.applicationId;
+  if (!appId) return;
+  if (detailData.value?.id === appId) {
+    detailData.value.status = 'interview';
+    detailData.value.interview = {
+      id: payload?.interviewId || detailData.value.interview?.id || '',
+      status: 'pending',
+      scheduledAt: new Date().toISOString(),
+      durationMin: 60,
+      location: null,
+      meetingLink: payload?.meetingLink ?? null,
+      confirmedAt: null,
+      cancelledAt: null,
+      cancelReason: null,
+    };
+  }
+  void loadDetail(appId);
+  emit('status-changed', { applicationId: appId, status: 'interview' });
 };
 
 // ---------------------------------------------------------------------------
@@ -628,14 +705,67 @@ const onApplicationScored = (payload: { applicationId?: string; matchPercent?: n
   }
 };
 
+/** Nhận sự kiện realtime khi ứng viên confirm, đổi lịch hoặc từ chối phỏng vấn */
+const onInterviewEvent = (payload: { applicationId?: string; interviewId?: string }): void => {
+  const currentAppId = props.application?.applicationId;
+  if (!currentAppId) return;
+
+  // Nếu sự kiện trùng với application đang mở hoặc có interview liên kết
+  if (payload?.applicationId === currentAppId || detailData.value?.interview?.id === payload?.interviewId) {
+    void loadDetail(currentAppId);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Panel View Mode (Mở rộng chiều ngang & Phóng to toàn màn hình)
+// ---------------------------------------------------------------------------
+const isWide = ref(false);
+const isFullscreen = ref(false);
+
+const toggleWide = (): void => {
+  if (isFullscreen.value) {
+    isFullscreen.value = false;
+  }
+  isWide.value = !isWide.value;
+  emit('wide-change', isWide.value);
+};
+
+const handleClose = (): void => {
+  if (isWide.value) {
+    isWide.value = false;
+    emit('wide-change', false);
+  }
+  emit('close');
+};
+
+const toggleFullscreen = (): void => {
+  isFullscreen.value = !isFullscreen.value;
+};
+
+const handleGlobalKeydown = (e: KeyboardEvent): void => {
+  if (e.key === 'Escape') {
+    if (isFullscreen.value) {
+      isFullscreen.value = false;
+    } else if (isWide.value) {
+      isWide.value = false;
+      emit('wide-change', false);
+    }
+  }
+};
+
 onMounted(() => {
+  window.addEventListener('keydown', handleGlobalKeydown);
   getSocket().on('ai-test:ready', onAiTestReady);
   getSocket().on('ai-test:graded', onAiTestGraded);
   getSocket().on('application:status-changed', onStatusChanged);
   getSocket().on('application:scored', onApplicationScored);
+  getSocket().on('interview:confirmed', onInterviewEvent);
+  getSocket().on('interview:reschedule_requested', onInterviewEvent);
+  getSocket().on('interview:rejected', onInterviewEvent);
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown);
   if (countRaf !== null) cancelAnimationFrame(countRaf);
   if (aiTestPollTimer) clearInterval(aiTestPollTimer);
   cvRO?.disconnect();
@@ -644,6 +774,9 @@ onUnmounted(() => {
   getSocket().off('ai-test:graded', onAiTestGraded);
   getSocket().off('application:status-changed', onStatusChanged);
   getSocket().off('application:scored', onApplicationScored);
+  getSocket().off('interview:confirmed', onInterviewEvent);
+  getSocket().off('interview:reschedule_requested', onInterviewEvent);
+  getSocket().off('interview:rejected', onInterviewEvent);
 });
 
 defineExpose({
@@ -652,8 +785,32 @@ defineExpose({
 </script>
 
 <template>
-  <aside class="w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] lg:shrink-0 border-t lg:border-t-0 lg:border-l border-[#e9edf3] bg-white p-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
-    <div class="border-none bg-white lg:min-w-[390px]">
+  <!-- Aside giữ vị trí footprint 32% trong flex container để danh sách không bị đổi chiều rộng -->
+  <aside
+    class="border-t lg:border-t-0 border-[#e9edf3] p-0"
+    :class="[
+      isFullscreen
+        ? ''
+        : 'w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] lg:shrink-0 h-full'
+    ]"
+  >
+    <!-- Khung panel hiển thị: luôn anchor ở right:0 để khi đổi width sẽ phóng to/thu nhỏ mượt mà từ kích thước cũ -->
+    <div
+      :class="[
+        isFullscreen
+          ? 'fixed inset-0 z-40 bg-white overflow-y-auto overflow-x-hidden scrollbar-thin shadow-2xl'
+          : [
+              'absolute top-0 right-0 bottom-0 bg-white border-l border-[#e9edf3] p-0 overflow-y-auto overflow-x-hidden scrollbar-thin panel-expand-transition',
+              isWide
+                ? 'z-30 w-full lg:w-[60%] lg:min-w-[650px] lg:max-w-none shadow-[-16px_0_40px_rgba(31,52,85,0.18)]'
+                : 'z-10 w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] shadow-none'
+            ]
+      ]"
+    >
+      <div
+        class="border-none bg-white transition-all duration-300"
+        :class="isFullscreen ? 'max-w-5xl mx-auto min-h-screen border-x border-[#edf0f4]' : 'lg:min-w-[390px]'"
+      >
       <!-- Empty state khi chưa chọn application -->
       <div v-if="!application || !application.applicationId" class="p-8 text-center text-[#94a3b8]">
         <Inbox class="w-10 h-10 mx-auto mb-2 text-[#cbd5e1]" />
@@ -663,19 +820,48 @@ defineExpose({
       <template v-else>
         <!-- Header block -->
         <div class="relative border-b border-[#edf0f4] px-5 pt-5 pb-5">
-          <!-- Close button -->
-          <button
-            type="button"
-            class="absolute top-4 right-4 grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition"
-            title="Đóng chi tiết"
-            aria-label="Đóng chi tiết ứng viên"
-            @click="emit('close')"
-          >
-            <X class="h-4 w-4" />
-          </button>
+          <!-- Action buttons group: Mở rộng / Phóng to / Đóng -->
+          <div class="absolute top-4 right-4 flex items-center gap-1 z-10">
+            <!-- Nút mở rộng chiều ngang 60% (chỉ hiện khi không ở fullscreen) -->
+            <button
+              v-if="!isFullscreen"
+              type="button"
+              class="grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition cursor-pointer"
+              :class="isWide ? 'bg-blue-50 text-[#1769e8] font-semibold' : ''"
+              :title="isWide ? 'Thu hẹp bảng chi tiết (32%)' : 'Mở rộng bảng chi tiết (60%)'"
+              aria-label="Mở rộng bảng chi tiết"
+              @click="toggleWide"
+            >
+              <Columns2 class="h-4 w-4" />
+            </button>
+
+            <!-- Nút phóng to toàn màn hình -->
+            <button
+              type="button"
+              class="grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition cursor-pointer"
+              :class="isFullscreen ? 'bg-blue-50 text-[#1769e8] font-semibold' : ''"
+              :title="isFullscreen ? 'Thu nhỏ về cửa sổ (Esc)' : 'Phóng to toàn màn hình'"
+              :aria-label="isFullscreen ? 'Thu nhỏ về cửa sổ' : 'Phóng to toàn màn hình'"
+              @click="toggleFullscreen"
+            >
+              <Minimize2 v-if="isFullscreen" class="h-4 w-4" />
+              <Maximize2 v-else class="h-4 w-4" />
+            </button>
+
+            <!-- Nút đóng -->
+            <button
+              type="button"
+              class="grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition cursor-pointer"
+              title="Đóng chi tiết"
+              aria-label="Đóng chi tiết ứng viên"
+              @click="handleClose"
+            >
+              <X class="h-4 w-4" />
+            </button>
+          </div>
 
           <!-- Row 1: Avatar + identity -->
-          <div class="flex items-center gap-4 pr-12">
+          <div class="flex items-center gap-4 pr-28">
             <div
               class="relative h-20 w-20 shrink-0 rounded-xl overflow-hidden bg-gradient-to-br from-primary-50 to-primary-100 ring-4 ring-[#f1f4f8]"
               :aria-label="application.name"
@@ -1328,6 +1514,126 @@ defineExpose({
             </button>
           </div>
 
+          <!-- Khi đơn ở trạng thái interview: Hiển thị tiến trình phỏng vấn & các nút phù hợp -->
+          <div v-else-if="application.status === 'interview'" class="space-y-3">
+            <!-- Case A: Ứng viên gửi yêu cầu đổi lịch -->
+            <div
+              v-if="isInterviewRescheduleRequested"
+              class="rounded-xl border border-amber-200 bg-amber-50/80 p-3 flex flex-col gap-2"
+            >
+              <div class="flex items-start gap-2 text-amber-900">
+                <AlertCircle class="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                <div class="text-xs">
+                  <span class="font-semibold">Ứng viên đề xuất đổi lịch phỏng vấn:</span>
+                  <p class="text-[11px] text-amber-800 mt-0.5 italic">"{{ rescheduleRequestText }}"</p>
+                </div>
+              </div>
+              <div class="flex items-center justify-end gap-2 pt-1 border-t border-amber-200/60">
+                <button
+                  type="button"
+                  class="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 transition cursor-pointer"
+                  @click="scheduleInterviewOpen = true"
+                >
+                  Xếp lại lịch hẹn
+                </button>
+              </div>
+            </div>
+
+            <!-- Case B: Đang chờ ứng viên xác nhận -->
+            <div
+              v-else-if="!currentInterview || currentInterview.status === 'pending'"
+              class="rounded-xl border border-blue-200 bg-blue-50/70 p-3 flex items-center justify-between gap-3"
+            >
+              <div class="flex items-center gap-2 text-[#1769e8]">
+                <Clock class="h-4 w-4 shrink-0" />
+                <div class="text-xs">
+                  <span class="font-semibold text-slate-800">Đã gửi lời mời phỏng vấn</span>
+                  <p class="text-[11px] text-slate-500">Đang chờ ứng viên phản hồi xác nhận tham gia...</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                @click="scheduleInterviewOpen = true"
+              >
+                Dời lịch
+              </button>
+            </div>
+
+            <!-- Case C: Ứng viên đã xác nhận tham gia -->
+            <div
+              v-else-if="currentInterview.status === 'confirmed'"
+              class="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 flex items-center justify-between gap-3"
+            >
+              <div class="flex items-center gap-2 text-emerald-800">
+                <CheckCircle2 class="h-4 w-4 shrink-0 text-emerald-600" />
+                <div class="text-xs">
+                  <span class="font-semibold">Ứng viên đã xác nhận tham gia</span>
+                  <p class="text-[11px] text-emerald-700">Buổi phỏng vấn đã sẵn sàng diễn ra.</p>
+                </div>
+              </div>
+              <a
+                v-if="currentInterview.meetingLink"
+                :href="currentInterview.meetingLink"
+                target="_blank"
+                class="inline-flex items-center gap-1 rounded-lg bg-[#1769e8] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-700 transition"
+              >
+                <Video class="h-3 w-3" />
+                Vào Meet
+              </a>
+            </div>
+
+            <!-- Case D: Buổi phỏng vấn bị huỷ hoặc ứng viên từ chối -->
+            <div
+              v-else-if="currentInterview.status === 'cancelled'"
+              class="rounded-xl border border-rose-200 bg-rose-50/80 p-3 flex items-center justify-between gap-3"
+            >
+              <div class="flex items-center gap-2 text-rose-800">
+                <AlertCircle class="h-4 w-4 shrink-0 text-rose-600" />
+                <div class="text-xs">
+                  <span class="font-semibold">Ứng viên đã từ chối phỏng vấn</span>
+                  <p v-if="currentInterview.cancelReason" class="text-[11px] text-rose-700 mt-0.5 italic">
+                    "{{ currentInterview.cancelReason }}"
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="rounded-lg border border-rose-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-rose-700 hover:bg-rose-50 transition cursor-pointer"
+                @click="scheduleInterviewOpen = true"
+              >
+                Đặt lại lịch
+              </button>
+            </div>
+
+            <!-- Nút hành động giai đoạn interview: Từ chối hoặc Gửi Offer -->
+            <div class="grid grid-cols-2 gap-3 pt-1">
+              <div class="flex items-center justify-center">
+                <span
+                  role="button"
+                  tabindex="0"
+                  class="cursor-pointer select-none text-[12px] font-medium text-rose-500 underline underline-offset-2 transition hover:text-rose-600"
+                  :class="updatingStatus ? 'pointer-events-none opacity-40' : ''"
+                  title="Đánh giá không đạt phỏng vấn"
+                  @click="changeStatus('rejected')"
+                >
+                  Không đạt
+                </span>
+              </div>
+              <button
+                type="button"
+                :disabled="isSendOfferDisabled"
+                class="flex h-9 items-center justify-center gap-2 rounded-lg bg-[#5b4eea] text-[11px] font-semibold text-white shadow-sm transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                :title="sendOfferTooltip"
+                @click="changeStatus('offered')"
+              >
+                <Loader2 v-if="updatingStatus" class="h-4 w-4 animate-spin" />
+                <ArrowRight v-else class="h-4 w-4" />
+                Gửi Offer
+              </button>
+            </div>
+          </div>
+
           <!-- Các trạng thái có nextAction thông thường -->
           <div v-else-if="nextAction" class="grid grid-cols-2 gap-3">
             <div class="flex items-center justify-center">
@@ -1346,9 +1652,9 @@ defineExpose({
             <button
               type="button"
               :disabled="updatingStatus || !canOpenReferences"
-              class="flex h-9 items-center justify-center gap-2 rounded-lg bg-[#5b4eea] text-[11px] font-semibold text-white shadow-sm transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed"
+              class="flex h-9 items-center justify-center gap-2 rounded-lg bg-[#5b4eea] text-[11px] font-semibold text-white shadow-sm transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               :title="`Chuyển đơn sang ${nextAction.next}`"
-              @click="changeStatus(nextAction.next)"
+              @click="handleNextAction"
             >
               <Loader2 v-if="updatingStatus" class="h-4 w-4 animate-spin" />
               <ArrowRight v-else class="h-4 w-4" />
@@ -1366,6 +1672,7 @@ defineExpose({
         </div>
       </template>
     </div>
+  </div>
     <!-- Modals -->
     <ReferencesModal
       :application-id="application?.applicationId ?? ''"
@@ -1399,10 +1706,28 @@ defineExpose({
       @close="cvLightboxOpen = false"
       @download-pdf="downloadCvPdf"
     />
+
+    <ScheduleInterviewModal
+      :open="scheduleInterviewOpen"
+      :application-id="application?.applicationId ?? ''"
+      :candidate-name="application?.name || 'Ứng viên'"
+      :candidate-email="application?.email"
+      :job-title="detailData?.jobTitle || application?.position"
+      @close="scheduleInterviewOpen = false"
+      @scheduled="onInterviewScheduled"
+    />
   </aside>
 </template>
 
 <style scoped>
+.panel-expand-transition {
+  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
+              min-width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
+              max-width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
+              box-shadow 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+  will-change: width, min-width, max-width, box-shadow;
+}
+
 .match-ring {
   animation: draw-ring 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
