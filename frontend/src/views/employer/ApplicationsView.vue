@@ -225,6 +225,7 @@ const total = ref(0);
 const loading = ref(false);
 
 const selectedApplication = ref<Application | null>(null);
+const isDetailWide = ref(false);
 
 const isSelected = (a: Application): boolean =>
   selectedApplication.value?.applicationId === a.applicationId;
@@ -232,6 +233,7 @@ const isSelected = (a: Application): boolean =>
 const selectApplication = (a: Application): void => {
   if (selectedApplication.value?.applicationId === a.applicationId) {
     selectedApplication.value = null;
+    isDetailWide.value = false;
   } else {
     selectedApplication.value = a;
   }
@@ -573,7 +575,7 @@ onUnmounted(() => {
 <template>
   <div class="bg-[#f7f9fc] font-poppins text-[#17233c]">
     <div
-      class="flex flex-col lg:flex-row lg:h-screen lg:overflow-hidden bg-white shadow-[0_10px_40px_rgba(31,52,85,.08)]"
+      class="relative flex flex-col lg:flex-row lg:h-screen lg:overflow-hidden bg-white shadow-[0_10px_40px_rgba(31,52,85,.08)]"
     >
       <!-- ============ Main: list ============ -->
       <main class="min-w-0 flex-1 p-4 sm:p-5 lg:p-6 overflow-y-auto lg:overflow-y-hidden scrollbar-thin main-list-area">
@@ -809,8 +811,8 @@ onUnmounted(() => {
                 v-for="(a, i) in displayedApplications"
                 :key="`${a.email}-${i}`"
                 class="relative grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.7fr_1.7fr_1fr_1fr_0.7fr] items-center px-4 py-2.5 text-[13px] cursor-pointer transition-all duration-200 nt-row"
-                :style="{ animationDelay: `${Math.min(300, i * 40)}ms` }"
                 :class="isSelected(a) ? 'bg-[#edf4ff] font-medium' : 'bg-white hover:bg-gray-50'"
+                :style="{ animationDelay: `${Math.min(300, i * 40)}ms` }"
                 @click="selectApplication(a)"
               >
                 <!-- Active bar when selected -->
@@ -970,7 +972,8 @@ onUnmounted(() => {
           :is-scoring="isScoringSelected"
           @status-changed="onDetailStatusChanged"
           @recompute-match="onDetailRecomputeMatch"
-          @close="selectedApplication = null"
+          @wide-change="(val) => (isDetailWide = val)"
+          @close="selectedApplication = null; isDetailWide = false"
         />
       </Transition>
     </div>

@@ -21,6 +21,9 @@ import {
   Clock,
   Video,
   CheckCircle2,
+  Maximize2,
+  Minimize2,
+  Columns2,
 } from 'lucide-vue-next';
 import { applicationApi } from '@services/application.api';
 import { cvApi } from '@services/cv.api';
@@ -63,6 +66,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'status-changed': [payload: { applicationId: string; status: ApplicationStatus; stage?: string | null }];
   'recompute-match': [applicationId: string];
+  'wide-change': [isWide: boolean];
   'close': [];
 }>();
 
@@ -712,7 +716,45 @@ const onInterviewEvent = (payload: { applicationId?: string; interviewId?: strin
   }
 };
 
+// ---------------------------------------------------------------------------
+// Panel View Mode (Mở rộng chiều ngang & Phóng to toàn màn hình)
+// ---------------------------------------------------------------------------
+const isWide = ref(false);
+const isFullscreen = ref(false);
+
+const toggleWide = (): void => {
+  if (isFullscreen.value) {
+    isFullscreen.value = false;
+  }
+  isWide.value = !isWide.value;
+  emit('wide-change', isWide.value);
+};
+
+const handleClose = (): void => {
+  if (isWide.value) {
+    isWide.value = false;
+    emit('wide-change', false);
+  }
+  emit('close');
+};
+
+const toggleFullscreen = (): void => {
+  isFullscreen.value = !isFullscreen.value;
+};
+
+const handleGlobalKeydown = (e: KeyboardEvent): void => {
+  if (e.key === 'Escape') {
+    if (isFullscreen.value) {
+      isFullscreen.value = false;
+    } else if (isWide.value) {
+      isWide.value = false;
+      emit('wide-change', false);
+    }
+  }
+};
+
 onMounted(() => {
+  window.addEventListener('keydown', handleGlobalKeydown);
   getSocket().on('ai-test:ready', onAiTestReady);
   getSocket().on('ai-test:graded', onAiTestGraded);
   getSocket().on('application:status-changed', onStatusChanged);
@@ -723,6 +765,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown);
   if (countRaf !== null) cancelAnimationFrame(countRaf);
   if (aiTestPollTimer) clearInterval(aiTestPollTimer);
   cvRO?.disconnect();
@@ -742,8 +785,32 @@ defineExpose({
 </script>
 
 <template>
-  <aside class="w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] lg:shrink-0 border-t lg:border-t-0 lg:border-l border-[#e9edf3] bg-white p-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
-    <div class="border-none bg-white lg:min-w-[390px]">
+  <!-- Aside giữ vị trí footprint 32% trong flex container để danh sách không bị đổi chiều rộng -->
+  <aside
+    class="border-t lg:border-t-0 border-[#e9edf3] p-0"
+    :class="[
+      isFullscreen
+        ? ''
+        : 'w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] lg:shrink-0 h-full'
+    ]"
+  >
+    <!-- Khung panel hiển thị: luôn anchor ở right:0 để khi đổi width sẽ phóng to/thu nhỏ mượt mà từ kích thước cũ -->
+    <div
+      :class="[
+        isFullscreen
+          ? 'fixed inset-0 z-40 bg-white overflow-y-auto overflow-x-hidden scrollbar-thin shadow-2xl'
+          : [
+              'absolute top-0 right-0 bottom-0 bg-white border-l border-[#e9edf3] p-0 overflow-y-auto overflow-x-hidden scrollbar-thin panel-expand-transition',
+              isWide
+                ? 'z-30 w-full lg:w-[60%] lg:min-w-[650px] lg:max-w-none shadow-[-16px_0_40px_rgba(31,52,85,0.18)]'
+                : 'z-10 w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] shadow-none'
+            ]
+      ]"
+    >
+      <div
+        class="border-none bg-white transition-all duration-300"
+        :class="isFullscreen ? 'max-w-5xl mx-auto min-h-screen border-x border-[#edf0f4]' : 'lg:min-w-[390px]'"
+      >
       <!-- Empty state khi chưa chọn application -->
       <div v-if="!application || !application.applicationId" class="p-8 text-center text-[#94a3b8]">
         <Inbox class="w-10 h-10 mx-auto mb-2 text-[#cbd5e1]" />
@@ -753,19 +820,48 @@ defineExpose({
       <template v-else>
         <!-- Header block -->
         <div class="relative border-b border-[#edf0f4] px-5 pt-5 pb-5">
-          <!-- Close button -->
-          <button
-            type="button"
-            class="absolute top-4 right-4 grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition"
-            title="Đóng chi tiết"
-            aria-label="Đóng chi tiết ứng viên"
-            @click="emit('close')"
-          >
-            <X class="h-4 w-4" />
-          </button>
+          <!-- Action buttons group: Mở rộng / Phóng to / Đóng -->
+          <div class="absolute top-4 right-4 flex items-center gap-1 z-10">
+            <!-- Nút mở rộng chiều ngang 60% (chỉ hiện khi không ở fullscreen) -->
+            <button
+              v-if="!isFullscreen"
+              type="button"
+              class="grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition cursor-pointer"
+              :class="isWide ? 'bg-blue-50 text-[#1769e8] font-semibold' : ''"
+              :title="isWide ? 'Thu hẹp bảng chi tiết (32%)' : 'Mở rộng bảng chi tiết (60%)'"
+              aria-label="Mở rộng bảng chi tiết"
+              @click="toggleWide"
+            >
+              <Columns2 class="h-4 w-4" />
+            </button>
+
+            <!-- Nút phóng to toàn màn hình -->
+            <button
+              type="button"
+              class="grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition cursor-pointer"
+              :class="isFullscreen ? 'bg-blue-50 text-[#1769e8] font-semibold' : ''"
+              :title="isFullscreen ? 'Thu nhỏ về cửa sổ (Esc)' : 'Phóng to toàn màn hình'"
+              :aria-label="isFullscreen ? 'Thu nhỏ về cửa sổ' : 'Phóng to toàn màn hình'"
+              @click="toggleFullscreen"
+            >
+              <Minimize2 v-if="isFullscreen" class="h-4 w-4" />
+              <Maximize2 v-else class="h-4 w-4" />
+            </button>
+
+            <!-- Nút đóng -->
+            <button
+              type="button"
+              class="grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition cursor-pointer"
+              title="Đóng chi tiết"
+              aria-label="Đóng chi tiết ứng viên"
+              @click="handleClose"
+            >
+              <X class="h-4 w-4" />
+            </button>
+          </div>
 
           <!-- Row 1: Avatar + identity -->
-          <div class="flex items-center gap-4 pr-12">
+          <div class="flex items-center gap-4 pr-28">
             <div
               class="relative h-20 w-20 shrink-0 rounded-xl overflow-hidden bg-gradient-to-br from-primary-50 to-primary-100 ring-4 ring-[#f1f4f8]"
               :aria-label="application.name"
@@ -1576,6 +1672,7 @@ defineExpose({
         </div>
       </template>
     </div>
+  </div>
     <!-- Modals -->
     <ReferencesModal
       :application-id="application?.applicationId ?? ''"
@@ -1623,6 +1720,14 @@ defineExpose({
 </template>
 
 <style scoped>
+.panel-expand-transition {
+  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
+              min-width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
+              max-width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
+              box-shadow 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+  will-change: width, min-width, max-width, box-shadow;
+}
+
 .match-ring {
   animation: draw-ring 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
 }

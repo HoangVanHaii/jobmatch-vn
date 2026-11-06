@@ -799,6 +799,7 @@ export const interviewService = {
         status: interviews.status,
         candidateId: applications.candidateId,
         interviewerId: interviews.interviewerId,
+        googleEventId: interviews.googleEventId,
         jobTitle: jobs.title,
         candidateName: userProfiles.fullName,
       })
@@ -817,11 +818,21 @@ export const interviewService = {
 
     const [updated] = await db
       .update(interviews)
-      .set({ status: 'cancelled', cancelledAt: new Date(), cancelReason: reason ?? null })
+      .set({ status: 'cancelled', cancelledAt: new Date(), cancelReason: reason ?? null, googleEventId: null })
       .where(eq(interviews.id, interviewId))
       .returning({ id: interviews.id, status: interviews.status });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to reject interview');
+
+    // Xoá sự kiện trên Google Calendar của HR nếu có liên kết
+    if (row.googleEventId) {
+      void googleCalendarService
+        .deleteEvent({
+          userId: row.interviewerId,
+          eventId: row.googleEventId,
+        })
+        .catch((err) => logger.warn({ err, eventId: row.googleEventId }, 'candidate reject: deleteEvent failed (non-fatal)'));
+    }
 
     try {
       const cleanJobTitle = sanitizeJobTitle(row.jobTitle);
@@ -915,6 +926,7 @@ export const interviewService = {
         status: interviews.status,
         scheduledAt: interviews.scheduledAt,
         interviewerId: interviews.interviewerId,
+        googleEventId: interviews.googleEventId,
         candidateId: applications.candidateId,
         candidateName: userProfiles.fullName,
         candidateEmail: users.email,
@@ -999,11 +1011,21 @@ export const interviewService = {
       }
       const fullText = parts.length > 0 ? parts.join(' · ') : (params.proposedTime || params.reason || 'Ứng viên xin dời lịch hẹn');
 
-      // Ghi chú lý do xin dời lịch vào cancelReason của interview
+      // Ghi chú lý do xin dời lịch vào cancelReason của interview và xoá liên kết Google Calendar cũ
       await db
         .update(interviews)
-        .set({ cancelReason: `Xin dời lịch: ${fullText}` })
+        .set({ cancelReason: `Xin dời lịch: ${fullText}`, googleEventId: null })
         .where(eq(interviews.id, row.id));
+
+      // Xoá sự kiện cũ trên Google Calendar của HR để giải phóng khung giờ
+      if (row.googleEventId) {
+        void googleCalendarService
+          .deleteEvent({
+            userId: row.interviewerId,
+            eventId: row.googleEventId,
+          })
+          .catch((err) => logger.warn({ err, eventId: row.googleEventId }, 'public reschedule: deleteEvent failed (non-fatal)'));
+      }
 
       void notificationService.create({
         userId: row.interviewerId,
@@ -1037,8 +1059,18 @@ export const interviewService = {
     const cancelReason = params.reason || 'Ứng viên từ chối phỏng vấn qua email';
     await db
       .update(interviews)
-      .set({ status: 'cancelled', cancelledAt: new Date(), cancelReason })
+      .set({ status: 'cancelled', cancelledAt: new Date(), cancelReason, googleEventId: null })
       .where(eq(interviews.id, row.id));
+
+    // Xoá sự kiện trên Google Calendar của HR để giải phóng khung giờ
+    if (row.googleEventId) {
+      void googleCalendarService
+        .deleteEvent({
+          userId: row.interviewerId,
+          eventId: row.googleEventId,
+        })
+        .catch((err) => logger.warn({ err, eventId: row.googleEventId }, 'public reject: deleteEvent failed (non-fatal)'));
+    }
 
     void notificationService.create({
       userId: row.interviewerId,

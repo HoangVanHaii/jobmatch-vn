@@ -351,7 +351,7 @@ export const googleCalendarService = {
       if (!accessToken) return false;
 
       await axios.delete(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(params.eventId)}`,
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(params.eventId)}?sendUpdates=all`,
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
