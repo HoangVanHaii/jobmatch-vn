@@ -13,6 +13,8 @@ import {
   Loader2,
   X,
   ExternalLink,
+  ChevronDown,
+  Layers,
 } from 'lucide-vue-next';
 import dayjs from 'dayjs';
 import isBetween from 'dayjs/plugin/isBetween';
@@ -47,7 +49,8 @@ const calendarStatus = ref<CalendarStatus>({ isConnected: false });
 const loadingCalendarStatus = ref(false);
 
 // Form state
-const interviewType = ref<'online' | 'offline'>('online');
+const meetingFormat = ref<'online' | 'offline'>('online');
+const interviewType = ref<string>('technical');
 const scheduledDate = ref(dayjs().add(1, 'day').format('YYYY-MM-DD'));
 const scheduledTime = ref('09:00');
 const durationMin = ref(60);
@@ -55,6 +58,18 @@ const autoCreateMeet = ref(true);
 const manualMeetingLink = ref('');
 const location = ref('');
 const notes = ref('');
+
+const INTERVIEW_TYPE_OPTIONS = [
+  { value: 'screening', label: 'Phỏng vấn sơ loại (Screening)' },
+  { value: 'technical', label: 'Phỏng vấn kỹ thuật (Technical)' },
+  { value: 'coding', label: 'Lập trình trực tiếp (Live Coding)' },
+  { value: 'system_design', label: 'Thiết kế hệ thống (System Design)' },
+  { value: 'hr', label: 'Phỏng vấn nhân sự (HR Interview)' },
+  { value: 'culture_fit', label: 'Phù hợp văn hóa (Culture Fit)' },
+  { value: 'panel', label: 'Phỏng vấn hội đồng (Panel)' },
+  { value: 'final', label: 'Phỏng vấn vòng cuối (Final Interview)' },
+  { value: 'other', label: 'Khác' },
+];
 
 // Busy times checking
 const busySlots = ref<BusyTimeSlot[]>([]);
@@ -158,12 +173,12 @@ const handleSubmit = async (): Promise<void> => {
     return;
   }
 
-  if (interviewType.value === 'offline' && !location.value.trim()) {
+  if (meetingFormat.value === 'offline' && !location.value.trim()) {
     toast.push({ variant: 'error', title: 'Chưa nhập địa điểm', body: 'Vui lòng nhập địa điểm phỏng vấn trực tiếp.' });
     return;
   }
 
-  if (interviewType.value === 'online' && !calendarStatus.value.isConnected && !manualMeetingLink.value.trim()) {
+  if (meetingFormat.value === 'online' && !calendarStatus.value.isConnected && !manualMeetingLink.value.trim()) {
     toast.push({
       variant: 'error',
       title: 'Chưa có link họp',
@@ -179,14 +194,15 @@ const handleSubmit = async (): Promise<void> => {
     const res = await interviewApi.create({
       applicationId: props.applicationId,
       interviewerId: authStore.user.id,
+      interviewType: interviewType.value,
       scheduledAt: startIso,
       durationMin: durationMin.value,
-      location: interviewType.value === 'offline' ? location.value.trim() : undefined,
+      location: meetingFormat.value === 'offline' ? location.value.trim() : undefined,
       meetingLink:
-        interviewType.value === 'online' && !autoCreateMeet.value
+        meetingFormat.value === 'online' && !autoCreateMeet.value
           ? manualMeetingLink.value.trim()
           : undefined,
-      autoCreateMeet: interviewType.value === 'online' && autoCreateMeet.value && calendarStatus.value.isConnected,
+      autoCreateMeet: meetingFormat.value === 'online' && autoCreateMeet.value && calendarStatus.value.isConnected,
       notes: notes.value.trim() || undefined,
     });
 
@@ -297,6 +313,29 @@ const handleSubmit = async (): Promise<void> => {
           </router-link>
         </div>
 
+        <!-- Loại phỏng vấn (Vòng phỏng vấn) -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+            <Layers class="h-3.5 w-3.5 text-slate-500" />
+            Loại phỏng vấn (Vòng phỏng vấn)
+          </label>
+          <div class="relative">
+            <select
+              v-model="interviewType"
+              class="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-[#1769e8] focus:outline-hidden focus:ring-1 focus:ring-[#1769e8] cursor-pointer"
+            >
+              <option
+                v-for="opt in INTERVIEW_TYPE_OPTIONS"
+                :key="opt.value"
+                :value="opt.value"
+              >
+                {{ opt.label }}
+              </option>
+            </select>
+            <ChevronDown class="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          </div>
+        </div>
+
         <!-- Hình thức phỏng vấn -->
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-2">Hình thức phỏng vấn</label>
@@ -304,14 +343,14 @@ const handleSubmit = async (): Promise<void> => {
             <button
               type="button"
               class="flex items-center gap-3 rounded-xl border p-3 text-left transition cursor-pointer"
-              :class="interviewType === 'online'
+              :class="meetingFormat === 'online'
                 ? 'border-[#1769e8] bg-blue-50/50 text-[#1769e8] ring-1 ring-[#1769e8]'
                 : 'border-slate-200 hover:border-slate-300 text-slate-700'"
-              @click="interviewType = 'online'"
+              @click="meetingFormat = 'online'"
             >
               <div
                 class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                :class="interviewType === 'online' ? 'bg-[#1769e8] text-white' : 'bg-slate-100 text-slate-500'"
+                :class="meetingFormat === 'online' ? 'bg-[#1769e8] text-white' : 'bg-slate-100 text-slate-500'"
               >
                 <Video class="h-4.5 w-4.5" />
               </div>
@@ -324,14 +363,14 @@ const handleSubmit = async (): Promise<void> => {
             <button
               type="button"
               class="flex items-center gap-3 rounded-xl border p-3 text-left transition cursor-pointer"
-              :class="interviewType === 'offline'
+              :class="meetingFormat === 'offline'
                 ? 'border-[#1769e8] bg-blue-50/50 text-[#1769e8] ring-1 ring-[#1769e8]'
                 : 'border-slate-200 hover:border-slate-300 text-slate-700'"
-              @click="interviewType = 'offline'"
+              @click="meetingFormat = 'offline'"
             >
               <div
                 class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                :class="interviewType === 'offline' ? 'bg-[#1769e8] text-white' : 'bg-slate-100 text-slate-500'"
+                :class="meetingFormat === 'offline' ? 'bg-[#1769e8] text-white' : 'bg-slate-100 text-slate-500'"
               >
                 <MapPin class="h-4.5 w-4.5" />
               </div>
@@ -412,7 +451,7 @@ const handleSubmit = async (): Promise<void> => {
         </div>
 
         <!-- Chi tiết phương thức: Online Meet vs Offline Location -->
-        <div v-if="interviewType === 'online'" class="space-y-3">
+        <div v-if="meetingFormat === 'online'" class="space-y-3">
           <div v-if="calendarStatus.isConnected" class="flex items-center justify-between rounded-xl border border-slate-200 p-3 bg-slate-50/50">
             <div>
               <p class="text-xs font-medium text-slate-800">Tự động tạo Google Meet link</p>

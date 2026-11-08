@@ -338,6 +338,23 @@ const rescheduleRequestText = computed(() => {
   return reason.replace('Xin dời lịch:', '').trim();
 });
 
+const INTERVIEW_TYPE_LABELS: Record<string, string> = {
+  screening: 'Sơ loại',
+  technical: 'Kỹ thuật',
+  coding: 'Live Coding',
+  system_design: 'System Design',
+  hr: 'Nhân sự',
+  culture_fit: 'Văn hóa',
+  panel: 'Hội đồng',
+  final: 'Vòng cuối',
+  other: 'Phỏng vấn',
+};
+
+const getInterviewTypeLabel = (type?: string | null): string => {
+  if (!type) return 'Phỏng vấn';
+  return INTERVIEW_TYPE_LABELS[type] || type;
+};
+
 const isSendOfferDisabled = computed(() => {
   if (updatingStatus.value) return true;
   if (!currentInterview.value) return true;
@@ -1547,7 +1564,12 @@ defineExpose({
               <div class="flex items-center gap-2 text-[#1769e8]">
                 <Clock class="h-4 w-4 shrink-0" />
                 <div class="text-xs">
-                  <span class="font-semibold text-slate-800">Đã gửi lời mời phỏng vấn</span>
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="font-semibold text-slate-800">Đã gửi lời mời phỏng vấn</span>
+                    <span v-if="currentInterview?.interviewType" class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-[#1769e8]">
+                      {{ getInterviewTypeLabel(currentInterview.interviewType) }}
+                    </span>
+                  </div>
                   <p class="text-[11px] text-slate-500">Đang chờ ứng viên phản hồi xác nhận tham gia...</p>
                 </div>
               </div>
@@ -1568,7 +1590,12 @@ defineExpose({
               <div class="flex items-center gap-2 text-emerald-800">
                 <CheckCircle2 class="h-4 w-4 shrink-0 text-emerald-600" />
                 <div class="text-xs">
-                  <span class="font-semibold">Ứng viên đã xác nhận tham gia</span>
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="font-semibold">Ứng viên đã xác nhận tham gia</span>
+                    <span v-if="currentInterview?.interviewType" class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                      {{ getInterviewTypeLabel(currentInterview.interviewType) }}
+                    </span>
+                  </div>
                   <p class="text-[11px] text-emerald-700">Buổi phỏng vấn đã sẵn sàng diễn ra.</p>
                 </div>
               </div>

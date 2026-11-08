@@ -6,6 +6,7 @@ export const interviews = pgTable('interviews', {
   id: uuid('id').primaryKey().defaultRandom(),
   applicationId: uuid('application_id').notNull().references(() => applications.id),
   interviewerId: uuid('interviewer_id').notNull().references(() => users.id),
+  interviewType: text('interview_type').default('technical').notNull(),
   scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
   durationMin: integer('duration_min').default(60),
   location: text('location'),
@@ -30,6 +31,7 @@ export const interviews = pgTable('interviews', {
   scheduledIdx: index('idx_interviews_scheduled').on(t.scheduledAt, t.status),
   appIdx: index('idx_interviews_app').on(t.applicationId),
   interviewerIdx: index('idx_interviews_interviewer').on(t.interviewerId, t.scheduledAt),
+  typeIdx: index('idx_interviews_type').on(t.interviewType),
 }));
 
 export const interviewerAvailability = pgTable('interviewer_availability', {

@@ -672,6 +672,7 @@ export const getById = async (
   const [latestInterview] = await db
     .select({
       id: interviews.id,
+      interviewType: interviews.interviewType,
       status: interviews.status,
       scheduledAt: interviews.scheduledAt,
       durationMin: interviews.durationMin,

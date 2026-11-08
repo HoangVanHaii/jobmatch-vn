@@ -194,6 +194,7 @@ export interface ApplicationDetail {
   /** Thông tin lịch phỏng vấn mới nhất (nếu có) */
   interview?: {
     id: string;
+    interviewType?: string | null;
     status: string;
     scheduledAt: Date;
     durationMin: number;

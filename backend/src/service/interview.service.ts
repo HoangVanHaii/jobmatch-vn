@@ -22,7 +22,7 @@ import { sanitizeCandidateName, sanitizeJobTitle } from './notificationMessage.b
 import { googleCalendarService } from './googleCalendar.service';
 import { n8nService } from './n8n.service';
 import { env } from '../config/env';
-import { sendInterviewFallbackEmail } from '../utils/interviewEmail';
+import { sendInterviewFallbackEmail, getInterviewTypeLabel } from '../utils/interviewEmail';
 import type { CreateInterviewBody, UpdateInterviewBody } from '../middleware/interview';
 import type { CandidateInterviewRow, EmployerInterviewRow, InterviewDetail } from '../interface/interview';
 import crypto from 'crypto'
@@ -167,12 +167,13 @@ const sendInterviewInviteEmail = async (params: {
   jobTitle: string;
   companyName: string;
   interviewerName?: string;
+  interviewType?: string | null;
   scheduledAt: Date;
   durationMin: number;
   meetingLink?: string | null;
   location?: string | null;
   notes?: string;
-  confirmUrl:string
+  confirmUrl: string;
 }): Promise<void> => {
 
   // 1. Ưu tiên trigger n8n workflow 'interview_invite' theo kiến trúc JobMatch VN
@@ -183,6 +184,8 @@ const sendInterviewInviteEmail = async (params: {
       candidateName: params.candidateName,
       jobTitle: params.jobTitle,
       companyName: params.companyName,
+      interviewType: params.interviewType,
+      interviewTypeLabel: getInterviewTypeLabel(params.interviewType),
       interviewerName: params.interviewerName || params.companyName,
       scheduledAt: params.scheduledAt.toISOString(),
       durationMin: params.durationMin,
@@ -206,6 +209,7 @@ const sendInterviewInviteEmail = async (params: {
     candidateName: params.candidateName,
     jobTitle: params.jobTitle,
     companyName: params.companyName,
+    interviewType: params.interviewType,
     scheduledAt: params.scheduledAt,
     durationMin: params.durationMin,
     meetingLink: params.meetingLink,
@@ -254,31 +258,34 @@ export const notifyScheduled = async (
   applicationId: string,
   scheduledAt: Date,
   jobTitle?: string,
+  interviewType?: string,
 ): Promise<void> => {
   const cleanJobTitle = sanitizeJobTitle(jobTitle);
   const timeText = formatVietnamDateTime(scheduledAt);
-  let message = 'Lịch phỏng vấn mới đã được thiết lập';
+  const typeLabel = getInterviewTypeLabel(interviewType);
+  let message = `Lịch ${typeLabel} mới đã được thiết lập`;
   if (cleanJobTitle && timeText) {
-    message = `Lịch phỏng vấn mới cho vị trí ${cleanJobTitle} đã được lên lịch vào lúc ${timeText}`;
+    message = `Lịch ${typeLabel} cho vị trí ${cleanJobTitle} đã được lên lịch vào lúc ${timeText}`;
   } else if (cleanJobTitle) {
-    message = `Lịch phỏng vấn mới cho vị trí ${cleanJobTitle} đã được thiết lập`;
+    message = `Lịch ${typeLabel} cho vị trí ${cleanJobTitle} đã được thiết lập`;
   } else if (timeText) {
-    message = `Lịch phỏng vấn mới của bạn đã được lên lịch vào lúc ${timeText}`;
+    message = `Lịch ${typeLabel} của bạn đã được lên lịch vào lúc ${timeText}`;
   }
 
   await notificationService.create({
     userId: candidateId,
     type: 'interview_scheduled',
-    title: 'Lịch phỏng vấn mới',
+    title: `Lịch ${typeLabel} mới`,
     message,
     payload: {
       interviewId,
       applicationId,
+      interviewType,
       scheduledAt: scheduledAt.toISOString(),
       ...(jobTitle ? { jobTitle } : {}),
     },
   });
-  notificationGateway.emitToUser(candidateId, 'interview:scheduled', { interviewId, applicationId, scheduledAt: scheduledAt.toISOString() });
+  notificationGateway.emitToUser(candidateId, 'interview:scheduled', { interviewId, applicationId, interviewType, scheduledAt: scheduledAt.toISOString() });
 };
 
 /** Best-effort: thông báo cho ứng viên khi lịch phỏng vấn được cập nhật. */
@@ -361,10 +368,11 @@ export const interviewService = {
     let googleEventId: string | null = null;
 
     // Tự động tạo sự kiện Google Calendar & Google Meet link
+    const typeLabel = getInterviewTypeLabel(body.interviewType);
     if (body.autoCreateMeet || (!meetingLink && !body.location)) {
       const scheduledDate = new Date(body.scheduledAt);
-      const summary = `Phỏng vấn vị trí ${jobTitle ?? 'Ứng tuyển'}${companyName ? ` - ${companyName}` : ''}${candidateName ? ` (Ứng viên: ${candidateName})` : ''}`;
-      const description = `Buổi phỏng vấn giữa ${companyName || 'Nhà tuyển dụng'} và ứng viên ${candidateName || ''}${candidateEmail ? ` (${candidateEmail})` : ''}.\n${body.notes ? `Ghi chú: ${body.notes}` : ''}`;
+      const summary = `Phỏng vấn [${typeLabel}] vị trí ${jobTitle ?? 'Ứng tuyển'}${companyName ? ` - ${companyName}` : ''}${candidateName ? ` (Ứng viên: ${candidateName})` : ''}`;
+      const description = `Buổi ${typeLabel} giữa ${companyName || 'Nhà tuyển dụng'} và ứng viên ${candidateName || ''}${candidateEmail ? ` (${candidateEmail})` : ''}.\n${body.notes ? `Ghi chú: ${body.notes}` : ''}`;
 
       const calResult = await googleCalendarService.createEvent({
         userId: hrId,
@@ -392,6 +400,7 @@ export const interviewService = {
       .values({
         applicationId: body.applicationId,
         interviewerId: body.interviewerId,
+        interviewType: body.interviewType ?? 'technical',
         scheduledAt: new Date(body.scheduledAt),
         durationMin: body.durationMin,
         location: body.location ?? null,
@@ -400,7 +409,7 @@ export const interviewService = {
         status: 'pending',
         confirmationToken: confirmationToken
       })
-      .returning({ id: interviews.id, status: interviews.status });
+      .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!created) throw new AppError(500, 'INSERT_FAILED', 'Failed to create interview');
 
@@ -410,7 +419,7 @@ export const interviewService = {
       .set({ status: 'interview', updatedAt: new Date() })
       .where(eq(applications.id, body.applicationId));
 
-    void notifyScheduled(candidateId, created.id, body.applicationId, new Date(body.scheduledAt), jobTitle)
+    void notifyScheduled(candidateId, created.id, body.applicationId, new Date(body.scheduledAt), jobTitle, body.interviewType)
       .catch((err) => logger.warn({ err, interviewId: created.id }, 'create: notify candidate failed (non-fatal)'));
 
     // Gửi email thư mời phỏng vấn cho ứng viên qua n8n webhook (best-effort)
@@ -421,13 +430,13 @@ export const interviewService = {
         candidateName: candidateName ?? 'Ứng viên',
         jobTitle: jobTitle ?? 'Vị trí ứng tuyển',
         companyName: companyName ?? 'Nhà tuyển dụng',
+        interviewType: body.interviewType,
         scheduledAt: new Date(body.scheduledAt),
         durationMin: body.durationMin,
         meetingLink,
         location: body.location,
         notes: body.notes,
         confirmUrl: confirmUrl
-        
       }).catch((err) => logger.warn({ err, candidateEmail, interviewId: created.id }, 'sendInterviewInviteEmail failed (non-fatal)'));
     }
 
@@ -441,7 +450,7 @@ export const interviewService = {
   list: async (
     hrId: string,
     hrRole: 'employer' | 'admin',
-    query: { status?: string; applicationId?: string; interviewerId?: string; page: number; limit: number },
+    query: { status?: string; interviewType?: string; applicationId?: string; interviewerId?: string; page: number; limit: number },
   ): Promise<{ rows: EmployerInterviewRow[]; total: number; page: number; limit: number }> => {
     const { page, limit } = query;
 
@@ -457,6 +466,7 @@ export const interviewService = {
 
     const conditions = [];
     if (query.status) conditions.push(eq(interviews.status, query.status));
+    if (query.interviewType) conditions.push(eq(interviews.interviewType, query.interviewType));
     if (query.applicationId) conditions.push(eq(interviews.applicationId, query.applicationId));
     if (query.interviewerId) conditions.push(eq(interviews.interviewerId, query.interviewerId));
     if (companyIds.length > 0) conditions.push(inArray(jobs.companyId, companyIds));
@@ -473,6 +483,7 @@ export const interviewService = {
         candidateName: userProfiles.fullName,
         candidateEmail: users.email,
         interviewerId: interviews.interviewerId,
+        interviewType: interviews.interviewType,
         scheduledAt: interviews.scheduledAt,
         durationMin: interviews.durationMin,
         location: interviews.location,
@@ -517,6 +528,7 @@ export const interviewService = {
         candidateName: userProfiles.fullName,
         candidateEmail: users.email,
         interviewerId: interviews.interviewerId,
+        interviewType: interviews.interviewType,
         scheduledAt: interviews.scheduledAt,
         durationMin: interviews.durationMin,
         location: interviews.location,
@@ -560,6 +572,7 @@ export const interviewService = {
       .update(interviews)
       .set({
         ...(body.interviewerId ? { interviewerId: body.interviewerId } : {}),
+        ...(body.interviewType ? { interviewType: body.interviewType } : {}),
         ...(body.scheduledAt ? { scheduledAt: new Date(body.scheduledAt) } : {}),
         ...(body.durationMin !== undefined ? { durationMin: body.durationMin } : {}),
         ...(body.location !== undefined ? { location: body.location } : {}),
@@ -567,7 +580,7 @@ export const interviewService = {
         ...resetConfirm,
       })
       .where(eq(interviews.id, interviewId))
-      .returning({ id: interviews.id, status: interviews.status });
+      .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to update interview');
 
@@ -603,7 +616,7 @@ export const interviewService = {
       .update(interviews)
       .set({ status: 'cancelled', cancelledAt: new Date(), cancelReason: cancelReason ?? null })
       .where(eq(interviews.id, interviewId))
-      .returning({ id: interviews.id, status: interviews.status });
+      .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to cancel interview');
 
@@ -648,7 +661,7 @@ export const interviewService = {
       .update(interviews)
       .set({ feedback, feedbackSubmittedAt: new Date(), status: 'completed' })
       .where(eq(interviews.id, interviewId))
-      .returning({ id: interviews.id, status: interviews.status });
+      .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to save feedback');
 
@@ -688,6 +701,7 @@ export const interviewService = {
         jobId: applications.jobId,
         jobTitle: jobs.title,
         companyName: companies.name,
+        interviewType: interviews.interviewType,
         scheduledAt: interviews.scheduledAt,
         durationMin: interviews.durationMin,
         location: interviews.location,
@@ -729,6 +743,7 @@ export const interviewService = {
         jobId: applications.jobId,
         jobTitle: jobs.title,
         companyName: companies.name,
+        interviewType: interviews.interviewType,
         scheduledAt: interviews.scheduledAt,
         durationMin: interviews.durationMin,
         location: interviews.location,
@@ -761,6 +776,7 @@ export const interviewService = {
     const [row] = await db
       .select({
         id: interviews.id,
+        interviewType: interviews.interviewType,
         status: interviews.status,
         candidateId: applications.candidateId,
         scheduledAt: interviews.scheduledAt,
@@ -780,7 +796,7 @@ export const interviewService = {
       .update(interviews)
       .set({ status: 'confirmed', confirmedAt: new Date() })
       .where(eq(interviews.id, interviewId))
-      .returning({ id: interviews.id, status: interviews.status });
+      .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to confirm interview');
 
@@ -796,6 +812,7 @@ export const interviewService = {
     const [row] = await db
       .select({
         id: interviews.id,
+        interviewType: interviews.interviewType,
         status: interviews.status,
         candidateId: applications.candidateId,
         interviewerId: interviews.interviewerId,
@@ -820,7 +837,7 @@ export const interviewService = {
       .update(interviews)
       .set({ status: 'cancelled', cancelledAt: new Date(), cancelReason: reason ?? null, googleEventId: null })
       .where(eq(interviews.id, interviewId))
-      .returning({ id: interviews.id, status: interviews.status });
+      .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to reject interview');
 
@@ -880,6 +897,7 @@ export const interviewService = {
     const [row] = await db
       .select({
         id: interviews.id,
+        interviewType: interviews.interviewType,
         status: interviews.status,
         scheduledAt: interviews.scheduledAt,
         durationMin: interviews.durationMin,

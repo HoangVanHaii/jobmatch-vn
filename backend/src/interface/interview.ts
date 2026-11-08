@@ -12,6 +12,7 @@ export interface CandidateInterviewRow {
   jobId: string;
   jobTitle: string | null;
   companyName: string | null;
+  interviewType?: string | null;
   scheduledAt: Date;
   durationMin: number | null;
   location: string | null;
@@ -28,6 +29,7 @@ export interface EmployerInterviewRow {
   candidateName: string | null;
   candidateEmail: string | null;
   interviewerId: string;
+  interviewType?: string | null;
   scheduledAt: Date;
   durationMin: number | null;
   location: string | null;

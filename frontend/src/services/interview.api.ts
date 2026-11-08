@@ -19,6 +19,7 @@ export interface CalendarStatus {
 export interface CreateInterviewPayload {
   applicationId: string;
   interviewerId: string;
+  interviewType?: string;
   scheduledAt: string;
   durationMin?: number;
   location?: string;
@@ -40,6 +41,7 @@ export interface BusyTimeSlot {
 
 export interface PublicInterviewDetails {
   id: string;
+  interviewType?: string | null;
   status: string;
   scheduledAt: string;
   durationMin: number;

@@ -23,11 +23,29 @@ export const formatVietnamDateTime = (date: Date | string): string => {
   return `${hour}:${minute} ngày ${day}/${month}/${year}`;
 };
 
+export const INTERVIEW_TYPE_LABELS: Record<string, string> = {
+  screening: 'Phỏng vấn sơ loại (Screening)',
+  technical: 'Phỏng vấn kỹ thuật (Technical)',
+  coding: 'Phỏng vấn lập trình (Coding)',
+  system_design: 'Thiết kế hệ thống (System Design)',
+  hr: 'Phỏng vấn nhân sự (HR Interview)',
+  culture_fit: 'Phù hợp văn hóa (Culture Fit)',
+  panel: 'Phỏng vấn hội đồng (Panel Interview)',
+  final: 'Phỏng vấn vòng cuối (Final Interview)',
+  other: 'Phỏng vấn',
+};
+
+export const getInterviewTypeLabel = (type?: string | null): string => {
+  if (!type) return 'Phỏng vấn chuyên môn';
+  return INTERVIEW_TYPE_LABELS[type] || type;
+};
+
 export interface SendInterviewFallbackEmailParams {
   candidateEmail: string;
   candidateName: string;
   jobTitle: string;
   companyName: string;
+  interviewType?: string | null;
   scheduledAt: Date;
   durationMin: number;
   meetingLink?: string | null;
@@ -42,6 +60,7 @@ export interface SendInterviewFallbackEmailParams {
 export const sendInterviewFallbackEmail = async (params: SendInterviewFallbackEmailParams): Promise<void> => {
   const timeFormatted = formatVietnamDateTime(params.scheduledAt);
   const isOnline = Boolean(params.meetingLink);
+  const typeLabel = getInterviewTypeLabel(params.interviewType);
 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
@@ -52,10 +71,11 @@ export const sendInterviewFallbackEmail = async (params: SendInterviewFallbackEm
 
       <p style="font-size: 15px; line-height: 1.6;">Xin chào <strong>${params.candidateName}</strong>,</p>
       <p style="font-size: 15px; line-height: 1.6;">
-        Chúc mừng bạn! Công ty <strong>${params.companyName}</strong> trân trọng mời bạn tham dự buổi phỏng vấn cho vị trí <strong>${params.jobTitle}</strong>.
+        Chúc mừng bạn! Công ty <strong>${params.companyName}</strong> trân trọng mời bạn tham dự buổi <strong>${typeLabel}</strong> cho vị trí <strong>${params.jobTitle}</strong>.
       </p>
 
       <div style="background-color: #f8fafc; border-left: 4px solid #1769e8; padding: 16px; border-radius: 6px; margin: 20px 0;">
+        <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Vòng phỏng vấn:</strong> <span style="background-color: #eff6ff; color: #1d4ed8; padding: 3px 8px; border-radius: 4px; font-weight: 600; font-size: 13px;">${typeLabel}</span></p>
         <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Thời gian:</strong> ${timeFormatted} (Khoảng ${params.durationMin} phút)</p>
         <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Hình thức:</strong> ${isOnline ? 'Phỏng vấn Online (Google Meet)' : 'Phỏng vấn trực tiếp'}</p>
         ${params.location ? `<p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Địa điểm:</strong> ${params.location}</p>` : ''}
@@ -96,7 +116,7 @@ export const sendInterviewFallbackEmail = async (params: SendInterviewFallbackEm
   await mailer.sendMail({
     from: process.env.SMTP_FROM || `"JobMatch VN" <${process.env.SMTP_USER}>`,
     to: params.candidateEmail,
-    subject: `[JobMatch] Thư mời phỏng vấn vị trí ${params.jobTitle} - ${params.companyName}`,
+    subject: `[JobMatch] Thư mời [${typeLabel}] vị trí ${params.jobTitle} - ${params.companyName}`,
     html,
   });
 };
