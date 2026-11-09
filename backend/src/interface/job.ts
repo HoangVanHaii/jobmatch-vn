@@ -123,6 +123,8 @@ export interface JobListItem {
   viewsCount: number;
   appliesCount: number;
   publishedAt: Date | null;
+  /** Chu kỳ trả lương (lấy từ jobs.extra_data->>'paymentCycle', giá trị hợp lệ: hourly, daily, weekly, monthly, yearly, contract). */
+  paymentCycle?: string | null;
   /** Ngày tạo job (NOT NULL, defaultNow). Dùng làm sort key trong
    *  jobService.list() vì `publishedAt` NULL với job draft/flagged/closed
    *  sẽ làm NULLS LAST đẩy job mới tạo xuống cuối danh sách. */

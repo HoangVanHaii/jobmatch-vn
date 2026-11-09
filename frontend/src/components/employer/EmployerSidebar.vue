@@ -17,13 +17,12 @@
  *  - Gói dịch vụ / billing: /employer/pricing, /employer/billing/history
  *  - Cài đặt: /employer/settings
  */
-import { ref, onMounted, watch, computed } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useAuthStore } from '@stores/auth';
 import {
   Briefcase,
-  Plus,
   Home,
   PanelLeftClose,
   PanelLeftOpen,
@@ -90,12 +89,49 @@ watch(
 const collapsed = ref<boolean>(false);
 const SIDEBAR_KEY = 'employer-sidebar-collapsed';
 
+const isTabletViewport = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return window.innerWidth >= 768 && window.innerWidth < 1024;
+};
+
+const updateCollapsedState = (): void => {
+  if (typeof window === 'undefined') return;
+  if (isTabletViewport()) {
+    // Trên tablet (768px - 1023px): mặc định thu nhỏ (w-16) để tăng diện tích nội dung
+    const tabletSaved = localStorage.getItem(`${SIDEBAR_KEY}-tablet`);
+    collapsed.value = tabletSaved !== null ? tabletSaved === 'true' : true;
+  } else {
+    // Trên desktop (>= 1024px): mặc định mở rộng (w-60)
+    const desktopSaved = localStorage.getItem(SIDEBAR_KEY);
+    collapsed.value = desktopSaved !== null ? desktopSaved === 'true' : false;
+  }
+};
+
+let tabletMediaQuery: MediaQueryList | null = null;
+const handleMediaChange = (): void => {
+  updateCollapsedState();
+};
+
 onMounted(() => {
-  const saved = localStorage.getItem(SIDEBAR_KEY);
-  if (saved !== null) collapsed.value = saved === 'true';
+  updateCollapsedState();
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    tabletMediaQuery = window.matchMedia('(min-width: 768px) and (max-width: 1023px)');
+    tabletMediaQuery.addEventListener('change', handleMediaChange);
+  }
 });
+
+onUnmounted(() => {
+  if (tabletMediaQuery) {
+    tabletMediaQuery.removeEventListener('change', handleMediaChange);
+  }
+});
+
 watch(collapsed, (v) => {
-  localStorage.setItem(SIDEBAR_KEY, String(v));
+  if (isTabletViewport()) {
+    localStorage.setItem(`${SIDEBAR_KEY}-tablet`, String(v));
+  } else {
+    localStorage.setItem(SIDEBAR_KEY, String(v));
+  }
 });
 
 const toggleCollapsed = (): void => {
@@ -305,7 +341,7 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
     class="bg-white border-r border-gray-200 flex flex-col transition-[transform,width] duration-300 ease-out font-poppins"
     :class="[
       // Positioning
-      'absolute inset-y-0 left-0 z-40 md:sticky md:top-0 md:z-auto',
+      'absolute inset-y-0 left-0 z-40 md:sticky md:top-0 md:z-20',
       // Mobile slide state. `md:transform-none` reset transform trên desktop để
       // KHÔNG tạo transform-stacking-context (làm kẹt toggle button bên trong,
       // khiến nó bị phần tử static ở cột bên cạnh đè lên dù z-index cao hơn).
@@ -330,13 +366,13 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
       ]"
     >
       <router-link v-if="!collapsed || props.mobileOpen" to="/employer" class="block min-w-0">
-        <h1 class="text-lg font-bold text-gray-900 tracking-tight truncate">
+        <div class="text-lg font-bold text-gray-900 tracking-tight truncate">
           JOBMATCH<span class="text-primary-600">VN</span>
-        </h1>
+        </div>
         <p v-if="!collapsed" class="text-xs text-gray-500 mt-0.5">Employer Workspace</p>
       </router-link>
       <router-link v-else to="/employer" class="block" title="JOBMATCH VN">
-        <h1 class="text-base font-bold text-primary-600 tracking-tight">JM</h1>
+        <div class="text-base font-bold text-primary-600 tracking-tight">JM</div>
       </router-link>
 
       <!-- Close button (mobile only, chỉ hiện khi overlay mở) -->
@@ -355,8 +391,10 @@ const isActive = (item: MenuItem): boolean => activeItem.value === item;
       <button
         v-if="!props.mobileOpen"
         type="button"
-        class="absolute top-1/2 -translate-y-1/2 -right-3 z-20 w-6 h-6 bg-white border border-gray-200 rounded-full shadow-sm items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition hidden md:flex"
+        class="absolute top-1/2 -translate-y-1/2 -right-3 z-30 w-6 h-6 bg-white border border-gray-200 rounded-full shadow-sm items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition hidden md:flex before:absolute before:-inset-1.5 before:content-['']"
         :title="collapsed ? 'Mở rộng' : 'Thu nhỏ'"
+        :aria-label="collapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'"
+        :aria-expanded="!collapsed"
         @click="toggleCollapsed"
       >
         <PanelLeftClose v-if="!collapsed" class="w-3.5 h-3.5" />

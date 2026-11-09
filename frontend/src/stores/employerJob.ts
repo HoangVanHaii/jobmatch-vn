@@ -20,6 +20,7 @@ export const useEmployerJobStore = defineStore('employerJob', () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
   const query = ref<ListJobQuery>({});
+  const counts = ref<{ mine: number; company: number }>({ mine: 0, company: 0 });
 
   const totalPages = computed(() =>
     total.value === 0 ? 1 : Math.ceil(total.value / pageSize.value),
@@ -40,7 +41,15 @@ export const useEmployerJobStore = defineStore('employerJob', () => {
     pageNum?: number,
   ): Promise<void> => {
     const seq = ++latestSeq;
-    if (newQuery) query.value = { ...query.value, ...newQuery };
+    if (newQuery) {
+      const merged = { ...query.value, ...newQuery };
+      for (const key of Object.keys(merged) as (keyof ListJobQuery)[]) {
+        if (merged[key] === undefined) {
+          delete merged[key];
+        }
+      }
+      query.value = merged;
+    }
     const targetPage = pageNum ?? page.value;
     page.value = targetPage;
     loading.value = true;
@@ -52,11 +61,23 @@ export const useEmployerJobStore = defineStore('employerJob', () => {
         limit: pageSize.value,
       });
       if (seq !== latestSeq) return;
+      if (
+        !data ||
+        !Array.isArray(data.data) ||
+        typeof data.pagination?.total !== 'number'
+      ) {
+        throw new Error('Dữ liệu phản hồi không hợp lệ');
+      }
       items.value = data.data;
       total.value = data.pagination.total;
+      if (data.counts) {
+        counts.value = data.counts;
+      }
     } catch (e) {
       if (seq !== latestSeq) return;
       setError(e);
+      items.value = [];
+      total.value = 0;
     } finally {
       if (seq === latestSeq) loading.value = false;
     }
@@ -75,6 +96,7 @@ export const useEmployerJobStore = defineStore('employerJob', () => {
     loading,
     error,
     query,
+    counts,
     totalPages,
     fetchList,
     resetFilters,

@@ -50,9 +50,9 @@ const closeMobileSidebar = (): void => {
         >
           <Menu class="h-5 w-5" />
         </button>
-        <h1 class="text-sm font-semibold tracking-tight text-gray-900">
+        <div class="text-sm font-semibold tracking-tight text-gray-900">
           JOBMATCH<span class="text-primary-600">VN</span>
-        </h1>
+        </div>
       </header>
 
       <main class="flex-1 min-w-0">

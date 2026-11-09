@@ -135,13 +135,21 @@ export const jobController = {
             total: 0,
             totalPages: 1,
           },
+          counts: {
+            mine: 0,
+            company: 0,
+          },
         });
         return;
       }
-      const { data, total } = await jobService.list(filters, membership.companyId, {
-        userId,
-        role: membership.role,
-      });
+      const [{ data, total }, counts] = await Promise.all([
+        jobService.list(filters, membership.companyId, {
+          userId,
+          role: membership.role,
+          scope: filters.scope,
+        }),
+        jobService.countCompanyJobs(membership.companyId, userId),
+      ]);
       res.json({
         success: true,
         data,
@@ -150,7 +158,8 @@ export const jobController = {
           limit: filters.limit,
           total,
           totalPages: Math.ceil(total / filters.limit),
-        }
+        },
+        counts,
       });
     } catch (err) { next(err); }
   },

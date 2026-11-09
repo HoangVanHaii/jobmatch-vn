@@ -1080,10 +1080,13 @@ const unlockScroll = (): void => {
   document.body.style.paddingRight = prevBodyPaddingRight;
 };
 
+let triggerEl: HTMLElement | null = null;
+
 const onKeydown = (e: KeyboardEvent): void => {
   if (!props.open) return;
   if (e.key === 'Escape') {
     e.preventDefault();
+    e.stopPropagation();
     if (showPreview.value) {
       showPreview.value = false;
     } else {
@@ -1096,6 +1099,7 @@ watch(
   () => props.open,
   async (isOpen) => {
     if (isOpen) {
+      triggerEl = (document.activeElement as HTMLElement) || null;
       lockScroll();
       window.addEventListener('keydown', onKeydown);
       if (!company.value) {
@@ -1113,6 +1117,8 @@ watch(
     } else {
       unlockScroll();
       window.removeEventListener('keydown', onKeydown);
+      await nextTick();
+      triggerEl?.focus();
     }
   },
   { immediate: true },
@@ -1142,6 +1148,7 @@ onBeforeUnmount(() => {
         class="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 font-poppins text-[#24212D] antialiased"
         role="dialog"
         aria-modal="true"
+        :aria-label="isEditMode ? 'Chỉnh sửa tin tuyển dụng' : 'Đăng tin tuyển dụng mới'"
       >
         <!-- Modal Backdrop (Click bên ngoài để đóng) -->
         <div

@@ -257,9 +257,16 @@ const onSubmit = async () => {
     const rawRedirect = typeof q === 'string' ? q : Array.isArray(q) ? String(q[0] ?? '') : '';
     const isSafeRedirect = (url: string): boolean => {
       if (!url) return false;
-      if (!url.startsWith('/')) return false; // Phải bắt đầu bằng /
-      if (url.startsWith('//')) return false;       // //evil.com → protocol-relative
-      if (url.includes('://')) return false;        // /path@evil.com
+      let decoded = url;
+      try {
+        decoded = decodeURIComponent(url);
+      } catch {
+        return false;
+      }
+      if (!decoded.startsWith('/')) return false; // Phải bắt đầu bằng /
+      if (decoded.startsWith('//') || decoded.startsWith('/\\')) return false; // Chặn protocol-relative và backslash trick
+      if (decoded.includes('\\')) return false; // Chặn mọi ký tự backslash
+      if (decoded.includes('://')) return false; // /path@evil.com
       return true;
     };
     const safeRedirect = isSafeRedirect(rawRedirect) ? rawRedirect : null;
