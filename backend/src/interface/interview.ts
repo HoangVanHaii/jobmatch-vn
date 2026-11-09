@@ -28,7 +28,11 @@ export interface EmployerInterviewRow {
   candidateId: string | null;
   candidateName: string | null;
   candidateEmail: string | null;
+  candidatePhone?: string | null;
+  candidateAvatar?: string | null;
   interviewerId: string;
+  interviewerName?: string | null;
+  interviewerAvatar?: string | null;
   interviewType?: string | null;
   scheduledAt: Date;
   durationMin: number | null;

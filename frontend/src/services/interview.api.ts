@@ -64,6 +64,46 @@ export interface PublicInterviewRespondPayload {
   proposedTime?: string;
 }
 
+export interface SubmitInterviewFeedbackPayload {
+  scores?: Record<string, number>;
+  comments: string;
+  recommendation: 'strong_hire' | 'hire' | 'no_hire' | 'strong_no_hire';
+}
+
+export interface InterviewListItem {
+  id: string;
+  applicationId: string;
+  jobId: string | null;
+  jobTitle: string | null;
+  candidateId: string | null;
+  candidateName: string | null;
+  candidateEmail: string | null;
+  candidatePhone?: string | null;
+  candidateAvatar?: string | null;
+  interviewerId: string;
+  interviewerName?: string | null;
+  interviewerAvatar?: string | null;
+  interviewType?: string | null;
+  scheduledAt: string;
+  durationMin: number;
+  location?: string | null;
+  meetingLink?: string | null;
+  status: string;
+  confirmedAt?: string | null;
+  createdAt: string;
+}
+
+export interface ListInterviewParams {
+  status?: string;
+  interviewType?: string;
+  applicationId?: string;
+  interviewerId?: string;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  limit?: number;
+}
+
 export const interviewApi = {
   /**
    * Lấy thông tin phỏng vấn public qua confirmation token (không cần login)
@@ -94,16 +134,22 @@ export const interviewApi = {
     }),
 
   /**
-   * Danh sách lịch phỏng vấn
+   * Danh sách lịch phỏng vấn (hỗ trợ lọc theo khoảng ngày, tuần, trạng thái, loại phỏng vấn)
    */
-  list: (params?: { status?: string; applicationId?: string; page?: number; limit?: number }) =>
-    http.get<ApiResponse<any>>('/interviews', { params }),
+  list: (params?: ListInterviewParams) =>
+    http.get<ApiResponse<{ rows: InterviewListItem[]; total: number; page: number; limit: number }>>('/interviews', { params }),
 
   /**
    * Huỷ lịch phỏng vấn
    */
   cancel: (id: string, cancelReason?: string) =>
     http.put<ApiResponse<{ id: string; status: string }>>(`/interviews/${id}/cancel`, { cancelReason }),
+
+  /**
+   * Người phỏng vấn / HR gửi đánh giá sau buổi phỏng vấn (status -> completed)
+   */
+  submitFeedback: (id: string, payload: SubmitInterviewFeedbackPayload) =>
+    http.put<ApiResponse<{ id: string; status: string }>>(`/interviews/${id}/feedback`, payload),
 
   /**
    * Lấy URL để chuyển hướng HR sang Google OAuth cấp quyền Calendar

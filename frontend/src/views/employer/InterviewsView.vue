@@ -1,43 +1,41 @@
 <script setup lang="ts">
 /**
  * InterviewsView — Trang Quản lý & Lên lịch Phỏng vấn (Interview Scheduler)
- * Mockup thiết kế theo chuẩn TalentFlow:
- * - Không có sidebar TalentFlow (tận dụng EmployerLayout của JobMatchVN)
- * - Chế độ xem: Day (Ngày) & Week (Tuần), không có chế độ Agenda
- * - Hàng đầu bảng lịch: để trống ở mode Day, hiển thị thứ & ngày ở mode Week
- * - Bộ lọc đa năng bên trái: Loại hình, vị trí, trạng thái, khả dụng
+ * Kết nối dữ liệu thật từ Backend API (/api/v1/interviews):
+ * - Hỗ trợ lọc theo khoảng thời gian tuần / ngày thực tế
+ * - Chế độ xem: Ngày & Tuần
+ * - Bộ lọc đa năng bên trái: Loại hình, vị trí, người phỏng vấn, trạng thái, khả dụng
  * - Bảng lịch dạng time-grid trực quan với line giờ hiện tại và các card lịch màu pastel
- * - Thanh thống kê tổng kết ở đáy trang
+ * - Thanh thống kê tổng kết động ở đáy trang
  * - Panel chi tiết buổi phỏng vấn (Interview Details drawer) trượt mở bên phải khi click vào buổi hẹn
  */
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import {
   Calendar as CalendarIcon,
   Clock,
   Video,
   Users,
   Search,
-  Bell,
-  Plus,
   ChevronLeft,
   ChevronRight,
-  Filter,
-  Check,
   X,
   Mail,
   Phone,
   FileText,
   Download,
   ExternalLink,
-  Sparkles,
   CheckCircle2,
-  AlertCircle,
-  RotateCcw,
   SlidersHorizontal,
   ChevronDown,
+  Loader2,
+  RefreshCw,
+  BarChart3,
+  Printer,
 } from 'lucide-vue-next';
 import ScheduleInterviewModal from '@/components/employer/ScheduleInterviewModal.vue';
 import GoogleCalendarConnectCard from '@/components/employer/GoogleCalendarConnectCard.vue';
+import { interviewApi, type InterviewListItem } from '@/services/interview.api';
+import { exportInterviewReportDocx } from '@/utils/interviewReportDocx';
 
 // ---------------------------------------------------------------------------
 // Types & Data Structures
@@ -46,7 +44,13 @@ export type ViewMode = 'day' | 'week';
 
 export type InterviewStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled' | 'rescheduled';
 
-export type InterviewType = 'Technical Interview' | 'Coding Interview' | 'System Design' | 'HR Interview' | 'Panel Interview';
+export type InterviewType =
+  | 'Phỏng vấn Kỹ thuật'
+  | 'Phỏng vấn Lập trình'
+  | 'Thiết kế Hệ thống'
+  | 'Phỏng vấn Nhân sự'
+  | 'Phỏng vấn Hội đồng'
+  | string;
 
 export interface Interviewer {
   id: string;
@@ -80,328 +84,24 @@ export interface InterviewEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Mock Data
+// Real API Data State
 // ---------------------------------------------------------------------------
-const MOCK_INTERVIEWERS: Interviewer[] = [
-  { id: 'int-1', name: 'Esther Howard', role: 'Engineering Manager', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop&crop=face' },
-  { id: 'int-2', name: 'Brooklyn Simmons', role: 'Senior Developer', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face' },
-  { id: 'int-3', name: 'Cody Fisher', role: 'Tech Lead', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face' },
-  { id: 'int-4', name: 'Leslie Alexander', role: 'HR Manager', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face' },
-  { id: 'int-5', name: 'Darlene Robertson', role: 'Product Manager', avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&h=100&fit=crop&crop=face' },
-];
-
-const MOCK_INTERVIEWS: InterviewEvent[] = [
-  // Thứ 2 (Day 1)
-  {
-    id: 'evt-1',
-    candidateName: 'Sarah Johnson',
-    candidateEmail: 'sarah.johnson@example.com',
-    candidatePhone: '+84 901 234 567',
-    candidateAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=120&h=120&fit=crop&crop=face',
-    jobTitle: 'Frontend Developer',
-    interviewType: 'Technical Interview',
-    status: 'scheduled',
-    date: '2024-05-12',
-    dayOfWeek: 1,
-    startTime: '09:00',
-    endTime: '10:00',
-    startHourDecimal: 9,
-    durationHours: 1,
-    location: 'Google Meet',
-    meetingLink: 'https://meet.google.com/abc-defg-hij',
-    interviewers: [MOCK_INTERVIEWERS[0], MOCK_INTERVIEWERS[1], MOCK_INTERVIEWERS[2]],
-    notes: 'Đánh giá kỹ năng chuyên sâu về Vue 3, TypeScript, State Management và văn hóa làm việc nhóm.',
-    attachmentName: 'Interview_Plan.pdf',
-    attachmentSize: '245 KB',
-    colorTheme: 'purple',
-  },
-  {
-    id: 'evt-2',
-    candidateName: 'Michael Chen',
-    candidateEmail: 'michael.chen@example.com',
-    candidatePhone: '+84 912 345 678',
-    candidateAvatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=120&h=120&fit=crop&crop=face',
-    jobTitle: 'Backend Developer',
-    interviewType: 'Technical Interview',
-    status: 'in_progress',
-    date: '2024-05-12',
-    dayOfWeek: 1,
-    startTime: '11:00',
-    endTime: '12:00',
-    startHourDecimal: 11,
-    durationHours: 1,
-    location: 'Google Meet',
-    meetingLink: 'https://meet.google.com/mno-pqrs-tuv',
-    interviewers: [MOCK_INTERVIEWERS[1], MOCK_INTERVIEWERS[2]],
-    notes: 'Tập trung kiến trúc Node.js, PostgreSQL tối ưu index, microservices messaging.',
-    attachmentName: 'Backend_Test_Assessment.pdf',
-    attachmentSize: '310 KB',
-    colorTheme: 'green',
-  },
-  {
-    id: 'evt-3',
-    candidateName: 'David Kim',
-    candidateEmail: 'david.kim@example.com',
-    candidatePhone: '+84 933 888 999',
-    jobTitle: 'Full Stack Developer',
-    interviewType: 'System Design',
-    status: 'scheduled',
-    date: '2024-05-12',
-    dayOfWeek: 1,
-    startTime: '13:00',
-    endTime: '14:00',
-    startHourDecimal: 13,
-    durationHours: 1,
-    location: 'Phòng họp Tầng 4 - Trụ sở chính',
-    interviewers: [MOCK_INTERVIEWERS[0], MOCK_INTERVIEWERS[2]],
-    notes: 'Thiết kế hệ thống chịu tải cao, caching Redis và cơ chế đồng bộ dữ liệu.',
-    colorTheme: 'blue',
-  },
-  {
-    id: 'evt-4',
-    candidateName: 'James Wilson',
-    candidateEmail: 'james.wilson@example.com',
-    jobTitle: 'DevOps Engineer',
-    interviewType: 'Technical Interview',
-    status: 'scheduled',
-    date: '2024-05-12',
-    dayOfWeek: 1,
-    startTime: '16:00',
-    endTime: '17:00',
-    startHourDecimal: 16,
-    durationHours: 1,
-    location: 'Google Meet',
-    meetingLink: 'https://meet.google.com/jkl-mnop-qrs',
-    interviewers: [MOCK_INTERVIEWERS[2]],
-    notes: 'Kinh nghiệm CI/CD Docker, Kubernetes và giám sát hệ thống Grafana/Prometheus.',
-    colorTheme: 'rose',
-  },
-
-  // Thứ 3 (Day 2)
-  {
-    id: 'evt-5',
-    candidateName: 'Priya Patel',
-    candidateEmail: 'priya.patel@example.com',
-    jobTitle: 'Software Engineer',
-    interviewType: 'Coding Interview',
-    status: 'scheduled',
-    date: '2024-05-13',
-    dayOfWeek: 2,
-    startTime: '10:00',
-    endTime: '11:00',
-    startHourDecimal: 10,
-    durationHours: 1,
-    location: 'Google Meet',
-    meetingLink: 'https://meet.google.com/priya-interview',
-    interviewers: [MOCK_INTERVIEWERS[1]],
-    notes: 'Live coding thuật toán giải quyết bài toán Data Structure trong 45 phút.',
-    colorTheme: 'amber',
-  },
-  {
-    id: 'evt-6',
-    candidateName: 'Alex Thompson',
-    candidateEmail: 'alex.t@example.com',
-    jobTitle: 'Backend Developer',
-    interviewType: 'Technical Interview',
-    status: 'scheduled',
-    date: '2024-05-13',
-    dayOfWeek: 2,
-    startTime: '14:00',
-    endTime: '15:30',
-    startHourDecimal: 14,
-    durationHours: 1.5,
-    location: 'Google Meet',
-    meetingLink: 'https://meet.google.com/alex-backend',
-    interviewers: [MOCK_INTERVIEWERS[1], MOCK_INTERVIEWERS[2]],
-    colorTheme: 'purple',
-  },
-  {
-    id: 'evt-7',
-    candidateName: 'Maria Garcia',
-    candidateEmail: 'maria.g@example.com',
-    jobTitle: 'QA Engineer',
-    interviewType: 'Technical Interview',
-    status: 'completed',
-    date: '2024-05-13',
-    dayOfWeek: 2,
-    startTime: '17:00',
-    endTime: '18:00',
-    startHourDecimal: 17,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[0]],
-    colorTheme: 'green',
-  },
-
-  // Thứ 4 (Day 3)
-  {
-    id: 'evt-8',
-    candidateName: 'Ryan Martinez',
-    candidateEmail: 'ryan.m@example.com',
-    jobTitle: 'Software Engineer',
-    interviewType: 'Technical Interview',
-    status: 'scheduled',
-    date: '2024-05-14',
-    dayOfWeek: 3,
-    startTime: '09:30',
-    endTime: '10:30',
-    startHourDecimal: 9.5,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[2]],
-    colorTheme: 'blue',
-  },
-  {
-    id: 'evt-9',
-    candidateName: 'Daniel Lee',
-    candidateEmail: 'daniel.lee@example.com',
-    jobTitle: 'Full Stack Developer',
-    interviewType: 'System Design',
-    status: 'scheduled',
-    date: '2024-05-14',
-    dayOfWeek: 3,
-    startTime: '12:00',
-    endTime: '13:00',
-    startHourDecimal: 12,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[0], MOCK_INTERVIEWERS[1]],
-    colorTheme: 'rose',
-  },
-  {
-    id: 'evt-10',
-    candidateName: 'Sophia Brown',
-    candidateEmail: 'sophia.brown@example.com',
-    jobTitle: 'Mobile Developer',
-    interviewType: 'Technical Interview',
-    status: 'rescheduled',
-    date: '2024-05-14',
-    dayOfWeek: 3,
-    startTime: '15:00',
-    endTime: '16:00',
-    startHourDecimal: 15,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[2]],
-    colorTheme: 'amber',
-  },
-
-  // Thứ 5 (Day 4)
-  {
-    id: 'evt-11',
-    candidateName: 'Jessica Davis',
-    candidateEmail: 'jessica.davis@example.com',
-    jobTitle: 'Product Designer',
-    interviewType: 'HR Interview',
-    status: 'scheduled',
-    date: '2024-05-15',
-    dayOfWeek: 4,
-    startTime: '11:00',
-    endTime: '12:00',
-    startHourDecimal: 11,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[3]],
-    colorTheme: 'purple',
-  },
-  {
-    id: 'evt-12',
-    candidateName: 'Robert Taylor',
-    candidateEmail: 'robert.taylor@example.com',
-    jobTitle: 'UX Designer',
-    interviewType: 'HR Interview',
-    status: 'scheduled',
-    date: '2024-05-15',
-    dayOfWeek: 4,
-    startTime: '14:00',
-    endTime: '15:00',
-    startHourDecimal: 14,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[3]],
-    colorTheme: 'blue',
-  },
-  {
-    id: 'evt-13',
-    candidateName: 'Emily White',
-    candidateEmail: 'emily.white@example.com',
-    jobTitle: 'Product Manager',
-    interviewType: 'HR Interview',
-    status: 'cancelled',
-    date: '2024-05-15',
-    dayOfWeek: 4,
-    startTime: '16:00',
-    endTime: '17:00',
-    startHourDecimal: 16,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[3]],
-    colorTheme: 'purple',
-  },
-
-  // Thứ 6 (Day 5)
-  {
-    id: 'evt-14',
-    candidateName: 'Ethan Anderson',
-    candidateEmail: 'ethan.a@example.com',
-    jobTitle: 'Product Owner',
-    interviewType: 'Panel Interview',
-    status: 'scheduled',
-    date: '2024-05-16',
-    dayOfWeek: 5,
-    startTime: '10:00',
-    endTime: '11:00',
-    startHourDecimal: 10,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[0], MOCK_INTERVIEWERS[4]],
-    colorTheme: 'green',
-  },
-  {
-    id: 'evt-15',
-    candidateName: 'Olivia Martinez',
-    candidateEmail: 'olivia.m@example.com',
-    jobTitle: 'Business Analyst',
-    interviewType: 'Panel Interview',
-    status: 'scheduled',
-    date: '2024-05-16',
-    dayOfWeek: 5,
-    startTime: '13:00',
-    endTime: '14:30',
-    startHourDecimal: 13,
-    durationHours: 1.5,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[3], MOCK_INTERVIEWERS[4]],
-    colorTheme: 'purple',
-  },
-  {
-    id: 'evt-16',
-    candidateName: 'Liam Thomas',
-    candidateEmail: 'liam.t@example.com',
-    jobTitle: 'Project Manager',
-    interviewType: 'Panel Interview',
-    status: 'scheduled',
-    date: '2024-05-16',
-    dayOfWeek: 5,
-    startTime: '17:00',
-    endTime: '18:00',
-    startHourDecimal: 17,
-    durationHours: 1,
-    location: 'Google Meet',
-    interviewers: [MOCK_INTERVIEWERS[0], MOCK_INTERVIEWERS[4]],
-    colorTheme: 'amber',
-  },
-];
+const rawInterviews = ref<InterviewListItem[]>([]);
+const isLoading = ref(false);
+const fetchError = ref<string | null>(null);
 
 // ---------------------------------------------------------------------------
 // State Controls
 // ---------------------------------------------------------------------------
-const viewMode = ref<ViewMode>('week'); // Chỉ hỗ trợ 'day' | 'week'
+const viewMode = ref<ViewMode>('week'); // 'day' | 'week'
 const searchQuery = ref('');
-const filterSidebarOpen = ref(false); // Dạng đóng mở như drawer detail để tiết kiệm diện tích
-const selectedInterview = ref<InterviewEvent | null>(MOCK_INTERVIEWS[0]); // Mặc định mở chi tiết buổi đầu tiên
+const filterSidebarOpen = ref(false);
+const selectedInterview = ref<InterviewEvent | null>(null);
 const showScheduleModal = ref(false);
 const showCalendarIntegration = ref(false);
+
+// Ref container scroll của bảng lịch
+const timelineScrollContainer = ref<HTMLDivElement | null>(null);
 
 // Filter states
 const selectedType = ref('All Types');
@@ -431,20 +131,128 @@ const activeFilterCount = computed(() => {
   return count;
 });
 
-// Time & Days structure
+// Time & Days structure: 08:00 -> 19:00
+const startHourBase = 8;
 const timeSlots = [
-  '9 AM', '10 AM', '11 AM', '12 PM', '1 PM', '2 PM', '3 PM', '4 PM', '5 PM', '6 PM'
+  '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
 ];
 
-const weekDays = [
-  { dayOfWeek: 1, nameVi: 'Thứ 2', nameEn: 'Mon', dateNum: 12, fullDate: '2024-05-12' },
-  { dayOfWeek: 2, nameVi: 'Thứ 3', nameEn: 'Tue', dateNum: 13, fullDate: '2024-05-13' },
-  { dayOfWeek: 3, nameVi: 'Thứ 4', nameEn: 'Wed', dateNum: 14, fullDate: '2024-05-14' },
-  { dayOfWeek: 4, nameVi: 'Thứ 5', nameEn: 'Thu', dateNum: 15, fullDate: '2024-05-15' },
-  { dayOfWeek: 5, nameVi: 'Thứ 6', nameEn: 'Fri', dateNum: 16, fullDate: '2024-05-16' },
-];
+export interface WeekDayItem {
+  dayOfWeek: number;
+  nameVi: string;
+  dateNum: number;
+  monthNum: number;
+  year: number;
+  fullDate: string;
+}
 
-const activeDayOfWeek = ref(1); // Ngày đang chọn khi ở mode Day
+const DAY_NAMES_VI = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6'];
+
+// Ngày được chọn hiện tại (khởi tạo ngày hôm nay)
+const nowInitial = new Date();
+const currentJsDay = nowInitial.getDay();
+const defaultDayOfWeek = currentJsDay >= 1 && currentJsDay <= 5 ? currentJsDay : 1;
+
+const selectedDate = ref<Date>(new Date());
+const activeDayOfWeek = ref(defaultDayOfWeek);
+
+function getMonday(d: Date): Date {
+  const date = new Date(d);
+  const day = date.getDay(); // 0 = CN, 1 = T2, ..., 6 = T7
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+  date.setDate(diff);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function formatDateISO(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatDisplayDate(dateStr?: string): string {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return dateStr;
+  return `${d} Tháng ${m}, ${y}`;
+}
+
+const currentRealDate = ref(new Date());
+
+const nowTimeInfo = ref({
+  fullDate: formatDateISO(new Date()),
+  decimalHour: new Date().getHours() + new Date().getMinutes() / 60 + new Date().getSeconds() / 3600,
+  timeString: `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`,
+});
+
+function updateRealTime() {
+  const now = new Date();
+  currentRealDate.value = now;
+  const h = now.getHours();
+  const m = now.getMinutes();
+  const s = now.getSeconds();
+  nowTimeInfo.value = {
+    fullDate: formatDateISO(now),
+    decimalHour: h + m / 60 + s / 3600,
+    timeString: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+  };
+}
+
+const todayDateStr = computed(() => formatDateISO(currentRealDate.value));
+
+// 5 ngày làm việc (Thứ 2 -> Thứ 6) của tuần chứa selectedDate
+const weekDays = computed<WeekDayItem[]>(() => {
+  const monday = getMonday(selectedDate.value);
+  const days: WeekDayItem[] = [];
+
+  for (let i = 0; i < 5; i++) {
+    const cur = new Date(monday);
+    cur.setDate(monday.getDate() + i);
+    days.push({
+      dayOfWeek: i + 1,
+      nameVi: DAY_NAMES_VI[i],
+      dateNum: cur.getDate(),
+      monthNum: cur.getMonth() + 1,
+      year: cur.getFullYear(),
+      fullDate: formatDateISO(cur),
+    });
+  }
+  return days;
+});
+
+// Nhãn dải tuần hiển thị ở mode Week (ví dụ: "09 – 13 Thg 11, 2026")
+const weekRangeLabel = computed(() => {
+  const days = weekDays.value;
+  if (!days.length) return '';
+  const first = days[0];
+  const last = days[days.length - 1];
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (first.year === last.year) {
+    if (first.monthNum === last.monthNum) {
+      return `${pad(first.dateNum)} – ${pad(last.dateNum)} Thg ${first.monthNum}, ${first.year}`;
+    }
+    return `${pad(first.dateNum)} Thg ${first.monthNum} – ${pad(last.dateNum)} Thg ${last.monthNum}, ${first.year}`;
+  }
+  return `${pad(first.dateNum)} Thg ${first.monthNum}, ${first.year} – ${pad(last.dateNum)} Thg ${last.monthNum}, ${last.year}`;
+});
+
+// Khoảng ngày của tuần hiện tại để fetch API
+const currentWeekBounds = computed(() => {
+  const monday = getMonday(selectedDate.value);
+  monday.setHours(0, 0, 0, 0);
+
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+
+  return {
+    startDate: monday.toISOString(),
+    endDate: sunday.toISOString(),
+    mondayKey: formatDateISO(monday),
+  };
+});
 
 // Helper: Styling badge trạng thái
 const STATUS_META: Record<InterviewStatus, { label: string; color: string; dot: string; bg: string }> = {
@@ -498,12 +306,311 @@ const THEME_STYLES: Record<
 };
 
 // ---------------------------------------------------------------------------
+// API Mappers
+// ---------------------------------------------------------------------------
+function formatTimeHHmm(d: Date): string {
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+function resolveInterviewType(rawType?: string | null): InterviewType {
+  const t = (rawType || '').toLowerCase();
+  if (t.includes('coding') || t.includes('lập trình')) return 'Phỏng vấn Lập trình';
+  if (t.includes('system') || t.includes('hệ thống')) return 'Thiết kế Hệ thống';
+  if (t.includes('panel') || t.includes('hội đồng')) return 'Phỏng vấn Hội đồng';
+  if (t.includes('hr') || t.includes('phone') || t.includes('screening') || t.includes('behavioral') || t.includes('nhân sự')) {
+    return 'Phỏng vấn Nhân sự';
+  }
+  if (t.includes('technical') || t.includes('kỹ thuật')) return 'Phỏng vấn Kỹ thuật';
+  return rawType || 'Phỏng vấn Chuyên môn';
+}
+
+function resolveInterviewStatus(rawStatus?: string | null): InterviewStatus {
+  const s = (rawStatus || '').toLowerCase();
+  if (s === 'completed') return 'completed';
+  if (s === 'in_progress') return 'in_progress';
+  if (s === 'cancelled' || s === 'canceled') return 'cancelled';
+  if (s === 'rescheduled') return 'rescheduled';
+  return 'scheduled';
+}
+
+function resolveColorTheme(typeStr: string, id: string): 'purple' | 'amber' | 'blue' | 'green' | 'rose' {
+  const lower = (typeStr || '').toLowerCase();
+  if (lower.includes('lập trình') || lower.includes('kỹ thuật') || lower.includes('coding') || lower.includes('technical')) return 'blue';
+  if (lower.includes('nhân sự') || lower.includes('hr') || lower.includes('phone')) return 'amber';
+  if (lower.includes('hệ thống') || lower.includes('system')) return 'purple';
+  if (lower.includes('hội đồng') || lower.includes('panel')) return 'green';
+  const palette: Array<'purple' | 'amber' | 'blue' | 'green' | 'rose'> = ['purple', 'amber', 'blue', 'green', 'rose'];
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash << 5) - hash + id.charCodeAt(i);
+    hash |= 0;
+  }
+  return palette[Math.abs(hash) % palette.length];
+}
+
+function mapToInterviewEvent(item: InterviewListItem): InterviewEvent {
+  const start = new Date(item.scheduledAt);
+  const durationMin = item.durationMin || 60;
+  const end = new Date(start.getTime() + durationMin * 60 * 1000);
+  const jsDay = start.getDay();
+  const dayOfWeek = jsDay === 0 ? 7 : jsDay;
+  const typeResolved = resolveInterviewType(item.interviewType);
+  const startHourDecimal = start.getHours() + start.getMinutes() / 60;
+  const durationHours = durationMin / 60;
+
+  const interviewers: Interviewer[] = [];
+  if (item.interviewerName) {
+    interviewers.push({
+      id: item.interviewerId,
+      name: item.interviewerName,
+      role: 'Người phỏng vấn',
+      avatar: item.interviewerAvatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face',
+    });
+  }
+
+  return {
+    id: item.id,
+    candidateName: item.candidateName || 'Ứng viên',
+    candidateEmail: item.candidateEmail || '',
+    candidatePhone: item.candidatePhone || undefined,
+    candidateAvatar: item.candidateAvatar || undefined,
+    jobTitle: item.jobTitle || 'Chưa phân loại vị trí',
+    interviewType: typeResolved,
+    status: resolveInterviewStatus(item.status),
+    date: formatDateISO(start),
+    dayOfWeek,
+    startTime: formatTimeHHmm(start),
+    endTime: formatTimeHHmm(end),
+    startHourDecimal,
+    durationHours,
+    location: item.location || (item.meetingLink ? 'Google Meet' : 'Văn phòng'),
+    meetingLink: item.meetingLink || undefined,
+    interviewers,
+    colorTheme: resolveColorTheme(typeResolved, item.id),
+  };
+}
+
+const allEvents = computed<InterviewEvent[]>(() => {
+  return rawInterviews.value.map(mapToInterviewEvent);
+});
+
+// Dynamic options from real data
+const availableJobs = computed(() => {
+  const set = new Set<string>();
+  for (const evt of allEvents.value) {
+    if (evt.jobTitle && evt.jobTitle !== 'Chưa phân loại vị trí') {
+      set.add(evt.jobTitle);
+    }
+  }
+  return Array.from(set);
+});
+
+const availableInterviewers = computed(() => {
+  const map = new Map<string, Interviewer>();
+  for (const evt of allEvents.value) {
+    for (const int of evt.interviewers) {
+      if (int.name && int.name !== 'Người phỏng vấn') {
+        map.set(int.name, int);
+      }
+    }
+  }
+  return Array.from(map.values());
+});
+
+// ---------------------------------------------------------------------------
+// Bottom Stats Computation
+// ---------------------------------------------------------------------------
+const totalInterviewsCount = computed(() => allEvents.value.length);
+const uniqueCandidatesCount = computed(() => {
+  const set = new Set(allEvents.value.map((e) => e.candidateEmail || e.candidateName));
+  return set.size;
+});
+const totalDurationHours = computed(() => {
+  const totalMin = allEvents.value.reduce((sum, e) => sum + e.durationHours * 60, 0);
+  const h = Math.floor(totalMin / 60);
+  const m = Math.round(totalMin % 60);
+  if (h === 0) return `${m} phút`;
+  return m > 0 ? `${h}h ${m}p` : `${h} giờ`;
+});
+const panelCoveragePercent = computed(() => {
+  if (allEvents.value.length === 0) return 100;
+  const covered = allEvents.value.filter((e) => e.interviewers.length > 0).length;
+  return Math.round((covered / allEvents.value.length) * 100);
+});
+
+// ---------------------------------------------------------------------------
+// Report Modal State & Computations
+// ---------------------------------------------------------------------------
+const showReportModal = ref(false);
+const isExportingDocx = ref(false);
+
+const printReport = () => {
+  window.print();
+};
+
+const handleExportDocx = async () => {
+  isExportingDocx.value = true;
+  try {
+    const periodLabel =
+      viewMode.value === 'week'
+        ? `Tuần ${weekRangeLabel.value}`
+        : `${currentDayInfo.value.nameVi}, ${currentDayInfo.value.dateNum}/${currentDayInfo.value.monthNum}/${currentDayInfo.value.year}`;
+
+    await exportInterviewReportDocx({
+      periodLabel,
+      companyName: 'Doanh nghiệp tuyển dụng JobMatch VN',
+      reporterName: 'Bộ phận Tuyển dụng (HR)',
+      totalInterviews: totalInterviewsCount.value,
+      totalCandidates: uniqueCandidatesCount.value,
+      totalDuration: totalDurationHours.value,
+      panelCoverage: panelCoveragePercent.value,
+      statusBreakdown: statusBreakdown.value,
+      typeBreakdown: typeBreakdown.value,
+      jobBreakdown: jobBreakdown.value,
+      events: allEvents.value,
+    });
+  } catch (err) {
+    console.error('Lỗi khi xuất file Word:', err);
+  } finally {
+    isExportingDocx.value = false;
+  }
+};
+
+const statusBreakdown = computed(() => {
+  const counts: Record<InterviewStatus, number> = {
+    scheduled: 0,
+    in_progress: 0,
+    completed: 0,
+    cancelled: 0,
+    rescheduled: 0,
+  };
+  for (const evt of allEvents.value) {
+    if (counts[evt.status] !== undefined) {
+      counts[evt.status]++;
+    }
+  }
+  return counts;
+});
+
+const typeBreakdown = computed(() => {
+  const map: Record<string, number> = {};
+  for (const evt of allEvents.value) {
+    const t = evt.interviewType || 'Khác';
+    map[t] = (map[t] || 0) + 1;
+  }
+  return Object.entries(map).map(([type, count]) => ({
+    type,
+    count,
+    percent: allEvents.value.length ? Math.round((count / allEvents.value.length) * 100) : 0,
+  }));
+});
+
+const jobBreakdown = computed(() => {
+  const map: Record<string, number> = {};
+  for (const evt of allEvents.value) {
+    const j = evt.jobTitle || 'Chưa phân loại';
+    map[j] = (map[j] || 0) + 1;
+  }
+  return Object.entries(map)
+    .map(([job, count]) => ({ job, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+});
+
+// ---------------------------------------------------------------------------
+// Fetch Data API & Real-time Sync
+// ---------------------------------------------------------------------------
+let timeIntervalId: number | null = null;
+let pollIntervalId: number | null = null;
+
+async function fetchInterviews(arg?: unknown) {
+  const isSilent = arg === true;
+  if (!isSilent) {
+    isLoading.value = true;
+  }
+  fetchError.value = null;
+  try {
+    const res = await interviewApi.list({
+      startDate: currentWeekBounds.value.startDate,
+      endDate: currentWeekBounds.value.endDate,
+      limit: 100,
+    });
+    if (res.data?.success && res.data?.data) {
+      rawInterviews.value = res.data.data.rows || [];
+    } else {
+      rawInterviews.value = [];
+    }
+  } catch (err: any) {
+    console.error('Lỗi tải danh sách phỏng vấn:', err);
+    if (!isSilent) {
+      fetchError.value = err?.response?.data?.message || 'Không thể tải danh sách phỏng vấn. Vui lòng thử lại sau.';
+      rawInterviews.value = [];
+    }
+  } finally {
+    if (!isSilent) {
+      isLoading.value = false;
+    }
+  }
+}
+
+watch(
+  () => currentWeekBounds.value.mondayKey,
+  () => {
+    fetchInterviews();
+  }
+);
+
+watch(allEvents, (newEvents) => {
+  if (selectedInterview.value) {
+    const found = newEvents.find((e) => e.id === selectedInterview.value?.id);
+    selectedInterview.value = found || null;
+  }
+});
+
+function onWindowFocus() {
+  updateRealTime();
+  fetchInterviews(true);
+}
+
+onMounted(() => {
+  fetchInterviews();
+
+  // Khởi động đồng hồ thời gian thực cập nhật mỗi giây cho vạch chỉ giờ hiện tại (Red Line)
+  updateRealTime();
+  timeIntervalId = window.setInterval(updateRealTime, 1000);
+
+  // Định kỳ 30s đồng bộ ngầm dữ liệu phỏng vấn mới nhất
+  pollIntervalId = window.setInterval(() => {
+    fetchInterviews(true);
+  }, 30000);
+
+  window.addEventListener('focus', onWindowFocus);
+});
+
+onUnmounted(() => {
+  if (timeIntervalId !== null) {
+    window.clearInterval(timeIntervalId);
+  }
+  if (pollIntervalId !== null) {
+    window.clearInterval(pollIntervalId);
+  }
+  window.removeEventListener('focus', onWindowFocus);
+});
+
+// ---------------------------------------------------------------------------
 // Filter Computation
 // ---------------------------------------------------------------------------
+// Ngày hiện tại đang chọn
+const currentDayInfo = computed(() => {
+  return weekDays.value.find((d) => d.dayOfWeek === activeDayOfWeek.value) || weekDays.value[0];
+});
+
 const filteredInterviews = computed(() => {
-  return MOCK_INTERVIEWS.filter((evt) => {
+  return allEvents.value.filter((evt) => {
     // Mode Day: Chỉ hiện các sự kiện của ngày đang chọn
-    if (viewMode.value === 'day' && evt.dayOfWeek !== activeDayOfWeek.value) {
+    if (viewMode.value === 'day' && evt.date !== currentDayInfo.value.fullDate) {
       return false;
     }
 
@@ -529,6 +636,18 @@ const filteredInterviews = computed(() => {
       return false;
     }
 
+    // Interviewer filter
+    if (selectedInterviewer.value !== 'All Interviewers') {
+      const hasInterviewer = evt.interviewers.some((int) => int.name === selectedInterviewer.value);
+      if (!hasInterviewer) return false;
+    }
+
+    // Location filter
+    if (selectedLocation.value !== 'All Locations') {
+      if (selectedLocation.value === 'Google Meet' && !evt.location.toLowerCase().includes('meet')) return false;
+      if (selectedLocation.value === 'Văn phòng' && !evt.location.toLowerCase().includes('văn phòng')) return false;
+    }
+
     return true;
   });
 });
@@ -550,14 +669,157 @@ const clearAllFilters = (): void => {
   };
 };
 
-// Tính toán vị trí top và height của Event card trên lưới theo giờ (9 AM = 0px)
+// Chiều cao 1 tiếng trên timeline: mode week là 108px, mode day tăng lên 120px để khoảng cách giữa các mốc giờ dài và thoáng đãng
+const hourHeight = computed(() => (viewMode.value === 'week' ? 108 : 120));
+
+// Cuộn bảng lịch tới mốc giờ chỉ định (mặc định khung 13h)
+const scrollToHour = (hour: number = 13, smooth: boolean = true) => {
+  if (!timelineScrollContainer.value) return;
+  const container = timelineScrollContainer.value;
+  const targetHourTop = (hour - startHourBase) * hourHeight.value;
+  // Căn chỉnh để mốc giờ và nội dung thông báo nằm ở giữa khung nhìn
+  const scrollTarget = Math.max(0, targetHourTop - container.clientHeight / 2 + hourHeight.value / 2);
+  container.scrollTo({
+    top: scrollTarget,
+    behavior: smooth ? 'smooth' : 'auto',
+  });
+};
+
+// Tự động cuộn đến khung 13h khi danh sách trống (không có lịch phỏng vấn nào)
+watch(
+  [() => filteredInterviews.value.length, () => isLoading.value, () => activeDayOfWeek.value, () => selectedDate.value, () => viewMode.value],
+  () => {
+    if (!isLoading.value && filteredInterviews.value.length === 0) {
+      nextTick(() => {
+        scrollToHour(13, true);
+      });
+    }
+  }
+);
+
+// Đồng bộ buổi phỏng vấn được chọn cho ngày mới (chỉ cập nhật nếu panel chi tiết đang mở, không tự ý bật mở khi đang đóng)
+const syncSelectedInterviewForDay = (dayNum: number) => {
+  if (!selectedInterview.value) return;
+  const targetDay = weekDays.value.find((d) => d.dayOfWeek === dayNum);
+  if (!targetDay) {
+    selectedInterview.value = null;
+    return;
+  }
+  const dayEvents = allEvents.value.filter((e) => e.date === targetDay.fullDate);
+  if (dayEvents.length > 0) {
+    selectedInterview.value = dayEvents[0];
+  } else {
+    selectedInterview.value = null;
+  }
+};
+
+const selectDay = (dayNum: number) => {
+  activeDayOfWeek.value = dayNum;
+  const monday = getMonday(selectedDate.value);
+  const cur = new Date(monday);
+  cur.setDate(monday.getDate() + (dayNum - 1));
+  selectedDate.value = cur;
+  syncSelectedInterviewForDay(dayNum);
+};
+
+const goToToday = () => {
+  const now = new Date();
+  selectedDate.value = now;
+
+  const jsDay = now.getDay();
+  const dayNum = jsDay >= 1 && jsDay <= 5 ? jsDay : 1;
+
+  activeDayOfWeek.value = dayNum;
+  syncSelectedInterviewForDay(dayNum);
+};
+
+const goToPrev = () => {
+  if (viewMode.value === 'week') {
+    const prev = new Date(selectedDate.value);
+    prev.setDate(prev.getDate() - 7);
+    selectedDate.value = prev;
+    syncSelectedInterviewForDay(activeDayOfWeek.value);
+  } else {
+    if (activeDayOfWeek.value > 1) {
+      activeDayOfWeek.value--;
+      const monday = getMonday(selectedDate.value);
+      const cur = new Date(monday);
+      cur.setDate(monday.getDate() + (activeDayOfWeek.value - 1));
+      selectedDate.value = cur;
+      syncSelectedInterviewForDay(activeDayOfWeek.value);
+    } else {
+      const prev = new Date(selectedDate.value);
+      prev.setDate(prev.getDate() - 7);
+      selectedDate.value = prev;
+      activeDayOfWeek.value = 5;
+      syncSelectedInterviewForDay(5);
+    }
+  }
+};
+
+const goToNext = () => {
+  if (viewMode.value === 'week') {
+    const next = new Date(selectedDate.value);
+    next.setDate(next.getDate() + 7);
+    selectedDate.value = next;
+    syncSelectedInterviewForDay(activeDayOfWeek.value);
+  } else {
+    if (activeDayOfWeek.value < 5) {
+      activeDayOfWeek.value++;
+      const monday = getMonday(selectedDate.value);
+      const cur = new Date(monday);
+      cur.setDate(monday.getDate() + (activeDayOfWeek.value - 1));
+      selectedDate.value = cur;
+      syncSelectedInterviewForDay(activeDayOfWeek.value);
+    } else {
+      const next = new Date(selectedDate.value);
+      next.setDate(next.getDate() + 7);
+      selectedDate.value = next;
+      activeDayOfWeek.value = 1;
+      syncSelectedInterviewForDay(1);
+    }
+  }
+};
+
+// Date picker input ref & handlers khi bấm vào icon Calendar
+const datePickerInput = ref<HTMLInputElement | null>(null);
+
+const onDateInputChange = (e: Event) => {
+  const target = e.target as HTMLInputElement;
+  if (!target.value) return;
+  const [y, m, d] = target.value.split('-').map(Number);
+  const picked = new Date(y, m - 1, d);
+  selectedDate.value = picked;
+
+  const jsDay = picked.getDay(); // 0 = CN, 1 = T2, ..., 6 = T7
+  const dayNum = jsDay >= 1 && jsDay <= 5 ? jsDay : 1;
+
+  activeDayOfWeek.value = dayNum;
+  syncSelectedInterviewForDay(dayNum);
+};
+
+const triggerDatePicker = () => {
+  if (datePickerInput.value) {
+    if ('showPicker' in HTMLInputElement.prototype) {
+      try {
+        datePickerInput.value.showPicker();
+      } catch {
+        datePickerInput.value.click();
+      }
+    } else {
+      datePickerInput.value.click();
+    }
+  }
+};
+
+// Tính toán vị trí top và height của Event card trên lưới theo giờ (8:00 = 0px)
 const calculateEventPosition = (startHourDecimal: number, durationHours: number) => {
-  const HOUR_HEIGHT = 72; // Chiều cao 1 tiếng = 72px
-  const top = (startHourDecimal - 9) * HOUR_HEIGHT;
-  const height = durationHours * HOUR_HEIGHT - 6; // Trừ khoảng hở
+  const h = hourHeight.value;
+  const top = (startHourDecimal - startHourBase) * h;
+  const height = durationHours * h - 4; // Trừ khoảng hở giữa các sự kiện
   return {
-    top: `${top + 4}px`,
-    height: `${Math.max(48, height)}px`,
+    top: `${Math.max(0, top + 2)}px`,
+    height: `${Math.max(38, height)}px`,
   };
 };
 
@@ -573,17 +835,14 @@ const selectEvent = (evt: InterviewEvent): void => {
       <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div class="flex items-center gap-3">
-            <h1 class="text-xl font-bold text-gray-900 tracking-tight">Interview Scheduler</h1>
-            <span class="rounded-full bg-primary-50 px-2.5 py-0.5 text-[11px] font-semibold text-primary-700 border border-primary-200">
-              Mockup
-            </span>
+            <h1 class="text-xl font-bold text-gray-900 tracking-tight">Lịch phỏng vấn</h1>
           </div>
           <p class="text-xs text-[#64748b] mt-0.5">
             Lên lịch và điều phối các buổi phỏng vấn thuận tiện với hỗ trợ từ AI.
           </p>
         </div>
 
-        <!-- Search + Notification + Schedule Button -->
+        <!-- Search + Google Calendar Button -->
         <div class="flex flex-wrap items-center gap-2.5">
           <!-- Search box -->
           <div class="relative w-full sm:w-72">
@@ -591,12 +850,9 @@ const selectEvent = (evt: InterviewEvent): void => {
             <input
               v-model="searchQuery"
               type="text"
-              placeholder="Search for candidates, jobs, or interviews..."
+              placeholder="Tìm kiếm ứng viên, vị trí, buổi phỏng vấn..."
               class="h-9 w-full rounded-xl border border-gray-200 bg-gray-50/70 pl-8 pr-12 text-xs text-gray-800 placeholder-gray-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-100"
             />
-            <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
-              ⌘ K
-            </kbd>
           </div>
 
           <!-- Google Calendar Quick Toggle Button -->
@@ -609,28 +865,6 @@ const selectEvent = (evt: InterviewEvent): void => {
             <CalendarIcon class="h-3.5 w-3.5 text-primary-600" />
             <span class="hidden sm:inline">Google Calendar</span>
           </button>
-
-          <!-- Notification Bell with Badge -->
-          <button
-            type="button"
-            class="relative grid h-9 w-9 place-items-center rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition cursor-pointer"
-            title="Thông báo lịch hẹn"
-          >
-            <Bell class="h-4 w-4" />
-            <span class="absolute -top-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-rose-500 text-[10px] font-bold text-white shadow-xs">
-              6
-            </span>
-          </button>
-
-          <!-- + Schedule Interview Button -->
-          <button
-            type="button"
-            class="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#4338ca] hover:bg-[#3730a3] px-3.5 text-xs font-semibold text-white shadow-sm transition cursor-pointer"
-            @click="showScheduleModal = true"
-          >
-            <Plus class="h-4 w-4" />
-            Schedule Interview
-          </button>
         </div>
       </div>
 
@@ -642,9 +876,9 @@ const selectEvent = (evt: InterviewEvent): void => {
 
     <!-- ==================== SUB-TOOLBAR ==================== -->
     <div class="border-b border-[#edf1f7] bg-white px-5 py-2.5 lg:px-8 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
-      <!-- Left side: Filters Button + Date navigation (Nút nằm bên trái) -->
+      <!-- Left side: Filters Button + Date navigation -->
       <div class="flex flex-wrap items-center gap-2 sm:gap-2.5">
-        <!-- Toggle left filter panel button (Đặt ở góc trái) -->
+        <!-- Toggle left filter panel button -->
         <button
           type="button"
           class="inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 font-semibold shadow-2xs transition cursor-pointer"
@@ -657,7 +891,7 @@ const selectEvent = (evt: InterviewEvent): void => {
           @click="filterSidebarOpen = !filterSidebarOpen"
         >
           <SlidersHorizontal class="h-3.5 w-3.5" />
-          <span>Filters</span>
+          <span>Bộ lọc</span>
           <span
             v-if="activeFilterCount > 0"
             class="grid h-4 min-w-4 place-items-center rounded-full bg-primary-600 px-1 text-[10px] font-bold text-white leading-none"
@@ -668,35 +902,69 @@ const selectEvent = (evt: InterviewEvent): void => {
 
         <div class="h-4 w-px bg-gray-200 hidden sm:block"></div>
 
+        <!-- Today Button -->
         <button
           type="button"
           class="h-8 rounded-lg border border-gray-200 bg-white px-3 font-semibold text-gray-700 hover:bg-gray-50 shadow-2xs transition cursor-pointer"
-          @click="activeDayOfWeek = 1"
+          title="Về ngày hiện tại"
+          @click="goToToday"
         >
-          Today
+          Hôm nay
+        </button>
+
+        <!-- Refresh Data Button -->
+        <button
+          type="button"
+          class="grid h-8 w-8 place-items-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 shadow-2xs transition cursor-pointer"
+          title="Tải lại lịch phỏng vấn"
+          :disabled="isLoading"
+          @click="fetchInterviews"
+        >
+          <RefreshCw class="h-3.5 w-3.5" :class="{ 'animate-spin': isLoading }" />
         </button>
 
         <div class="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 shadow-2xs">
           <button
             type="button"
             class="grid h-7 w-7 place-items-center rounded text-gray-600 hover:bg-gray-100 transition cursor-pointer"
-            title="Tuần trước"
+            :title="viewMode === 'day' ? 'Ngày trước' : 'Tuần trước'"
+            @click="goToPrev"
           >
             <ChevronLeft class="h-3.5 w-3.5" />
           </button>
           <button
             type="button"
             class="grid h-7 w-7 place-items-center rounded text-gray-600 hover:bg-gray-100 transition cursor-pointer"
-            title="Tuần tiếp theo"
+            :title="viewMode === 'day' ? 'Ngày tiếp theo' : 'Tuần tiếp theo'"
+            @click="goToNext"
           >
             <ChevronRight class="h-3.5 w-3.5" />
           </button>
         </div>
 
-        <div class="flex items-center gap-2 px-1 font-semibold text-gray-800">
-          <span v-if="viewMode === 'week'">May 12 – May 16, 2024</span>
-          <span v-else>Monday, May 12, 2024</span>
-          <CalendarIcon class="h-3.5 w-3.5 text-gray-400" />
+        <div class="flex items-center gap-1.5 px-1 font-semibold text-gray-800">
+          <span v-if="viewMode === 'week'">{{ weekRangeLabel }}</span>
+          <span v-else>{{ currentDayInfo.nameVi }}, {{ currentDayInfo.dateNum }} Tháng {{ currentDayInfo.monthNum }}, {{ currentDayInfo.year }}</span>
+          
+          <!-- Icon Calendar có thể bấm để đổi ngày -->
+          <div class="relative inline-flex items-center">
+            <button
+              type="button"
+              class="grid h-7 w-7 place-items-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-[#4338ca] transition cursor-pointer"
+              title="Bấm để chọn ngày khác"
+              @click="triggerDatePicker"
+            >
+              <CalendarIcon class="h-4 w-4" />
+            </button>
+            <input
+              ref="datePickerInput"
+              type="date"
+              :value="currentDayInfo.fullDate"
+              class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              title="Bấm để chọn ngày khác"
+              @change="onDateInputChange"
+            />
+          </div>
         </div>
 
         <div class="relative ml-2 hidden sm:block">
@@ -704,13 +972,13 @@ const selectEvent = (evt: InterviewEvent): void => {
             type="button"
             class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 text-xs text-gray-600 hover:bg-gray-50 transition cursor-pointer"
           >
-            <span>(GMT+07:00) ICT</span>
+            <span>(GMT+07:00) Giờ VN</span>
             <ChevronDown class="h-3 w-3 text-gray-400" />
           </button>
         </div>
       </div>
 
-      <!-- Right side: Mode Switch (Day / Week - Không cần Agenda) -->
+      <!-- Right side: Mode Switch (Ngày / Tuần) -->
       <div class="flex items-center gap-2">
         <div class="inline-flex rounded-lg bg-gray-100 p-1 font-semibold text-gray-600">
           <button
@@ -719,7 +987,7 @@ const selectEvent = (evt: InterviewEvent): void => {
             :class="viewMode === 'day' ? 'bg-white text-gray-900 shadow-xs' : 'hover:text-gray-900'"
             @click="viewMode = 'day'"
           >
-            Day
+            Ngày
           </button>
           <button
             type="button"
@@ -727,7 +995,7 @@ const selectEvent = (evt: InterviewEvent): void => {
             :class="viewMode === 'week' ? 'bg-white text-gray-900 shadow-xs' : 'hover:text-gray-900'"
             @click="viewMode = 'week'"
           >
-            Week
+            Tuần
           </button>
         </div>
       </div>
@@ -735,7 +1003,7 @@ const selectEvent = (evt: InterviewEvent): void => {
 
     <!-- ==================== MAIN CONTENT BODY ==================== -->
     <div class="flex-1 min-h-0 flex overflow-hidden relative">
-      <!-- Backdrop mờ nhẹ khi mở Filter (click ra ngoài để đóng, đè lên phần interview) -->
+      <!-- Backdrop mờ nhẹ khi mở Filter -->
       <Transition name="fade-fast">
         <div
           v-if="filterSidebarOpen"
@@ -744,7 +1012,7 @@ const selectEvent = (evt: InterviewEvent): void => {
         />
       </Transition>
 
-      <!-- 1. LEFT FILTER OVERLAY DRAWER (Đè lên phần interview, không đẩy grid) -->
+      <!-- 1. LEFT FILTER OVERLAY DRAWER -->
       <Transition name="slide-left">
         <aside
           v-if="filterSidebarOpen"
@@ -757,7 +1025,7 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <div class="grid h-7 w-7 place-items-center rounded-lg bg-gray-100 text-gray-700">
                   <SlidersHorizontal class="h-3.5 w-3.5" />
                 </div>
-                <h3 class="font-bold text-gray-900 text-sm">Filters</h3>
+                <h3 class="font-bold text-gray-900 text-sm">Bộ lọc tìm kiếm</h3>
                 <span
                   v-if="activeFilterCount > 0"
                   class="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-bold text-primary-700 border border-primary-200"
@@ -773,7 +1041,7 @@ const selectEvent = (evt: InterviewEvent): void => {
                   class="text-[11px] font-semibold text-primary-600 hover:text-primary-700 underline cursor-pointer"
                   @click="clearAllFilters"
                 >
-                  Clear all
+                  Xóa tất cả
                 </button>
                 <button
                   type="button"
@@ -786,139 +1054,139 @@ const selectEvent = (evt: InterviewEvent): void => {
               </div>
             </div>
 
-        <!-- Filter: Interview Type -->
-        <div class="space-y-1.5">
-          <label class="font-semibold text-gray-700">Interview Type</label>
-          <div class="relative">
-            <select
-              v-model="selectedType"
-              class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2 pr-8 text-xs text-gray-800 outline-none focus:border-primary-500 transition cursor-pointer"
-            >
-              <option value="All Types">All Types</option>
-              <option value="Technical Interview">Technical Interview</option>
-              <option value="Coding Interview">Coding Interview</option>
-              <option value="System Design">System Design</option>
-              <option value="HR Interview">HR Interview</option>
-              <option value="Panel Interview">Panel Interview</option>
-            </select>
-            <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-          </div>
-        </div>
-
-        <!-- Filter: Job -->
-        <div class="space-y-1.5">
-          <label class="font-semibold text-gray-700">Job</label>
-          <div class="relative">
-            <select
-              v-model="selectedJob"
-              class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2 pr-8 text-xs text-gray-800 outline-none focus:border-primary-500 transition cursor-pointer"
-            >
-              <option value="All Jobs">All Jobs</option>
-              <option value="Frontend Developer">Frontend Developer</option>
-              <option value="Backend Developer">Backend Developer</option>
-              <option value="Software Engineer">Software Engineer</option>
-              <option value="Full Stack Developer">Full Stack Developer</option>
-              <option value="Product Designer">Product Designer</option>
-              <option value="Product Owner">Product Owner</option>
-            </select>
-            <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-          </div>
-        </div>
-
-        <!-- Filter: Interviewers -->
-        <div class="space-y-1.5">
-          <label class="font-semibold text-gray-700">Interviewers</label>
-          <div class="relative">
-            <select
-              v-model="selectedInterviewer"
-              class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2 pr-8 text-xs text-gray-800 outline-none focus:border-primary-500 transition cursor-pointer"
-            >
-              <option value="All Interviewers">All Interviewers</option>
-              <option v-for="int in MOCK_INTERVIEWERS" :key="int.id" :value="int.name">
-                {{ int.name }}
-              </option>
-            </select>
-            <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-          </div>
-        </div>
-
-        <!-- Filter: Location -->
-        <div class="space-y-1.5">
-          <label class="font-semibold text-gray-700">Location</label>
-          <div class="relative">
-            <select
-              v-model="selectedLocation"
-              class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2 pr-8 text-xs text-gray-800 outline-none focus:border-primary-500 transition cursor-pointer"
-            >
-              <option value="All Locations">All Locations</option>
-              <option value="Google Meet">Google Meet</option>
-              <option value="Onsite Office">Onsite Office</option>
-            </select>
-            <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-          </div>
-        </div>
-
-        <!-- Filter: Status -->
-        <div class="space-y-2 pt-2 border-t border-gray-100">
-          <label class="font-semibold text-gray-700 block mb-1">Status</label>
-          <div
-            v-for="(meta, key) in STATUS_META"
-            :key="key"
-            class="flex items-center justify-between text-xs cursor-pointer select-none"
-            @click="statusFilters[key] = !statusFilters[key]"
-          >
-            <div class="flex items-center gap-2">
-              <span class="h-2 w-2 rounded-full" :class="meta.dot"></span>
-              <span class="text-gray-700">{{ meta.label }}</span>
+            <!-- Filter: Interview Type -->
+            <div class="space-y-1.5">
+              <label class="font-semibold text-gray-700">Loại hình phỏng vấn</label>
+              <div class="relative">
+                <select
+                  v-model="selectedType"
+                  class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2 pr-8 text-xs text-gray-800 outline-none focus:border-primary-500 transition cursor-pointer"
+                >
+                  <option value="All Types">Tất cả loại hình</option>
+                  <option value="Phỏng vấn Kỹ thuật">Phỏng vấn Kỹ thuật</option>
+                  <option value="Phỏng vấn Lập trình">Phỏng vấn Lập trình</option>
+                  <option value="Thiết kế Hệ thống">Thiết kế Hệ thống</option>
+                  <option value="Phỏng vấn Nhân sự">Phỏng vấn Nhân sự</option>
+                  <option value="Phỏng vấn Hội đồng">Phỏng vấn Hội đồng</option>
+                </select>
+                <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              </div>
             </div>
-            <input
-              type="checkbox"
-              :checked="statusFilters[key]"
-              class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer"
-              @click.stop
-              @change="statusFilters[key] = ($event.target as HTMLInputElement).checked"
-            />
-          </div>
-        </div>
 
-        <!-- Filter: Availability -->
-        <div class="space-y-2 pt-2 border-t border-gray-100">
-          <label class="font-semibold text-gray-700 block">Availability</label>
-          <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer select-none">
-            <input
-              v-model="showOnlyAvailable"
-              type="checkbox"
-              class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer"
-            />
-            <span>Show only available slots</span>
-          </label>
-        </div>
+            <!-- Filter: Job -->
+            <div class="space-y-1.5">
+              <label class="font-semibold text-gray-700">Vị trí ứng tuyển</label>
+              <div class="relative">
+                <select
+                  v-model="selectedJob"
+                  class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2 pr-8 text-xs text-gray-800 outline-none focus:border-primary-500 transition cursor-pointer"
+                >
+                  <option value="All Jobs">Tất cả vị trí</option>
+                  <option v-for="job in availableJobs" :key="job" :value="job">
+                    {{ job }}
+                  </option>
+                </select>
+                <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              </div>
+            </div>
 
-        <!-- AI Promo Card -->
-        <div class="mt-auto rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-center">
-          <div class="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-white text-primary-600 shadow-xs mb-2.5">
-            <CalendarIcon class="h-5 w-5" />
+            <!-- Filter: Interviewers -->
+            <div class="space-y-1.5">
+              <label class="font-semibold text-gray-700">Người phỏng vấn</label>
+              <div class="relative">
+                <select
+                  v-model="selectedInterviewer"
+                  class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2 pr-8 text-xs text-gray-800 outline-none focus:border-primary-500 transition cursor-pointer"
+                >
+                  <option value="All Interviewers">Tất cả người phỏng vấn</option>
+                  <option v-for="int in availableInterviewers" :key="int.id" :value="int.name">
+                    {{ int.name }}
+                  </option>
+                </select>
+                <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              </div>
+            </div>
+
+            <!-- Filter: Location -->
+            <div class="space-y-1.5">
+              <label class="font-semibold text-gray-700">Địa điểm / Hình thức</label>
+              <div class="relative">
+                <select
+                  v-model="selectedLocation"
+                  class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2 pr-8 text-xs text-gray-800 outline-none focus:border-primary-500 transition cursor-pointer"
+                >
+                  <option value="All Locations">Tất cả hình thức</option>
+                  <option value="Google Meet">Google Meet (Trực tuyến)</option>
+                  <option value="Văn phòng">Văn phòng (Trực tiếp)</option>
+                </select>
+                <ChevronDown class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              </div>
+            </div>
+
+            <!-- Filter: Status -->
+            <div class="space-y-2 pt-2 border-t border-gray-100">
+              <label class="font-semibold text-gray-700 block mb-1">Trạng thái</label>
+              <div
+                v-for="(meta, key) in STATUS_META"
+                :key="key"
+                class="flex items-center justify-between text-xs cursor-pointer select-none"
+                @click="statusFilters[key] = !statusFilters[key]"
+              >
+                <div class="flex items-center gap-2">
+                  <span class="h-2 w-2 rounded-full" :class="meta.dot"></span>
+                  <span class="text-gray-700">{{ meta.label }}</span>
+                </div>
+                <input
+                  type="checkbox"
+                  :checked="statusFilters[key]"
+                  class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer"
+                  @click.stop
+                  @change="statusFilters[key] = ($event.target as HTMLInputElement).checked"
+                />
+              </div>
+            </div>
+
+            <!-- Filter: Availability -->
+            <div class="space-y-2 pt-2 border-t border-gray-100">
+              <label class="font-semibold text-gray-700 block">Khung giờ trống</label>
+              <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer select-none">
+                <input
+                  v-model="showOnlyAvailable"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer"
+                />
+                <span>Chỉ hiển thị các khung giờ trống</span>
+              </label>
+            </div>
+
+            <!-- AI Promo Card -->
+            <div class="mt-auto rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-center">
+              <div class="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-white text-primary-600 shadow-xs mb-2.5">
+                <CalendarIcon class="h-5 w-5" />
+              </div>
+              <h4 class="text-xs font-bold text-gray-900 leading-snug">Tự động hóa lịch phỏng vấn</h4>
+              <p class="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                Để AI tự động tìm thời gian phỏng vấn phù hợp và tránh xung đột lịch trình.
+              </p>
+              <button
+                type="button"
+                class="mt-3 w-full rounded-lg bg-white border border-gray-200 py-1.5 text-xs font-semibold text-gray-800 shadow-2xs hover:bg-gray-50 transition cursor-pointer"
+              >
+                Tìm hiểu thêm
+              </button>
+            </div>
           </div>
-          <h4 class="text-xs font-bold text-gray-900 leading-snug">Automate your interview scheduling</h4>
-          <p class="text-[11px] text-gray-500 mt-1 leading-relaxed">
-            Let AI find the best time for your interviews without calendar conflicts.
-          </p>
-          <button
-            type="button"
-            class="mt-3 w-full rounded-lg bg-white border border-gray-200 py-1.5 text-xs font-semibold text-gray-800 shadow-2xs hover:bg-gray-50 transition cursor-pointer"
-          >
-            Learn More
-          </button>
-        </div>
-      </div>
-    </aside>
-  </Transition>
+        </aside>
+      </Transition>
 
       <!-- 2. CENTER SCHEDULE GRID -->
       <section class="flex-1 min-h-0 flex flex-col min-w-0 bg-white overflow-hidden">
         <!-- GRID TIME SLOTS & EVENT CARDS SCROLLABLE CONTAINER -->
-        <div class="relative flex-1 min-h-0 overflow-y-auto overflow-x-auto scrollbar-thin">
-          <!-- GRID HEADER ROW: Sticky top-0 để giữ cố định dòng đầu (thứ trong tuần ở mode week) khi cuộn timeline -->
+        <div
+          ref="timelineScrollContainer"
+          class="relative flex-1 min-h-0 overflow-y-auto overflow-x-auto scrollbar-thin"
+        >
+          <!-- GRID HEADER ROW: Sticky top-0 -->
           <div
             class="sticky top-0 z-20 border-b border-[#edf1f7] bg-[#fcfdfe] grid shadow-2xs"
             :style="{
@@ -931,63 +1199,124 @@ const selectEvent = (evt: InterviewEvent): void => {
               GMT+7
             </div>
 
-            <!-- A. Khi ở MODE WEEK: Hàng đầu hiển thị các thứ & ngày trong tuần (Cố định khi cuộn timeline) -->
+            <!-- A. Khi ở MODE WEEK: Hàng đầu hiển thị các thứ & ngày trong tuần -->
             <template v-if="viewMode === 'week'">
               <div
                 v-for="d in weekDays"
                 :key="d.dayOfWeek"
-                class="h-14 border-r border-[#edf1f7] px-3 flex flex-col justify-center transition bg-[#fcfdfe]"
-                :class="d.dayOfWeek === 1 ? 'bg-blue-50/50' : ''"
+                class="h-14 border-r border-[#edf1f7] px-3 flex flex-col justify-center transition bg-[#fcfdfe] cursor-pointer hover:bg-indigo-50/40"
+                :class="d.dayOfWeek === activeDayOfWeek ? 'bg-indigo-50/50' : ''"
+                :title="`Xem ${d.nameVi} (${d.dateNum}/${d.monthNum})`"
+                @click="selectDay(d.dayOfWeek)"
               >
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-bold text-gray-800">{{ d.nameVi }}</span>
                   <span
                     class="grid h-6 w-6 place-items-center rounded-full text-xs font-bold"
-                    :class="d.dayOfWeek === 1 ? 'bg-[#4338ca] text-white shadow-xs' : 'text-gray-600 bg-gray-100'"
+                    :class="d.fullDate === todayDateStr ? 'bg-[#4338ca] text-white shadow-xs' : 'text-gray-600 bg-gray-100'"
                   >
                     {{ d.dateNum }}
                   </span>
                 </div>
-                <span class="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">May 2024</span>
+                <span class="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">Thg {{ d.monthNum }}, {{ d.year }}</span>
               </div>
             </template>
 
-            <!-- B. Khi ở MODE DAY: Hàng đầu người phỏng vấn để trống (đúng theo yêu cầu prompt) -->
+            <!-- B. Khi ở MODE DAY: Hàng đầu hiển thị nhãn ngày & bộ nút chọn ngày nhanh Thứ 2 -> Thứ 6 -->
             <template v-else>
-              <div class="h-14 border-r border-[#edf1f7] px-4 flex items-center justify-between bg-white">
-                <!-- Để trống hàng đầu người phỏng vấn, chỉ hiển thị nhãn ngày sạch sẽ -->
-                <div class="text-xs font-semibold text-gray-500">
-                  Lịch trình ngày: <span class="font-bold text-gray-900">Thứ Hai, 12 Tháng 5, 2024</span>
+              <div class="h-14 border-r border-[#edf1f7] px-4 flex items-center justify-between bg-[#fcfdfe] gap-3">
+                <!-- Thông tin ngày đang chọn -->
+                <div class="flex items-center gap-3 min-w-0">
+                  <div class="text-xs font-semibold text-gray-500 truncate">
+                    Lịch trình ngày:
+                    <span class="font-bold text-gray-900 ml-1">
+                      {{ currentDayInfo.nameVi }}, {{ currentDayInfo.dateNum }} Tháng {{ currentDayInfo.monthNum }}, {{ currentDayInfo.year }}
+                    </span>
+                  </div>
+                  <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-semibold shrink-0">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                    <span>{{ filteredInterviews.length }} buổi phỏng vấn</span>
+                  </div>
                 </div>
-                <div class="flex items-center gap-1">
-                  <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-                  <span class="text-[11px] text-gray-500">4 buổi phỏng vấn được xếp</span>
+
+                <!-- Dãy nút chọn ngày nhanh Thứ 2 - Thứ 6 -->
+                <div class="flex items-center gap-1 bg-gray-100 p-1 rounded-xl shrink-0">
+                  <button
+                    v-for="d in weekDays"
+                    :key="d.dayOfWeek"
+                    type="button"
+                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                    :class="activeDayOfWeek === d.dayOfWeek
+                      ? 'bg-white text-primary-700 shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-white/60'"
+                    :title="`Xem ${d.nameVi} (${d.dateNum}/${d.monthNum})`"
+                    @click="selectDay(d.dayOfWeek)"
+                  >
+                    <span>{{ d.nameVi }}</span>
+                    <span
+                      class="h-4.5 min-w-4.5 px-1 grid place-items-center rounded-full text-[10px] font-bold"
+                      :class="d.fullDate === todayDateStr ? 'bg-[#4338ca] text-white' : 'bg-gray-200 text-gray-600'"
+                    >
+                      {{ d.dateNum }}
+                    </span>
+                  </button>
                 </div>
               </div>
             </template>
           </div>
 
-          <!-- TIMELINE GRID: Các khung giờ và event cards cuộn bên dưới hàng đầu sticky -->
+          <!-- TIMELINE GRID: Các khung giờ và event cards -->
           <div
             class="relative grid"
             :style="{
               gridTemplateColumns: viewMode === 'week' ? '64px repeat(5, minmax(130px, 1fr))' : '64px 1fr',
               minWidth: viewMode === 'week' ? '714px' : 'auto',
-              minHeight: `${timeSlots.length * 72}px`,
+              minHeight: `${timeSlots.length * hourHeight}px`,
             }"
           >
-            <!-- 1. Cột hiển thị giờ bên trái (9 AM - 6 PM) -->
+            <!-- Loading spinner overlay -->
+            <div
+              v-if="isLoading"
+              class="absolute inset-0 bg-white/70 backdrop-blur-[1px] flex items-center justify-center z-30 pointer-events-none"
+            >
+              <div class="flex items-center gap-2 px-4 py-2 rounded-xl bg-white shadow-md border border-gray-100 text-xs font-semibold text-gray-700">
+                <Loader2 class="h-4 w-4 animate-spin text-primary-600" />
+                <span>Đang đồng bộ dữ liệu phỏng vấn...</span>
+              </div>
+            </div>
+
+            <!-- Empty state overlay khi không có phỏng vấn nào (nằm ở khoảng giữa khung 13h - 14h) -->
+            <div
+              v-if="!isLoading && filteredInterviews.length === 0"
+              class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center pointer-events-none z-10"
+            >
+              <div class="rounded-2xl border border-gray-200/90 bg-white/95 backdrop-blur-sm p-6 shadow-md flex flex-col items-center max-w-sm pointer-events-auto">
+                <div class="h-12 w-12 rounded-2xl bg-indigo-50 text-[#4338ca] flex items-center justify-center mb-3 shadow-2xs">
+                  <CalendarIcon class="h-6 w-6" />
+                </div>
+                <p class="text-sm font-bold text-gray-800">Chưa có lịch phỏng vấn nào</p>
+                <p class="text-xs text-gray-500 mt-1 leading-relaxed">
+                  {{ viewMode === 'day' ? `Không có lịch phỏng vấn nào vào ${currentDayInfo.nameVi} (${currentDayInfo.dateNum}/${currentDayInfo.monthNum})` : 'Không có lịch phỏng vấn nào trong tuần này' }}
+                </p>
+                <p v-if="activeFilterCount > 0" class="text-[11px] text-primary-600 mt-2 font-medium">
+                  (Đang áp dụng {{ activeFilterCount }} bộ lọc — bạn có thể xóa bộ lọc để xem toàn bộ)
+                </p>
+              </div>
+            </div>
+
+            <!-- 1. Cột hiển thị giờ bên trái (08:00 - 19:00) -->
             <div class="border-r border-[#edf1f7] bg-white select-none">
               <div
                 v-for="time in timeSlots"
                 :key="time"
-                class="h-[72px] border-b border-[#edf1f7] pr-2 pt-2 text-right text-[11px] font-semibold text-gray-400"
+                class="border-b border-[#edf1f7] pr-2 pt-2 text-right text-[11px] font-semibold text-gray-400"
+                :style="{ height: `${hourHeight}px` }"
               >
                 {{ time }}
               </div>
             </div>
 
-            <!-- 2. Các cột ngày trong lịch -->
+            <!-- 2. Các cột ngày trong lịch (Mode Week) -->
             <template v-if="viewMode === 'week'">
               <div
                 v-for="d in weekDays"
@@ -998,54 +1327,70 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <div
                   v-for="time in timeSlots"
                   :key="time"
-                  class="h-[72px] border-b border-[#f1f5f9]"
+                  class="border-b border-[#f1f5f9]"
+                  :style="{ height: `${hourHeight}px` }"
                 ></div>
 
-                <!-- Red Current Time Line (hiển thị ở Thứ 2 lúc 2:30 PM = 14.5) -->
+                <!-- Red Current Time Line nếu là hôm nay -->
                 <div
-                  v-if="d.dayOfWeek === 1"
+                  v-if="d.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 19"
                   class="absolute left-0 right-0 z-20 pointer-events-none flex items-center"
-                  style="top: calc((14.5 - 9) * 72px);"
+                  :style="{ top: `calc((${nowTimeInfo.decimalHour} - ${startHourBase}) * ${hourHeight}px)` }"
                 >
                   <span class="absolute -left-1.5 -top-2 rounded bg-rose-600 px-1 py-0.5 text-[9px] font-bold text-white shadow-xs">
-                    2:30 PM
+                    {{ nowTimeInfo.timeString }}
                   </span>
                   <div class="w-full border-t-2 border-rose-500"></div>
                 </div>
 
                 <!-- Event Cards của ngày này -->
                 <div
-                  v-for="evt in filteredInterviews.filter(e => e.dayOfWeek === d.dayOfWeek)"
+                  v-for="evt in filteredInterviews.filter(e => e.date === d.fullDate)"
                   :key="evt.id"
-                  class="absolute left-1.5 right-1.5 z-10 rounded-xl p-2.5 border text-left cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.01]"
+                  class="absolute left-1.5 right-1.5 z-10 rounded-xl border text-left cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.01] overflow-hidden"
                   :class="[
                     THEME_STYLES[evt.colorTheme].bg,
                     THEME_STYLES[evt.colorTheme].border,
-                    selectedInterview?.id === evt.id ? 'ring-2 ring-primary-500 shadow-sm' : ''
+                    selectedInterview?.id === evt.id ? 'ring-2 ring-primary-500 shadow-sm' : '',
+                    evt.durationHours <= 0.55 ? 'p-1.5 sm:p-2' : 'p-2.5'
                   ]"
                   :style="calculateEventPosition(evt.startHourDecimal, evt.durationHours)"
                   @click="selectEvent(evt)"
                 >
                   <!-- Time & Calendar Icon -->
                   <div class="flex items-center justify-between text-[10px] font-medium" :class="THEME_STYLES[evt.colorTheme].subText">
-                    <span>{{ evt.startTime }} - {{ evt.endTime }}</span>
-                    <CalendarIcon class="h-3 w-3 opacity-60" />
+                    <span class="truncate">{{ evt.startTime }} - {{ evt.endTime }}</span>
+                    <CalendarIcon class="h-3 w-3 opacity-60 shrink-0" />
                   </div>
 
-                  <!-- Candidate Name -->
-                  <h4 class="text-xs font-bold truncate mt-1" :class="THEME_STYLES[evt.colorTheme].text">
-                    {{ evt.candidateName }}
-                  </h4>
+                  <!-- Candidate Avatar & Name -->
+                  <div class="flex items-center gap-1.5 mt-0.5 min-w-0">
+                    <img
+                      v-if="evt.candidateAvatar"
+                      :src="evt.candidateAvatar"
+                      :alt="evt.candidateName"
+                      class="h-4 w-4 rounded-full object-cover shrink-0 ring-1 ring-black/5"
+                    />
+                    <div
+                      v-else
+                      class="h-4 w-4 shrink-0 rounded-full bg-primary-100 text-[8.5px] font-bold text-primary-700 flex items-center justify-center select-none"
+                    >
+                      {{ evt.candidateName.charAt(0) }}
+                    </div>
+                    <h4 class="text-xs font-bold truncate" :class="THEME_STYLES[evt.colorTheme].text">
+                      {{ evt.candidateName }}
+                    </h4>
+                  </div>
 
-                  <!-- Job Title -->
-                  <p class="text-[10px] text-gray-500 truncate">
-                    {{ evt.jobTitle }}
-                  </p>
-
-                  <!-- Bullet + Type -->
-                  <p class="text-[10px] font-medium truncate mt-0.5" :class="THEME_STYLES[evt.colorTheme].subText">
-                    • {{ evt.interviewType }}
-                  </p>
+                  <!-- Job Title & Type: chỉ hiện nếu thời lượng đủ dài (> 35 phút) -->
+                  <template v-if="evt.durationHours > 0.58">
+                    <p class="text-[10px] text-gray-500 truncate mt-0.5">
+                      {{ evt.jobTitle }}
+                    </p>
+                    <p class="text-[10px] font-medium truncate mt-0.5" :class="THEME_STYLES[evt.colorTheme].subText">
+                      • {{ evt.interviewType }}
+                    </p>
+                  </template>
                 </div>
               </div>
             </template>
@@ -1057,16 +1402,18 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <div
                   v-for="time in timeSlots"
                   :key="time"
-                  class="h-[72px] border-b border-[#f1f5f9]"
+                  class="border-b border-[#f1f5f9]"
+                  :style="{ height: `${hourHeight}px` }"
                 ></div>
 
-                <!-- Red Current Time Line -->
+                <!-- Red Current Time Line (chỉ hiển thị khi đang xem ngày hôm nay) -->
                 <div
+                  v-if="currentDayInfo.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 19"
                   class="absolute left-0 right-0 z-20 pointer-events-none flex items-center"
-                  style="top: calc((14.5 - 9) * 72px);"
+                  :style="{ top: `calc((${nowTimeInfo.decimalHour} - ${startHourBase}) * ${hourHeight}px)` }"
                 >
                   <span class="absolute -left-1.5 -top-2 rounded bg-rose-600 px-1 py-0.5 text-[9px] font-bold text-white shadow-xs">
-                    2:30 PM
+                    {{ nowTimeInfo.timeString }}
                   </span>
                   <div class="w-full border-t-2 border-rose-500"></div>
                 </div>
@@ -1075,44 +1422,100 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <div
                   v-for="evt in filteredInterviews"
                   :key="evt.id"
-                  class="absolute left-3 right-3 sm:left-6 sm:right-6 z-10 rounded-xl p-3 border text-left cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.01]"
+                  class="absolute left-3 right-3 sm:left-6 sm:right-6 z-10 rounded-xl border text-left cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.005] overflow-hidden"
                   :class="[
                     THEME_STYLES[evt.colorTheme].bg,
                     THEME_STYLES[evt.colorTheme].border,
-                    selectedInterview?.id === evt.id ? 'ring-2 ring-primary-500 shadow-sm' : ''
+                    selectedInterview?.id === evt.id ? 'ring-2 ring-primary-500 shadow-sm' : '',
+                    evt.durationHours <= 0.55 ? 'p-2 sm:p-2.5' : 'p-3.5 sm:p-4'
                   ]"
                   :style="calculateEventPosition(evt.startHourDecimal, evt.durationHours)"
                   @click="selectEvent(evt)"
                 >
-                  <div class="flex items-center justify-between text-xs font-medium" :class="THEME_STYLES[evt.colorTheme].subText">
-                    <span class="font-bold">{{ evt.startTime }} - {{ evt.endTime }} ({{ evt.durationHours }}h)</span>
-                    <span class="inline-flex items-center gap-1 rounded bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-gray-700">
-                      {{ evt.location }}
-                    </span>
-                  </div>
+                  <!-- Layout compact khi thời lượng <= 30 phút (1 hàng ngang) -->
+                  <template v-if="evt.durationHours <= 0.55">
+                    <div class="flex items-center justify-between gap-3 h-full">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <img
+                          v-if="evt.candidateAvatar"
+                          :src="evt.candidateAvatar"
+                          :alt="evt.candidateName"
+                          class="h-5 w-5 rounded-full object-cover shrink-0 ring-1 ring-black/5"
+                        />
+                        <div
+                          v-else
+                          class="h-5 w-5 shrink-0 rounded-full bg-primary-100 text-[10px] font-bold text-primary-700 flex items-center justify-center select-none"
+                        >
+                          {{ evt.candidateName.charAt(0) }}
+                        </div>
+                        <h4 class="text-sm font-bold truncate" :class="THEME_STYLES[evt.colorTheme].text">
+                          {{ evt.candidateName }}
+                        </h4>
+                        <span class="text-xs text-gray-500 truncate hidden sm:inline">
+                          • {{ evt.jobTitle }}
+                        </span>
+                        <span class="inline-flex items-center rounded-full bg-white/70 px-1.5 py-0.2 text-[10px] font-semibold text-gray-600 hidden md:inline">
+                          {{ evt.interviewType }}
+                        </span>
+                      </div>
 
-                  <div class="mt-1 flex items-center justify-between">
-                    <div>
-                      <h4 class="text-sm font-bold" :class="THEME_STYLES[evt.colorTheme].text">
-                        {{ evt.candidateName }}
-                      </h4>
-                      <p class="text-xs text-gray-600">
-                        {{ evt.jobTitle }} • <span class="font-semibold">{{ evt.interviewType }}</span>
-                      </p>
+                      <div class="flex items-center gap-2.5 shrink-0 text-xs font-medium" :class="THEME_STYLES[evt.colorTheme].subText">
+                        <span class="font-bold text-[11px] sm:text-xs">{{ evt.startTime }} - {{ evt.endTime }}</span>
+                        <span class="hidden sm:inline-flex items-center gap-1 rounded bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-gray-700">
+                          {{ evt.location }}
+                        </span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- Layout đầy đủ khi thời lượng >= 45 phút -->
+                  <template v-else>
+                    <div class="flex items-center justify-between text-xs font-medium" :class="THEME_STYLES[evt.colorTheme].subText">
+                      <span class="font-bold">{{ evt.startTime }} - {{ evt.endTime }} ({{ Math.round(evt.durationHours * 60) }} phút)</span>
+                      <span class="inline-flex items-center gap-1 rounded bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-gray-700">
+                        {{ evt.location }}
+                      </span>
                     </div>
 
-                    <!-- Interviewers avatar stack -->
-                    <div class="flex -space-x-1.5 overflow-hidden">
-                      <img
-                        v-for="int in evt.interviewers"
-                        :key="int.id"
-                        :src="int.avatar"
-                        :alt="int.name"
-                        :title="int.name"
-                        class="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover"
-                      />
+                    <div class="mt-1.5 flex items-center justify-between">
+                      <div>
+                        <div class="flex items-center gap-2 min-w-0">
+                          <img
+                            v-if="evt.candidateAvatar"
+                            :src="evt.candidateAvatar"
+                            :alt="evt.candidateName"
+                            class="h-6 w-6 rounded-full object-cover shrink-0 ring-1 ring-black/5"
+                          />
+                          <div
+                            v-else
+                            class="h-6 w-6 shrink-0 rounded-full bg-primary-100 text-[10.5px] font-bold text-primary-700 flex items-center justify-center select-none"
+                          >
+                            {{ evt.candidateName.charAt(0) }}
+                          </div>
+                          <h4 class="text-sm font-bold truncate" :class="THEME_STYLES[evt.colorTheme].text">
+                            {{ evt.candidateName }}
+                          </h4>
+                        </div>
+                        <p class="text-xs text-gray-600 mt-1">
+                          {{ evt.jobTitle }} • <span class="font-semibold">{{ evt.interviewType }}</span>
+                        </p>
+                      </div>
+
+                      <div class="flex items-center gap-2.5">
+                        <!-- Interviewers avatar stack -->
+                        <div class="flex -space-x-1.5 overflow-hidden">
+                          <img
+                            v-for="int in evt.interviewers"
+                            :key="int.id"
+                            :src="int.avatar"
+                            :alt="int.name"
+                            :title="int.name"
+                            class="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover"
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  </template>
                 </div>
               </div>
             </template>
@@ -1129,8 +1532,8 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <Video class="h-3.5 w-3.5" />
               </div>
               <div>
-                <span class="font-bold text-gray-900 text-sm">24</span>
-                <span class="text-gray-500 ml-1 text-[11px]">Interviews</span>
+                <span class="font-bold text-gray-900 text-sm">{{ totalInterviewsCount }}</span>
+                <span class="text-gray-500 ml-1 text-[11px]">Buổi phỏng vấn</span>
               </div>
             </div>
 
@@ -1140,8 +1543,8 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <Users class="h-3.5 w-3.5" />
               </div>
               <div>
-                <span class="font-bold text-gray-900 text-sm">18</span>
-                <span class="text-gray-500 ml-1 text-[11px]">Candidates</span>
+                <span class="font-bold text-gray-900 text-sm">{{ uniqueCandidatesCount }}</span>
+                <span class="text-gray-500 ml-1 text-[11px]">Ứng viên</span>
               </div>
             </div>
 
@@ -1151,8 +1554,8 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <Clock class="h-3.5 w-3.5" />
               </div>
               <div>
-                <span class="font-bold text-gray-900 text-sm">5h 30m</span>
-                <span class="text-gray-500 ml-1 text-[11px]">Total Duration</span>
+                <span class="font-bold text-gray-900 text-sm">{{ totalDurationHours }}</span>
+                <span class="text-gray-500 ml-1 text-[11px]">Tổng thời lượng</span>
               </div>
             </div>
 
@@ -1162,24 +1565,21 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <Users class="h-3.5 w-3.5" />
               </div>
               <div>
-                <span class="font-bold text-gray-900 text-sm">85%</span>
-                <span class="text-gray-500 ml-1 text-[11px]">Panel Coverage</span>
+                <span class="font-bold text-gray-900 text-sm">{{ panelCoveragePercent }}%</span>
+                <span class="text-gray-500 ml-1 text-[11px]">Đã phân công PV</span>
               </div>
             </div>
           </div>
 
-          <!-- AI Optimization status & View Report button -->
-          <div class="flex items-center gap-3">
-            <div class="flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-[11px] text-emerald-800">
-              <CheckCircle2 class="h-3.5 w-3.5 text-emerald-600" />
-              <span><strong>AI Optimization:</strong> 3 conflicts resolved</span>
-            </div>
-
+          <!-- Nút Xem báo cáo ở góc phải dưới -->
+          <div class="flex items-center gap-2">
             <button
               type="button"
-              class="rounded-xl border border-gray-200 bg-white px-3 py-1.5 font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 transition cursor-pointer"
+              class="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 hover:text-gray-900 hover:border-gray-300 transition cursor-pointer"
+              @click="showReportModal = true"
             >
-              View Report
+              <BarChart3 class="h-3.5 w-3.5 text-primary-600" />
+              <span>Xem báo cáo</span>
             </button>
           </div>
         </footer>
@@ -1193,216 +1593,470 @@ const selectEvent = (evt: InterviewEvent): void => {
         >
           <div class="w-80 lg:w-96 p-6 flex flex-col justify-between min-h-full">
             <div class="space-y-5">
-          <!-- Header: Title + Close Button -->
-          <div class="flex items-center justify-between pb-3 border-b border-gray-100">
-            <h3 class="font-bold text-gray-900 text-sm">Interview Details</h3>
-            <button
-              type="button"
-              class="grid h-7 w-7 place-items-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition cursor-pointer"
-              title="Đóng chi tiết"
-              @click="selectedInterview = null"
-            >
-              <X class="h-4 w-4" />
-            </button>
-          </div>
-
-          <!-- Status badge -->
-          <div>
-            <span
-              class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border"
-              :class="[STATUS_META[selectedInterview.status].bg, STATUS_META[selectedInterview.status].color]"
-            >
-              <span class="h-1.5 w-1.5 rounded-full" :class="STATUS_META[selectedInterview.status].dot"></span>
-              {{ STATUS_META[selectedInterview.status].label }}
-            </span>
-
-            <h2 class="text-base font-bold text-gray-900 mt-2">
-              {{ selectedInterview.jobTitle }} Interview
-            </h2>
-          </div>
-
-          <!-- Candidate Card with Quick Actions -->
-          <div class="flex items-center justify-between rounded-2xl border border-gray-100 bg-gray-50/70 p-3">
-            <div class="flex items-center gap-3">
-              <img
-                v-if="selectedInterview.candidateAvatar"
-                :src="selectedInterview.candidateAvatar"
-                :alt="selectedInterview.candidateName"
-                class="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow-2xs"
-              />
-              <div v-else class="grid h-10 w-10 place-items-center rounded-full bg-primary-100 font-bold text-primary-700">
-                {{ selectedInterview.candidateName.charAt(0) }}
+              <!-- Header: Title + Close Button -->
+              <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+                <h3 class="font-bold text-gray-900 text-sm">Chi tiết buổi phỏng vấn</h3>
+                <button
+                  type="button"
+                  class="grid h-7 w-7 place-items-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition cursor-pointer"
+                  title="Đóng chi tiết"
+                  @click="selectedInterview = null"
+                >
+                  <X class="h-4 w-4" />
+                </button>
               </div>
+
+              <!-- Status badge -->
               <div>
-                <h4 class="font-bold text-gray-900 text-xs">{{ selectedInterview.candidateName }}</h4>
-                <p class="text-[11px] text-gray-500">{{ selectedInterview.jobTitle }}</p>
+                <span
+                  class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border"
+                  :class="[STATUS_META[selectedInterview.status].bg, STATUS_META[selectedInterview.status].color]"
+                >
+                  <span class="h-1.5 w-1.5 rounded-full" :class="STATUS_META[selectedInterview.status].dot"></span>
+                  {{ STATUS_META[selectedInterview.status].label }}
+                </span>
+
+                <h2 class="text-base font-bold text-gray-900 mt-2">
+                  Phỏng vấn {{ selectedInterview.jobTitle }}
+                </h2>
               </div>
-            </div>
 
-            <!-- Contact action icons -->
-            <div class="flex items-center gap-1 text-gray-400">
-              <a
-                :href="`mailto:${selectedInterview.candidateEmail}`"
-                class="grid h-7 w-7 place-items-center rounded-lg hover:bg-white hover:text-primary-600 transition shadow-2xs"
-                title="Gửi Email"
-              >
-                <Mail class="h-3.5 w-3.5" />
-              </a>
-              <a
-                v-if="selectedInterview.candidatePhone"
-                :href="`tel:${selectedInterview.candidatePhone}`"
-                class="grid h-7 w-7 place-items-center rounded-lg hover:bg-white hover:text-emerald-600 transition shadow-2xs"
-                title="Gọi điện"
-              >
-                <Phone class="h-3.5 w-3.5" />
-              </a>
-              <button
-                type="button"
-                class="grid h-7 w-7 place-items-center rounded-lg hover:bg-white hover:text-gray-700 transition shadow-2xs cursor-pointer"
-                title="Sao chép thông tin"
-              >
-                <ExternalLink class="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
+              <!-- Candidate Card with Quick Actions -->
+              <div class="flex items-center justify-between rounded-2xl border border-gray-100 bg-gray-50/70 p-3">
+                <div class="flex items-center gap-3">
+                  <img
+                    v-if="selectedInterview.candidateAvatar"
+                    :src="selectedInterview.candidateAvatar"
+                    :alt="selectedInterview.candidateName"
+                    class="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow-2xs"
+                  />
+                  <div v-else class="grid h-10 w-10 place-items-center rounded-full bg-primary-100 font-bold text-primary-700">
+                    {{ selectedInterview.candidateName.charAt(0) }}
+                  </div>
+                  <div>
+                    <h4 class="font-bold text-gray-900 text-xs">{{ selectedInterview.candidateName }}</h4>
+                    <p class="text-[11px] text-gray-500">{{ selectedInterview.jobTitle }}</p>
+                  </div>
+                </div>
 
-          <!-- Detail rows -->
-          <div class="space-y-4 text-xs text-gray-600">
-            <!-- Date & Time -->
-            <div class="flex items-start gap-3">
-              <CalendarIcon class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-              <div>
-                <p class="font-semibold text-gray-900">May 12, 2024</p>
-                <p class="text-[11px] text-gray-500">{{ selectedInterview.startTime }} – {{ selectedInterview.endTime }} ({{ selectedInterview.durationHours }}h)</p>
-              </div>
-            </div>
-
-            <!-- Interview Type -->
-            <div class="flex items-start gap-3">
-              <Clock class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-              <div>
-                <p class="text-[11px] text-gray-400">Interview Type</p>
-                <p class="font-semibold text-gray-900">{{ selectedInterview.interviewType }}</p>
-              </div>
-            </div>
-
-            <!-- Location / Platform -->
-            <div class="flex items-start gap-3">
-              <Video class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-              <div class="flex-1">
-                <p class="text-[11px] text-gray-400">Location</p>
-                <div class="flex items-center justify-between mt-0.5">
-                  <p class="font-semibold text-gray-900">{{ selectedInterview.location }}</p>
+                <!-- Contact action icons -->
+                <div class="flex items-center gap-1 text-gray-400">
                   <a
-                    v-if="selectedInterview.meetingLink"
-                    :href="selectedInterview.meetingLink"
-                    target="_blank"
-                    class="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 transition"
+                    :href="`mailto:${selectedInterview.candidateEmail}`"
+                    class="grid h-7 w-7 place-items-center rounded-lg hover:bg-white hover:text-primary-600 transition shadow-2xs"
+                    title="Gửi Email"
                   >
-                    Vào phòng
-                    <ExternalLink class="h-2.5 w-2.5" />
+                    <Mail class="h-3.5 w-3.5" />
                   </a>
-                </div>
-              </div>
-            </div>
-
-            <!-- Interviewers -->
-            <div class="flex items-start gap-3">
-              <Users class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-              <div>
-                <p class="text-[11px] text-gray-400">Interviewers ({{ selectedInterview.interviewers.length }})</p>
-                <div class="flex items-center gap-2 mt-1.5">
-                  <div class="flex -space-x-1.5 overflow-hidden">
-                    <img
-                      v-for="int in selectedInterview.interviewers"
-                      :key="int.id"
-                      :src="int.avatar"
-                      :alt="int.name"
-                      class="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover"
-                    />
-                  </div>
-                  <span class="text-[11px] text-gray-500 font-medium">
-                    {{ selectedInterview.interviewers.map(i => i.name).slice(0, 2).join(', ') }}
-                    <template v-if="selectedInterview.interviewers.length > 2">
-                      +{{ selectedInterview.interviewers.length - 2 }}
-                    </template>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Notes -->
-            <div v-if="selectedInterview.notes" class="flex items-start gap-3">
-              <FileText class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-              <div>
-                <p class="text-[11px] text-gray-400">Notes</p>
-                <p class="text-[11.5px] text-gray-700 mt-0.5 leading-relaxed bg-gray-50 p-2.5 rounded-xl border border-gray-100">
-                  {{ selectedInterview.notes }}
-                </p>
-              </div>
-            </div>
-
-            <!-- Attachment -->
-            <div v-if="selectedInterview.attachmentName" class="flex items-start gap-3">
-              <Download class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-              <div class="flex-1">
-                <p class="text-[11px] text-gray-400">Attachments</p>
-                <div class="mt-1 flex items-center justify-between rounded-xl border border-gray-200 bg-white p-2.5">
-                  <div class="flex items-center gap-2">
-                    <div class="grid h-7 w-7 place-items-center rounded bg-rose-50 text-rose-600">
-                      <FileText class="h-4 w-4" />
-                    </div>
-                    <div>
-                      <p class="font-semibold text-gray-900 text-[11px] truncate w-36">{{ selectedInterview.attachmentName }}</p>
-                      <p class="text-[10px] text-gray-400">{{ selectedInterview.attachmentSize }}</p>
-                    </div>
-                  </div>
-                  <button type="button" class="grid h-6 w-6 place-items-center rounded text-gray-400 hover:text-gray-700 transition cursor-pointer">
-                    <Download class="h-3.5 w-3.5" />
+                  <a
+                    v-if="selectedInterview.candidatePhone"
+                    :href="`tel:${selectedInterview.candidatePhone}`"
+                    class="grid h-7 w-7 place-items-center rounded-lg hover:bg-white hover:text-emerald-600 transition shadow-2xs"
+                    title="Gọi điện"
+                  >
+                    <Phone class="h-3.5 w-3.5" />
+                  </a>
+                  <button
+                    type="button"
+                    class="grid h-7 w-7 place-items-center rounded-lg hover:bg-white hover:text-gray-700 transition shadow-2xs cursor-pointer"
+                    title="Sao chép thông tin"
+                  >
+                    <ExternalLink class="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
+
+              <!-- Detail rows -->
+              <div class="space-y-4 text-xs text-gray-600">
+                <!-- Date & Time -->
+                <div class="flex items-start gap-3">
+                  <CalendarIcon class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p class="font-semibold text-gray-900">{{ formatDisplayDate(selectedInterview.date) }}</p>
+                    <p class="text-[11px] text-gray-500">{{ selectedInterview.startTime }} – {{ selectedInterview.endTime }} ({{ Math.round(selectedInterview.durationHours * 60) }} phút)</p>
+                  </div>
+                </div>
+
+                <!-- Interview Type -->
+                <div class="flex items-start gap-3">
+                  <Clock class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p class="text-[11px] text-gray-400">Loại hình phỏng vấn</p>
+                    <p class="font-semibold text-gray-900">{{ selectedInterview.interviewType }}</p>
+                  </div>
+                </div>
+
+                <!-- Location / Platform -->
+                <div class="flex items-start gap-3">
+                  <Video class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                  <div class="flex-1">
+                    <p class="text-[11px] text-gray-400">Địa điểm / Phòng họp</p>
+                    <div class="flex items-center justify-between mt-0.5">
+                      <p class="font-semibold text-gray-900">{{ selectedInterview.location }}</p>
+                      <a
+                        v-if="selectedInterview.meetingLink"
+                        :href="selectedInterview.meetingLink"
+                        target="_blank"
+                        class="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 transition"
+                      >
+                        Vào phòng họp
+                        <ExternalLink class="h-2.5 w-2.5" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Interviewers -->
+                <div class="flex items-start gap-3">
+                  <Users class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p class="text-[11px] text-gray-400">Người phỏng vấn ({{ selectedInterview.interviewers.length }})</p>
+                    <div class="flex items-center gap-2 mt-1.5">
+                      <div class="flex -space-x-1.5 overflow-hidden">
+                        <img
+                          v-for="int in selectedInterview.interviewers"
+                          :key="int.id"
+                          :src="int.avatar"
+                          :alt="int.name"
+                          class="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover"
+                        />
+                      </div>
+                      <span class="text-[11px] text-gray-500 font-medium">
+                        {{ selectedInterview.interviewers.map(i => i.name).slice(0, 2).join(', ') }}
+                        <template v-if="selectedInterview.interviewers.length > 2">
+                          +{{ selectedInterview.interviewers.length - 2 }}
+                        </template>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Notes -->
+                <div v-if="selectedInterview.notes" class="flex items-start gap-3">
+                  <FileText class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p class="text-[11px] text-gray-400">Ghi chú</p>
+                    <p class="text-[11.5px] text-gray-700 mt-0.5 leading-relaxed bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                      {{ selectedInterview.notes }}
+                    </p>
+                  </div>
+                </div>
+
+                <!-- Attachment -->
+                <div v-if="selectedInterview.attachmentName" class="flex items-start gap-3">
+                  <Download class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                  <div class="flex-1">
+                    <p class="text-[11px] text-gray-400">Tệp đính kèm</p>
+                    <div class="mt-1 flex items-center justify-between rounded-xl border border-gray-200 bg-white p-2.5">
+                      <div class="flex items-center gap-2">
+                        <div class="grid h-7 w-7 place-items-center rounded bg-rose-50 text-rose-600">
+                          <FileText class="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p class="font-semibold text-gray-900 text-[11px] truncate w-36">{{ selectedInterview.attachmentName }}</p>
+                          <p class="text-[10px] text-gray-400">{{ selectedInterview.attachmentSize }}</p>
+                        </div>
+                      </div>
+                      <button type="button" class="grid h-6 w-6 place-items-center rounded text-gray-400 hover:text-gray-700 transition cursor-pointer">
+                        <Download class="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Footer Actions: Reschedule & Close -->
+            <div class="pt-5 border-t border-gray-100 grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                class="rounded-xl border border-gray-200 bg-white py-2 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 transition cursor-pointer"
+                @click="showScheduleModal = true"
+              >
+                Dời lịch phỏng vấn
+              </button>
+              <button
+                type="button"
+                class="rounded-xl bg-[#4338ca] hover:bg-[#3730a3] py-2 text-xs font-semibold text-white shadow-sm transition cursor-pointer"
+                @click="selectedInterview = null"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </aside>
+      </Transition>
+    </div>
+
+    <!-- Modal dời lịch phỏng vấn (Reschedule) cho buổi phỏng vấn đã chọn -->
+    <ScheduleInterviewModal
+      :open="showScheduleModal"
+      :application-id="selectedInterview?.id ? (rawInterviews.find(r => r.id === selectedInterview?.id)?.applicationId || '') : ''"
+      :candidate-name="selectedInterview?.candidateName || ''"
+      :candidate-email="selectedInterview?.candidateEmail || ''"
+      :job-title="selectedInterview?.jobTitle || ''"
+      @close="showScheduleModal = false"
+      @scheduled="fetchInterviews"
+    />
+
+    <!-- Modal Báo cáo Tổng quan Phỏng vấn -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition duration-150 ease-in"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div
+          v-if="showReportModal"
+          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs"
+          @click.self="showReportModal = false"
+        >
+          <div
+            class="relative w-full max-w-3xl max-h-[90vh] bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+          >
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-white shrink-0">
+              <div class="flex items-center gap-3">
+                <div class="h-10 w-10 rounded-xl bg-indigo-50 text-[#4338ca] flex items-center justify-center shadow-2xs">
+                  <BarChart3 class="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 class="text-base font-bold text-gray-900">Báo cáo Tổng quan Phỏng vấn</h3>
+                  <p class="text-xs text-gray-500 mt-0.5">
+                    Kỳ xem: <span class="font-semibold text-gray-700">{{ viewMode === 'week' ? `Tuần ${weekRangeLabel}` : `${currentDayInfo.nameVi}, ${currentDayInfo.dateNum} Tháng ${currentDayInfo.monthNum}, ${currentDayInfo.year}` }}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer disabled:opacity-50"
+                  :disabled="isExportingDocx"
+                  title="Xuất báo cáo sang file Word (.docx)"
+                  @click="handleExportDocx"
+                >
+                  <FileText class="h-3.5 w-3.5" />
+                  <span>{{ isExportingDocx ? 'Đang xuất...' : 'Xuất Word (.docx)' }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition cursor-pointer"
+                  title="In báo cáo"
+                  @click="printReport"
+                >
+                  <Printer class="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition cursor-pointer"
+                  title="Đóng"
+                  @click="showReportModal = false"
+                >
+                  <X class="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <!-- Modal Body (Scrollable) -->
+            <div class="p-6 overflow-y-auto space-y-6 flex-1 text-xs text-gray-700 scrollbar-thin">
+              <!-- 4 Thẻ KPI chính -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div class="p-3.5 rounded-xl bg-blue-50/70 border border-blue-100/80">
+                  <span class="text-[11px] font-medium text-blue-600 block">Tổng buổi phỏng vấn</span>
+                  <div class="flex items-baseline gap-1 mt-1">
+                    <span class="text-2xl font-bold text-blue-900">{{ totalInterviewsCount }}</span>
+                    <span class="text-[10px] text-blue-500">buổi</span>
+                  </div>
+                </div>
+
+                <div class="p-3.5 rounded-xl bg-purple-50/70 border border-purple-100/80">
+                  <span class="text-[11px] font-medium text-purple-600 block">Số ứng viên</span>
+                  <div class="flex items-baseline gap-1 mt-1">
+                    <span class="text-2xl font-bold text-purple-900">{{ uniqueCandidatesCount }}</span>
+                    <span class="text-[10px] text-purple-500">người</span>
+                  </div>
+                </div>
+
+                <div class="p-3.5 rounded-xl bg-amber-50/70 border border-amber-100/80">
+                  <span class="text-[11px] font-medium text-amber-600 block">Tổng thời lượng</span>
+                  <div class="flex items-baseline gap-1 mt-1">
+                    <span class="text-2xl font-bold text-amber-900">{{ totalDurationHours }}</span>
+                  </div>
+                </div>
+
+                <div class="p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-100/80">
+                  <span class="text-[11px] font-medium text-indigo-600 block">Đã phân công PV</span>
+                  <div class="flex items-baseline gap-1 mt-1">
+                    <span class="text-2xl font-bold text-indigo-900">{{ panelCoveragePercent }}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Tình trạng buổi phỏng vấn (Status Breakdown) -->
+              <div>
+                <h4 class="text-xs font-bold text-gray-900 uppercase tracking-wider mb-2.5">
+                  Tình trạng buổi phỏng vấn
+                </h4>
+                <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  <div class="p-2.5 rounded-xl border border-blue-200 bg-blue-50/50 flex flex-col justify-between">
+                    <span class="text-[10px] text-blue-700 font-medium">Đã lên lịch</span>
+                    <span class="text-lg font-bold text-blue-900 mt-1">{{ statusBreakdown.scheduled }}</span>
+                  </div>
+
+                  <div class="p-2.5 rounded-xl border border-cyan-200 bg-cyan-50/50 flex flex-col justify-between">
+                    <span class="text-[10px] text-cyan-700 font-medium">Đang diễn ra</span>
+                    <span class="text-lg font-bold text-cyan-900 mt-1">{{ statusBreakdown.in_progress }}</span>
+                  </div>
+
+                  <div class="p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/50 flex flex-col justify-between">
+                    <span class="text-[10px] text-emerald-700 font-medium">Hoàn thành</span>
+                    <span class="text-lg font-bold text-emerald-900 mt-1">{{ statusBreakdown.completed }}</span>
+                  </div>
+
+                  <div class="p-2.5 rounded-xl border border-amber-200 bg-amber-50/50 flex flex-col justify-between">
+                    <span class="text-[10px] text-amber-700 font-medium">Đã dời lịch</span>
+                    <span class="text-lg font-bold text-amber-900 mt-1">{{ statusBreakdown.rescheduled }}</span>
+                  </div>
+
+                  <div class="p-2.5 rounded-xl border border-rose-200 bg-rose-50/50 flex flex-col justify-between">
+                    <span class="text-[10px] text-rose-700 font-medium">Đã hủy</span>
+                    <span class="text-lg font-bold text-rose-900 mt-1">{{ statusBreakdown.cancelled }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Phân bố theo loại hình & Top vị trí -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <!-- Theo loại hình -->
+                <div class="p-4 rounded-xl border border-gray-200 bg-gray-50/40">
+                  <h4 class="text-xs font-bold text-gray-900 mb-3 flex items-center justify-between">
+                    <span>Loại hình phỏng vấn</span>
+                    <span class="text-[10px] font-normal text-gray-500">{{ typeBreakdown.length }} loại hình</span>
+                  </h4>
+                  <div v-if="typeBreakdown.length === 0" class="text-center py-4 text-gray-400">
+                    Chưa có dữ liệu
+                  </div>
+                  <div v-else class="space-y-2">
+                    <div v-for="item in typeBreakdown" :key="item.type">
+                      <div class="flex items-center justify-between text-[11px] mb-1">
+                        <span class="font-medium text-gray-700 truncate">{{ item.type }}</span>
+                        <span class="font-bold text-gray-900 shrink-0 ml-2">{{ item.count }} ({{ item.percent }}%)</span>
+                      </div>
+                      <div class="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+                        <div class="h-full bg-[#4338ca] rounded-full transition-all duration-300" :style="{ width: `${item.percent}%` }"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Theo vị trí tuyển dụng -->
+                <div class="p-4 rounded-xl border border-gray-200 bg-gray-50/40">
+                  <h4 class="text-xs font-bold text-gray-900 mb-3 flex items-center justify-between">
+                    <span>Top vị trí tuyển dụng</span>
+                    <span class="text-[10px] font-normal text-gray-500">{{ availableJobs.length }} vị trí</span>
+                  </h4>
+                  <div v-if="jobBreakdown.length === 0" class="text-center py-4 text-gray-400">
+                    Chưa có dữ liệu
+                  </div>
+                  <div v-else class="space-y-2">
+                    <div
+                      v-for="(item, idx) in jobBreakdown"
+                      :key="item.job"
+                      class="flex items-center justify-between py-1 border-b border-gray-100 last:border-0"
+                    >
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="h-4.5 w-4.5 rounded-full bg-gray-200 text-gray-700 text-[10px] font-bold flex items-center justify-center shrink-0">
+                          {{ idx + 1 }}
+                        </span>
+                        <span class="font-medium text-gray-800 truncate text-[11px]" :title="item.job">{{ item.job }}</span>
+                      </div>
+                      <span class="font-bold text-primary-700 bg-primary-50 px-2 py-0.5 rounded-md text-[10px] shrink-0 ml-2">
+                        {{ item.count }} buổi
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Danh sách chi tiết các buổi phỏng vấn -->
+              <div>
+                <h4 class="text-xs font-bold text-gray-900 uppercase tracking-wider mb-2.5">
+                  Danh sách phỏng vấn ({{ allEvents.length }})
+                </h4>
+                <div class="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                  <div class="max-h-52 overflow-y-auto scrollbar-thin">
+                    <table class="w-full text-left text-[11px]">
+                      <thead class="bg-gray-50 border-b border-gray-200 text-gray-500 sticky top-0">
+                        <tr>
+                          <th class="py-2 px-3 font-semibold">Ứng viên</th>
+                          <th class="py-2 px-3 font-semibold">Vị trí</th>
+                          <th class="py-2 px-3 font-semibold">Người phỏng vấn</th>
+                          <th class="py-2 px-3 font-semibold">Loại hình</th>
+                          <th class="py-2 px-3 font-semibold">Thời gian</th>
+                          <th class="py-2 px-3 font-semibold">Trạng thái</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-gray-100 text-gray-700">
+                        <tr v-if="allEvents.length === 0">
+                          <td colspan="6" class="py-6 text-center text-gray-400">Không có lịch phỏng vấn nào</td>
+                        </tr>
+                        <tr v-for="evt in allEvents" :key="evt.id" class="hover:bg-gray-50/70 transition">
+                          <td class="py-2 px-3 font-bold text-gray-900 truncate max-w-[120px]">{{ evt.candidateName }}</td>
+                          <td class="py-2 px-3 truncate max-w-[140px] text-gray-600">{{ evt.jobTitle }}</td>
+                          <td class="py-2 px-3 truncate max-w-[130px] text-gray-600">
+                            {{ evt.interviewers.map(i => i.name).filter(n => n && n !== 'Người phỏng vấn').join(', ') || 'Chưa gán' }}
+                          </td>
+                          <td class="py-2 px-3 text-gray-600 truncate max-w-[110px]">{{ evt.interviewType }}</td>
+                          <td class="py-2 px-3 text-gray-500 whitespace-nowrap">{{ evt.startTime }} - {{ evt.endTime }} ({{ evt.date }})</td>
+                          <td class="py-2 px-3">
+                            <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold" :class="[STATUS_META[evt.status].bg, STATUS_META[evt.status].color]">
+                              <span class="h-1 w-1 rounded-full" :class="STATUS_META[evt.status].dot"></span>
+                              <span>{{ STATUS_META[evt.status].label }}</span>
+                            </span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="px-6 py-3 border-t border-gray-100 flex items-center justify-between bg-gray-50 shrink-0">
+              <span class="text-[11px] text-gray-400">Dữ liệu tổng hợp thời gian thực từ hệ thống</span>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  class="rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-100 transition cursor-pointer"
+                  @click="showReportModal = false"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  class="rounded-xl bg-[#4338ca] hover:bg-[#3730a3] px-4 py-2 text-xs font-semibold text-white shadow-sm flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                  :disabled="isExportingDocx"
+                  @click="handleExportDocx"
+                >
+                  <FileText class="h-3.5 w-3.5" />
+                  <span>{{ isExportingDocx ? 'Đang tạo file...' : 'Tải file Word (.docx)' }}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
-
-        <!-- Footer Actions: Reschedule & Edit -->
-        <div class="pt-5 border-t border-gray-100 grid grid-cols-2 gap-2.5">
-          <button
-            type="button"
-            class="rounded-xl border border-gray-200 bg-white py-2 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 transition cursor-pointer"
-            @click="showScheduleModal = true"
-          >
-            Reschedule
-          </button>
-          <button
-            type="button"
-            class="rounded-xl bg-[#4338ca] hover:bg-[#3730a3] py-2 text-xs font-semibold text-white shadow-sm transition cursor-pointer"
-          >
-            Edit
-          </button>
-        </div>
-      </div>
-    </aside>
-  </Transition>
-</div>
-
-    <!-- Modal lên lịch phỏng vấn -->
-    <ScheduleInterviewModal
-      :open="showScheduleModal"
-      application-id=""
-      candidate-name=""
-      candidate-email=""
-      job-title=""
-      @close="showScheduleModal = false"
-    />
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
-/*
- * Left Filter Overlay Transitions (Trượt đè lên phần interview, không đẩy layout)
- */
+/* Left Filter Overlay Transitions */
 .slide-left-enter-active,
 .slide-left-leave-active {
   transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
@@ -1432,9 +2086,7 @@ const selectEvent = (evt: InterviewEvent): void => {
   opacity: 0;
 }
 
-/*
- * Right Details Drawer Transitions
- */
+/* Right Details Drawer Transitions */
 .drawer-right-enter-active,
 .drawer-right-leave-active {
   transition: max-width 0.3s cubic-bezier(0.25, 1, 0.5, 1),

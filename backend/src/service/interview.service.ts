@@ -13,7 +13,8 @@
  */
 import { db } from '../config/database';
 import { interviews, applications, jobs, companies, users, userProfiles, companyMembers } from '../db/schema';
-import { eq, and, gte, asc, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, gte, lte, asc, desc, sql, inArray } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../config/logger';
 import { notificationService } from './notification.service';
@@ -29,6 +30,8 @@ import crypto from 'crypto'
 // ============================================================================
 // Private helpers (không expose qua interviewService object)
 // ============================================================================
+
+const interviewerProfiles = alias(userProfiles, 'interviewer_profiles');
 
 const OFFSET = (page: number, limit: number): number => (page - 1) * limit;
 
@@ -364,6 +367,26 @@ export const interviewService = {
   create: async (body: CreateInterviewBody, hrId: string, hrRole: 'employer' | 'admin'): Promise<{ id: string; status: string; meetingLink?: string | null }> => {
     const { candidateId, candidateEmail, candidateName, jobTitle, companyName } = await assertApplicationBelongsToHR(body.applicationId, hrId, hrRole);
 
+    // Không cho phép đặt trùng interviewType đã từng tổ chức cho application này
+    const [existingWithSameType] = await db
+      .select({ id: interviews.id })
+      .from(interviews)
+      .where(
+        and(
+          eq(interviews.applicationId, body.applicationId),
+          eq(interviews.interviewType, body.interviewType ?? 'technical'),
+        ),
+      )
+      .limit(1);
+
+    if (existingWithSameType) {
+      throw new AppError(
+        400,
+        'INTERVIEW_TYPE_DUPLICATE',
+        `Loại phỏng vấn "${getInterviewTypeLabel(body.interviewType)}" đã từng được lên lịch cho đơn ứng tuyển này. Vui lòng chọn loại phỏng vấn khác cho vòng tiếp theo.`,
+      );
+    }
+
     let meetingLink = body.meetingLink ?? null;
     let googleEventId: string | null = null;
 
@@ -446,11 +469,21 @@ export const interviewService = {
   /**
    * HR list lich phong van cua company — GET /interviews.
    * Admin: xem tat ca. Employer: loc theo companyIds la active member.
+   * Ho tro loc theo status, interviewType, applicationId, interviewerId, va khoang thoi gian (startDate, endDate).
    */
   list: async (
     hrId: string,
     hrRole: 'employer' | 'admin',
-    query: { status?: string; interviewType?: string; applicationId?: string; interviewerId?: string; page: number; limit: number },
+    query: {
+      status?: string;
+      interviewType?: string;
+      applicationId?: string;
+      interviewerId?: string;
+      startDate?: string;
+      endDate?: string;
+      page: number;
+      limit: number;
+    },
   ): Promise<{ rows: EmployerInterviewRow[]; total: number; page: number; limit: number }> => {
     const { page, limit } = query;
 
@@ -469,6 +502,18 @@ export const interviewService = {
     if (query.interviewType) conditions.push(eq(interviews.interviewType, query.interviewType));
     if (query.applicationId) conditions.push(eq(interviews.applicationId, query.applicationId));
     if (query.interviewerId) conditions.push(eq(interviews.interviewerId, query.interviewerId));
+    if (query.startDate) {
+      const start = new Date(query.startDate);
+      if (!isNaN(start.getTime())) {
+        conditions.push(gte(interviews.scheduledAt, start));
+      }
+    }
+    if (query.endDate) {
+      const end = new Date(query.endDate);
+      if (!isNaN(end.getTime())) {
+        conditions.push(lte(interviews.scheduledAt, end));
+      }
+    }
     if (companyIds.length > 0) conditions.push(inArray(jobs.companyId, companyIds));
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -482,7 +527,11 @@ export const interviewService = {
         candidateId: applications.candidateId,
         candidateName: userProfiles.fullName,
         candidateEmail: users.email,
+        candidatePhone: userProfiles.phone,
+        candidateAvatar: userProfiles.avatarUrl,
         interviewerId: interviews.interviewerId,
+        interviewerName: interviewerProfiles.fullName,
+        interviewerAvatar: interviewerProfiles.avatarUrl,
         interviewType: interviews.interviewType,
         scheduledAt: interviews.scheduledAt,
         durationMin: interviews.durationMin,
@@ -497,6 +546,7 @@ export const interviewService = {
         .leftJoin(jobs, eq(applications.jobId, jobs.id))
         .leftJoin(users, eq(applications.candidateId, users.id))
         .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+        .leftJoin(interviewerProfiles, eq(interviews.interviewerId, interviewerProfiles.userId))
         .where(whereClause)
         .orderBy(asc(interviews.scheduledAt))
         .limit(limit)
@@ -527,7 +577,11 @@ export const interviewService = {
         candidateId: applications.candidateId,
         candidateName: userProfiles.fullName,
         candidateEmail: users.email,
+        candidatePhone: userProfiles.phone,
+        candidateAvatar: userProfiles.avatarUrl,
         interviewerId: interviews.interviewerId,
+        interviewerName: interviewerProfiles.fullName,
+        interviewerAvatar: interviewerProfiles.avatarUrl,
         interviewType: interviews.interviewType,
         scheduledAt: interviews.scheduledAt,
         durationMin: interviews.durationMin,
@@ -546,6 +600,7 @@ export const interviewService = {
       .leftJoin(jobs, eq(applications.jobId, jobs.id))
       .leftJoin(users, eq(applications.candidateId, users.id))
       .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+      .leftJoin(interviewerProfiles, eq(interviews.interviewerId, interviewerProfiles.userId))
       .where(eq(interviews.id, interviewId))
       .limit(1);
 
@@ -646,16 +701,10 @@ export const interviewService = {
     userId: string,
     userRole: 'employer' | 'admin',
   ): Promise<{ id: string; status: string }> => {
-    const [row] = await db
-      .select({ id: interviews.id, interviewerId: interviews.interviewerId, status: interviews.status })
-      .from(interviews)
-      .where(eq(interviews.id, interviewId))
-      .limit(1);
+    const existing = await assertInterviewBelongsToHR(interviewId, userId, userRole);
 
-    if (!row) throw new AppError(404, 'INTERVIEW_NOT_FOUND', 'Interview not found');
-    if (userRole !== 'admin' && row.interviewerId !== userId) throw new AppError(403, 'FEEDBACK_FORBIDDEN', 'Only the assigned interviewer can submit feedback');
-    if (row.status === 'cancelled') throw new AppError(400, 'INTERVIEW_CANCELLED', 'Cannot submit feedback for a cancelled interview');
-    if (row.status === 'completed') throw new AppError(400, 'FEEDBACK_ALREADY_SUBMITTED', 'Feedback has already been submitted');
+    if (existing.status === 'cancelled') throw new AppError(400, 'INTERVIEW_CANCELLED', 'Cannot submit feedback for a cancelled interview');
+    if (existing.status === 'completed') throw new AppError(400, 'FEEDBACK_ALREADY_SUBMITTED', 'Feedback has already been submitted');
 
     const [updated] = await db
       .update(interviews)

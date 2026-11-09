@@ -21,6 +21,7 @@
     "apexcharts": "^5.10.0",
     "axios": "^1.7.9",
     "dayjs": "^1.11.13",
+    "docx": "^9.15.3",
     "docx-preview": "^0.4.0",
     "leaflet": "^1.9.4",
     "lucide-vue-next": "^0.469.0",

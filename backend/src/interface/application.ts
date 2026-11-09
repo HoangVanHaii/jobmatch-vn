@@ -203,5 +203,31 @@ export interface ApplicationDetail {
     confirmedAt: Date | null;
     cancelledAt: Date | null;
     cancelReason: string | null;
+    feedback?: {
+      scores: Record<string, number>;
+      comments: string;
+      recommendation: 'strong_hire' | 'hire' | 'no_hire' | 'strong_no_hire';
+    } | null;
+    feedbackSubmittedAt?: Date | null;
   } | null;
+  /** Lịch sử các vòng phỏng vấn (nếu có nhiều hơn 1 vòng) */
+  interviewHistory?: Array<{
+    id: string;
+    interviewType?: string | null;
+    status: string;
+    scheduledAt: Date;
+    durationMin: number;
+    location: string | null;
+    meetingLink: string | null;
+    confirmedAt: Date | null;
+    cancelledAt: Date | null;
+    cancelReason: string | null;
+    feedback?: {
+      scores: Record<string, number>;
+      comments: string;
+      recommendation: 'strong_hire' | 'hire' | 'no_hire' | 'strong_no_hire';
+    } | null;
+    feedbackSubmittedAt?: Date | null;
+    createdAt?: Date | null;
+  }>;
 }

@@ -34,11 +34,13 @@ const props = defineProps<{
   candidateEmail?: string | null;
   jobTitle?: string;
   companyName?: string;
+  usedInterviewTypes?: string[];
+  roundNumber?: number;
 }>();
 
 const emit = defineEmits<{
   (e: 'close'): void;
-  (e: 'scheduled', payload: { interviewId: string; meetingLink?: string | null }): void;
+  (e: 'scheduled', payload: { interviewId: string; meetingLink?: string | null; interviewType?: string }): void;
 }>();
 
 const authStore = useAuthStore();
@@ -70,6 +72,27 @@ const INTERVIEW_TYPE_OPTIONS = [
   { value: 'final', label: 'Phỏng vấn vòng cuối (Final Interview)' },
   { value: 'other', label: 'Khác' },
 ];
+
+const isTypeUsed = (type: string): boolean => {
+  return Boolean(props.usedInterviewTypes?.includes(type));
+};
+
+// Đảm bảo khi mở modal, loại phỏng vấn được chọn là loại chưa từng sử dụng
+watch(
+  [() => props.open, () => props.usedInterviewTypes],
+  ([isOpen, usedList]) => {
+    if (isOpen) {
+      const used = usedList ?? [];
+      if (used.includes(interviewType.value)) {
+        const available = INTERVIEW_TYPE_OPTIONS.find((opt) => !used.includes(opt.value));
+        if (available) {
+          interviewType.value = available.value;
+        }
+      }
+    }
+  },
+  { immediate: true },
+);
 
 // Busy times checking
 const busySlots = ref<BusyTimeSlot[]>([]);
@@ -187,6 +210,15 @@ const handleSubmit = async (): Promise<void> => {
     return;
   }
 
+  if (isTypeUsed(interviewType.value)) {
+    toast.push({
+      variant: 'error',
+      title: 'Loại phỏng vấn đã được sử dụng',
+      body: 'Ứng viên đã từng tham gia loại phỏng vấn này. Vui lòng chọn loại phỏng vấn khác cho vòng mới.',
+    });
+    return;
+  }
+
   const startIso = dayjs(`${scheduledDate.value}T${scheduledTime.value}:00+07:00`).toISOString();
 
   submitting.value = true;
@@ -218,6 +250,7 @@ const handleSubmit = async (): Promise<void> => {
     emit('scheduled', {
       interviewId: data.id,
       meetingLink: data.meetingLink,
+      interviewType: interviewType.value,
     });
     emit('close');
   } catch (err) {
@@ -248,7 +281,9 @@ const handleSubmit = async (): Promise<void> => {
             <Calendar class="h-5 w-5" />
           </div>
           <div>
-            <h2 class="text-base font-semibold text-slate-900">Mời phỏng vấn ứng viên</h2>
+            <h2 class="text-base font-semibold text-slate-900">
+              Mời phỏng vấn ứng viên {{ roundNumber && roundNumber > 1 ? `(Vòng ${roundNumber})` : '' }}
+            </h2>
             <p class="text-xs text-slate-500">
               {{ candidateName }} · Vị trí: <span class="font-medium text-slate-700">{{ jobTitle || 'Ứng tuyển' }}</span>
             </p>
@@ -315,9 +350,14 @@ const handleSubmit = async (): Promise<void> => {
 
         <!-- Loại phỏng vấn (Vòng phỏng vấn) -->
         <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-            <Layers class="h-3.5 w-3.5 text-slate-500" />
-            Loại phỏng vấn (Vòng phỏng vấn)
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+            <span class="flex items-center gap-1.5">
+              <Layers class="h-3.5 w-3.5 text-slate-500" />
+              Loại phỏng vấn {{ roundNumber ? `(Vòng ${roundNumber})` : '(Vòng phỏng vấn)' }}
+            </span>
+            <span v-if="usedInterviewTypes?.length" class="text-[10.5px] font-normal text-slate-400">
+              ({{ usedInterviewTypes.length }} vòng đã hoàn thành)
+            </span>
           </label>
           <div class="relative">
             <select
@@ -328,12 +368,17 @@ const handleSubmit = async (): Promise<void> => {
                 v-for="opt in INTERVIEW_TYPE_OPTIONS"
                 :key="opt.value"
                 :value="opt.value"
+                :disabled="isTypeUsed(opt.value)"
+                :class="isTypeUsed(opt.value) ? 'text-slate-400 bg-slate-100 italic' : 'text-slate-800'"
               >
-                {{ opt.label }}
+                {{ isTypeUsed(opt.value) ? `${opt.label} — (Đã tổ chức)` : opt.label }}
               </option>
             </select>
             <ChevronDown class="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           </div>
+          <p v-if="usedInterviewTypes?.length" class="text-[10.5px] text-amber-600 mt-1">
+            * Các loại phỏng vấn đã hoàn thành ở các vòng trước sẽ không được chọn lại.
+          </p>
         </div>
 
         <!-- Hình thức phỏng vấn -->

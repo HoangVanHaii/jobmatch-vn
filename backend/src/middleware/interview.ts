@@ -41,6 +41,7 @@ export type InterviewType = (typeof INTERVIEW_TYPES)[number];
  * - `interviewType` optional — filter theo loại phỏng vấn.
  * - `applicationId` optional — filter theo 1 application cụ thể.
  * - `interviewerId` optional — filter theo người phỏng vấn.
+ * - `startDate` / `endDate` optional — filter theo khoảng thời gian (ngày, tuần, tháng).
  * - `page` / `limit` — phân trang chuẩn.
  */
 export const listInterviewQuerySchema = z.object({
@@ -48,8 +49,10 @@ export const listInterviewQuerySchema = z.object({
   interviewType: z.enum(INTERVIEW_TYPES).optional(),
   applicationId: z.string().uuid().optional(),
   interviewerId: z.string().uuid().optional(),
+  startDate: z.string().trim().optional(),
+  endDate: z.string().trim().optional(),
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(50).default(20),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export type ListInterviewQuery = z.infer<typeof listInterviewQuerySchema>;
