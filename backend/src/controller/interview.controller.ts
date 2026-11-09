@@ -40,12 +40,15 @@ export const interviewController = {
       if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
 
       const role = req.user!.role as 'employer' | 'admin';
-      const { status, applicationId, interviewerId, page, limit } = req.query as unknown as ListInterviewQuery;
+      const { status, interviewType, applicationId, interviewerId, startDate, endDate, page, limit } = req.query as unknown as ListInterviewQuery;
 
       const result = await interviewService.list(userId, role, {
         status,
+        interviewType,
         applicationId,
         interviewerId,
+        startDate,
+        endDate,
         page: page ?? 1,
         limit: limit ?? 20,
       });

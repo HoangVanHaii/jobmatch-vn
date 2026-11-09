@@ -19,6 +19,7 @@ import {
   CalendarCheck2,
   ExternalLink,
   ChevronRight,
+  Layers,
 } from 'lucide-vue-next';
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
@@ -44,6 +45,23 @@ const proposedTime = ref('');
 const rejectReason = ref('');
 const submitting = ref(false);
 const successMessage = ref('');
+
+const INTERVIEW_TYPE_LABELS: Record<string, string> = {
+  screening: 'Phỏng vấn sơ loại (Screening)',
+  technical: 'Phỏng vấn kỹ thuật (Technical)',
+  coding: 'Phỏng vấn lập trình (Live Coding)',
+  system_design: 'Thiết kế hệ thống (System Design)',
+  hr: 'Phỏng vấn nhân sự (HR Interview)',
+  culture_fit: 'Phù hợp văn hóa (Culture Fit)',
+  panel: 'Phỏng vấn hội đồng (Panel)',
+  final: 'Phỏng vấn vòng cuối (Final Interview)',
+  other: 'Phỏng vấn',
+};
+
+const getInterviewTypeLabel = (type?: string | null): string => {
+  if (!type) return 'Phỏng vấn';
+  return INTERVIEW_TYPE_LABELS[type] || type;
+};
 
 const formatFullDate = (iso?: string | null): string => {
   if (!iso) return '';
@@ -207,7 +225,7 @@ onMounted(loadDetails);
           <div class="flex items-start justify-between gap-4">
             <div>
               <span class="inline-flex items-center rounded-full bg-white/20 px-2.5 py-0.5 text-[10px] font-semibold text-white mb-2 backdrop-blur-xs">
-                Lời mời phỏng vấn
+                Lời mời phỏng vấn • {{ getInterviewTypeLabel(details.interviewType) }}
               </span>
               <h1 class="text-lg sm:text-xl font-bold leading-snug">
                 {{ details.jobTitle || 'Vị trí Ứng tuyển' }}
@@ -253,7 +271,19 @@ onMounted(loadDetails);
 
           <!-- Thông tin buổi phỏng vấn -->
           <div class="rounded-xl border border-slate-100 bg-slate-50/70 p-4 space-y-3.5">
-            <div class="flex items-start gap-3">
+            <div v-if="details.interviewType" class="flex items-start gap-3">
+              <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+                <Layers class="h-4 w-4" />
+              </span>
+              <div>
+                <p class="text-xs text-slate-500 font-medium">Vòng phỏng vấn</p>
+                <p class="text-xs font-semibold text-slate-900 mt-0.5">
+                  {{ getInterviewTypeLabel(details.interviewType) }}
+                </p>
+              </div>
+            </div>
+
+            <div class="flex items-start gap-3" :class="details.interviewType ? 'pt-3 border-t border-slate-200/60' : ''">
               <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-[#1769e8]">
                 <Calendar class="h-4 w-4" />
               </span>

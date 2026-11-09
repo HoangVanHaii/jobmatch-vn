@@ -48,15 +48,6 @@ const avatarInitial = (name: string): string => {
 };
 
 
-/**
- * Format ISO date → "HH:mm" (vd "14:30") — compact cho list row.
- * Hover để xem ngày đầy đủ qua `title="formatDate(...)"`.
- */
-const formatTime = (iso: string): string => {
-  const d = dayjs(iso);
-  return d.isValid() ? d.format('HH:mm') : iso;
-};
-
 const applications = ref<Application[]>([]);
 const toast = useToastStore();
 
@@ -225,7 +216,6 @@ const total = ref(0);
 const loading = ref(false);
 
 const selectedApplication = ref<Application | null>(null);
-const isDetailWide = ref(false);
 
 const isSelected = (a: Application): boolean =>
   selectedApplication.value?.applicationId === a.applicationId;
@@ -233,7 +223,6 @@ const isSelected = (a: Application): boolean =>
 const selectApplication = (a: Application): void => {
   if (selectedApplication.value?.applicationId === a.applicationId) {
     selectedApplication.value = null;
-    isDetailWide.value = false;
   } else {
     selectedApplication.value = a;
   }
@@ -290,9 +279,7 @@ const mapRow = (row: EmployerApplicationRow, fallbackIdx: number): Application =
     position: row.jobTitle ?? '',
     status: row.status,
     match: matchNum !== null && Number.isFinite(matchNum) ? matchNum : null,
-    // Giữ ISO gốc để `formatTime` (HH:mm trong list) + `formatDate`
-    // (D Thg M tooltip) đều parse được dayjs. Format trước đây 'MMM D, YYYY'
-    // không có giờ → HH:mm trả rỗng.
+    // Giữ ISO gốc để `formatDate` format hiển thị đầy đủ ngày giờ "HH:mm · DD/MM/YYYY"
     date: dayjs(row.appliedAt).isValid() ? row.appliedAt : '',
     applicationId: row.id,
   };
@@ -743,7 +730,7 @@ onUnmounted(() => {
 
           <!-- Column headers -->
           <div
-            class="grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.7fr_1.7fr_1fr_1fr_0.7fr] items-center border-y border-[#eef1f5] px-4 py-3 text-[12px] font-medium text-[#7c889a]"
+            class="grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.6fr_1.5fr_0.9fr_0.9fr_1.1fr] items-center border-y border-[#eef1f5] px-4 py-3 text-[12px] font-medium text-[#7c889a]"
           >
             <div>Ứng viên</div>
             <div>Việc làm</div>
@@ -771,7 +758,7 @@ onUnmounted(() => {
               <div
                 v-for="n in (limit || 7)"
                 :key="'skel-' + n"
-                class="grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.7fr_1.7fr_1fr_1fr_0.7fr] items-center px-4 py-3 animate-pulse"
+                class="grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.6fr_1.5fr_0.9fr_0.9fr_1.1fr] items-center px-4 py-3 animate-pulse"
               >
                 <!-- Application / Candidate skeleton -->
                 <div class="flex min-w-0 items-center gap-2">
@@ -800,7 +787,7 @@ onUnmounted(() => {
 
                 <!-- Applied Time skeleton -->
                 <div class="hidden sm:block">
-                  <div class="h-3 bg-gray-200/70 rounded w-14" />
+                  <div class="h-3 bg-gray-200/70 rounded w-24" />
                 </div>
               </div>
             </template>
@@ -810,7 +797,7 @@ onUnmounted(() => {
               <div
                 v-for="(a, i) in displayedApplications"
                 :key="`${a.email}-${i}`"
-                class="relative grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.7fr_1.7fr_1fr_1fr_0.7fr] items-center px-4 py-2.5 text-[13px] cursor-pointer transition-all duration-200 nt-row"
+                class="relative grid grid-cols-[1.5fr_1.2fr_0.7fr_0.7fr] sm:grid-cols-[1.6fr_1.5fr_0.9fr_0.9fr_1.1fr] items-center px-4 py-2.5 text-[13px] cursor-pointer transition-all duration-200 nt-row"
                 :class="isSelected(a) ? 'bg-[#edf4ff] font-medium' : 'bg-white hover:bg-gray-50'"
                 :style="{ animationDelay: `${Math.min(300, i * 40)}ms` }"
                 @click="selectApplication(a)"
@@ -894,7 +881,7 @@ onUnmounted(() => {
                 </div>
 
                 <!-- Applied -->
-                <div class="hidden sm:block text-[12px] text-[#475569]" :title="formatDate(a.date)">{{ formatTime(a.date) }}</div>
+                <div class="hidden sm:block text-[12px] text-[#475569] whitespace-nowrap">{{ formatDate(a.date) }}</div>
               </div>
             </template>
 
@@ -972,8 +959,7 @@ onUnmounted(() => {
           :is-scoring="isScoringSelected"
           @status-changed="onDetailStatusChanged"
           @recompute-match="onDetailRecomputeMatch"
-          @wide-change="(val) => (isDetailWide = val)"
-          @close="selectedApplication = null; isDetailWide = false"
+          @close="selectedApplication = null"
         />
       </Transition>
     </div>
@@ -982,40 +968,43 @@ onUnmounted(() => {
 
 <style scoped>
 /*
- * Main list area smooth flex resize transition
+ * Main list area
  */
 .main-list-area {
   transition: all 0.35s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 /*
- * Detail panel slide & contraction animation
+ * Detail panel slide animation (Slide-over drawer 60%)
  */
 .panel-slide-enter-active,
 .panel-slide-leave-active {
-  transition: all 0.35s cubic-bezier(0.25, 1, 0.5, 1);
-  overflow: hidden !important;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
 }
 
 @media (min-width: 1024px) {
   .panel-slide-enter-from,
   .panel-slide-leave-to {
-    max-width: 0 !important;
-    min-width: 0 !important;
-    width: 0 !important;
+    transform: translateX(100%);
     opacity: 0;
-    transform: translateX(40px);
-    border-left-color: transparent !important;
+  }
+  .panel-slide-enter-to,
+  .panel-slide-leave-from {
+    transform: translateX(0);
+    opacity: 1;
   }
 }
 
 @media (max-width: 1023px) {
   .panel-slide-enter-from,
   .panel-slide-leave-to {
-    max-height: 0 !important;
+    transform: translateY(100%);
     opacity: 0;
-    transform: translateY(30px);
-    border-top-color: transparent !important;
+  }
+  .panel-slide-enter-to,
+  .panel-slide-leave-from {
+    transform: translateY(0);
+    opacity: 1;
   }
 }
 
