@@ -183,6 +183,7 @@ export interface ApplicationDetail {
   /** Thông tin lịch phỏng vấn mới nhất (nếu có) */
   interview?: {
     id: string;
+    interviewType?: string | null;
     status: string;
     scheduledAt: string;
     durationMin: number;
@@ -191,7 +192,33 @@ export interface ApplicationDetail {
     confirmedAt: string | null;
     cancelledAt: string | null;
     cancelReason: string | null;
+    feedback?: {
+      scores: Record<string, number>;
+      comments: string;
+      recommendation: 'strong_hire' | 'hire' | 'no_hire' | 'strong_no_hire';
+    } | null;
+    feedbackSubmittedAt?: string | null;
   } | null;
+  /** Lịch sử các vòng phỏng vấn (nếu có nhiều hơn 1 vòng) */
+  interviewHistory?: Array<{
+    id: string;
+    interviewType?: string | null;
+    status: string;
+    scheduledAt: string;
+    durationMin: number;
+    location: string | null;
+    meetingLink: string | null;
+    confirmedAt: string | null;
+    cancelledAt: string | null;
+    cancelReason: string | null;
+    feedback?: {
+      scores: Record<string, number>;
+      comments: string;
+      recommendation: 'strong_hire' | 'hire' | 'no_hire' | 'strong_no_hire';
+    } | null;
+    feedbackSubmittedAt?: string | null;
+    createdAt?: string | null;
+  }>;
 }
 
 /**

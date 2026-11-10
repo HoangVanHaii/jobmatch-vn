@@ -21,19 +21,38 @@ export type InterviewIdParam = z.infer<typeof interviewIdParamSchema>;
 
 const INTERVIEW_STATUSES = ['pending', 'confirmed', 'cancelled', 'completed'] as const;
 
+export const INTERVIEW_TYPES = [
+  'screening',
+  'technical',
+  'coding',
+  'system_design',
+  'hr',
+  'culture_fit',
+  'panel',
+  'final',
+  'other',
+] as const;
+
+export type InterviewType = (typeof INTERVIEW_TYPES)[number];
+
 /**
  * Query cho GET /interviews — HR list lịch phỏng vấn của company.
  * - `status` optional — filter theo trạng thái.
+ * - `interviewType` optional — filter theo loại phỏng vấn.
  * - `applicationId` optional — filter theo 1 application cụ thể.
  * - `interviewerId` optional — filter theo người phỏng vấn.
+ * - `startDate` / `endDate` optional — filter theo khoảng thời gian (ngày, tuần, tháng).
  * - `page` / `limit` — phân trang chuẩn.
  */
 export const listInterviewQuerySchema = z.object({
   status: z.enum(INTERVIEW_STATUSES).optional(),
+  interviewType: z.enum(INTERVIEW_TYPES).optional(),
   applicationId: z.string().uuid().optional(),
   interviewerId: z.string().uuid().optional(),
+  startDate: z.string().trim().optional(),
+  endDate: z.string().trim().optional(),
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(50).default(20),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export type ListInterviewQuery = z.infer<typeof listInterviewQuerySchema>;
@@ -54,6 +73,7 @@ export const createInterviewBodySchema = z
   .object({
     applicationId: z.string().uuid(),
     interviewerId: z.string().uuid(),
+    interviewType: z.enum(INTERVIEW_TYPES).default('technical').optional(),
     scheduledAt: z
       .string()
       .refine((v) => !isNaN(Date.parse(v)) && new Date(v) > new Date(), {
@@ -80,6 +100,7 @@ export type CreateInterviewBody = z.infer<typeof createInterviewBodySchema>;
 export const updateInterviewBodySchema = z
   .object({
     interviewerId: z.string().uuid().optional(),
+    interviewType: z.enum(INTERVIEW_TYPES).optional(),
     scheduledAt: z
       .string()
       .datetime({ offset: true })

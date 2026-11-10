@@ -668,10 +668,11 @@ export const getById = async (
     }
   }
 
-  // Lấy lịch phỏng vấn mới nhất liên kết với application (nếu có)
-  const [latestInterview] = await db
+  // Lấy danh sách lịch phỏng vấn liên kết với application (mới nhất trước)
+  const appInterviews = await db
     .select({
       id: interviews.id,
+      interviewType: interviews.interviewType,
       status: interviews.status,
       scheduledAt: interviews.scheduledAt,
       durationMin: interviews.durationMin,
@@ -680,11 +681,16 @@ export const getById = async (
       confirmedAt: interviews.confirmedAt,
       cancelledAt: interviews.cancelledAt,
       cancelReason: interviews.cancelReason,
+      feedback: interviews.feedback,
+      feedbackSubmittedAt: interviews.feedbackSubmittedAt,
+      createdAt: interviews.createdAt,
     })
     .from(interviews)
     .where(eq(interviews.applicationId, applicationId))
-    .orderBy(desc(interviews.createdAt))
-    .limit(1);
+    .orderBy(desc(interviews.createdAt));
+
+  const latestInterview = appInterviews[0] ?? null;
+  const historyInterviews = appInterviews.slice(1);
 
   // Strip helper fields `candidateId` và `jobAssignedTo` (chỉ dùng cho auth scoping, không
   // nằm trong ApplicationDetail public shape). `jobPostedBy` GIỮ LẠI vì FE
@@ -699,6 +705,11 @@ export const getById = async (
       status: latestInterview.status ?? 'pending',
       durationMin: latestInterview.durationMin ?? 60,
     } : null,
+    interviewHistory: historyInterviews.map((item) => ({
+      ...item,
+      status: item.status ?? 'pending',
+      durationMin: item.durationMin ?? 60,
+    })),
   } as unknown as ApplicationDetail;
 };
 

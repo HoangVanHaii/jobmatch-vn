@@ -23,7 +23,10 @@ import {
   CheckCircle2,
   Maximize2,
   Minimize2,
-  Columns2,
+  Star,
+  Plus,
+  Layers,
+  ChevronDown,
 } from 'lucide-vue-next';
 import { applicationApi } from '@services/application.api';
 import { cvApi } from '@services/cv.api';
@@ -34,6 +37,7 @@ import ReferencesModal from '@components/employer/ReferencesModal.vue';
 import AiTestReviewModal from '@components/employer/AiTestReviewModal.vue';
 import AiTestResultModal from '@components/employer/AiTestResultModal.vue';
 import ScheduleInterviewModal from '@components/employer/ScheduleInterviewModal.vue';
+import InterviewFeedbackModal from '@components/employer/InterviewFeedbackModal.vue';
 import {
   aiTestApi,
   type AiTestSummary,
@@ -66,7 +70,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   'status-changed': [payload: { applicationId: string; status: ApplicationStatus; stage?: string | null }];
   'recompute-match': [applicationId: string];
-  'wide-change': [isWide: boolean];
   'close': [];
 }>();
 
@@ -188,8 +191,56 @@ watch(skills, () => {
   skillsExpanded.value = false;
 });
 
+const panelRef = ref<HTMLElement | null>(null);
 const parsedData = ref<CvParsedShape | null>(null);
 const detailData = ref<ApplicationDetail | null>(null);
+
+// ---------------------------------------------------------------------------
+// Interview & Feedback action state
+// ---------------------------------------------------------------------------
+const feedbackModalOpen = ref(false);
+const showInterviewMore = ref(false);
+
+let scrollAnimationId: number | null = null;
+
+const smoothScrollToTop = (): void => {
+  if (scrollAnimationId !== null) {
+    cancelAnimationFrame(scrollAnimationId);
+    scrollAnimationId = null;
+  }
+
+  const el = panelRef.value;
+  const startTop = el ? el.scrollTop : window.scrollY;
+  if (startTop <= 0) return;
+
+  const startTime = performance.now();
+  const duration = 320; // 320ms smooth ease-out scroll
+
+  const step = (now: number): void => {
+    const elapsed = now - startTime;
+    const progress = Math.min(1, elapsed / duration);
+    // Ease-out cubic: 1 - (1 - t)^3
+    const easeProgress = 1 - Math.pow(1 - progress, 3);
+    const newPos = Math.round(startTop * (1 - easeProgress));
+
+    if (el) {
+      el.scrollTop = newPos;
+    }
+    if (window.scrollY > 0) {
+      window.scrollTo(0, newPos);
+    }
+
+    if (progress < 1) {
+      scrollAnimationId = requestAnimationFrame(step);
+    } else {
+      if (el) el.scrollTop = 0;
+      window.scrollTo(0, 0);
+      scrollAnimationId = null;
+    }
+  };
+
+  scrollAnimationId = requestAnimationFrame(step);
+};
 
 const loadDetail = async (appId?: string): Promise<void> => {
   const targetId = appId || props.application?.applicationId;
@@ -217,13 +268,21 @@ const loadDetail = async (appId?: string): Promise<void> => {
   } catch {
     if (seq === detailReqSeq) detailLoading.value = false;
   } finally {
-    if (seq === detailReqSeq) detailLoading.value = false;
+    if (seq === detailReqSeq) {
+      detailLoading.value = false;
+    }
   }
 };
 
 watch(
   () => props.application?.applicationId,
-  (newId) => void loadDetail(newId),
+  (newId, oldId) => {
+    showInterviewMore.value = false;
+    if (oldId && newId !== oldId) {
+      smoothScrollToTop();
+    }
+    void loadDetail(newId);
+  },
   { immediate: true },
 );
 
@@ -338,6 +397,77 @@ const rescheduleRequestText = computed(() => {
   return reason.replace('Xin dời lịch:', '').trim();
 });
 
+/** Số thứ tự vòng phỏng vấn hiện tại (ví dụ vòng 1, vòng 2) */
+const currentInterviewRound = computed<number>(() => {
+  const historyLen = detailData.value?.interviewHistory?.length ?? 0;
+  return historyLen + 1;
+});
+
+/** Số thứ tự cho vòng phỏng vấn tiếp theo khi bấm thêm lịch */
+const nextInterviewRound = computed<number>(() => {
+  const historyLen = detailData.value?.interviewHistory?.length ?? 0;
+  if (currentInterview.value?.status === 'completed' || currentInterview.value?.status === 'cancelled') {
+    return historyLen + 2;
+  }
+  return historyLen + 1;
+});
+
+/** Danh sách các interview_type đã từng được tổ chức cho đơn ứng tuyển này */
+const usedInterviewTypes = computed<string[]>(() => {
+  const types: string[] = [];
+  if (currentInterview.value?.interviewType) {
+    types.push(currentInterview.value.interviewType);
+  }
+  if (detailData.value?.interviewHistory) {
+    for (const h of detailData.value.interviewHistory) {
+      if (h.interviewType && !types.includes(h.interviewType)) {
+        types.push(h.interviewType);
+      }
+    }
+  }
+  return types;
+});
+
+const INTERVIEW_TYPE_LABELS: Record<string, string> = {
+  screening: 'Sơ loại',
+  technical: 'Kỹ thuật',
+  coding: 'Live Coding',
+  system_design: 'System Design',
+  hr: 'Nhân sự',
+  culture_fit: 'Văn hóa',
+  panel: 'Hội đồng',
+  final: 'Vòng cuối',
+  other: 'Phỏng vấn',
+};
+
+const getInterviewTypeLabel = (type?: string | null): string => {
+  if (!type) return 'Phỏng vấn';
+  return INTERVIEW_TYPE_LABELS[type] || type;
+};
+
+const onFeedbackSubmitted = (): void => {
+  showInterviewMore.value = false;
+  const appId = props.application?.applicationId;
+  if (appId) {
+    void loadDetail(appId);
+  }
+};
+
+const getRecommendationChip = (rec?: string): { label: string; class: string } => {
+  switch (rec) {
+    case 'strong_hire':
+      return { label: 'Rất nên tuyển (Strong Hire)', class: 'bg-emerald-100 text-emerald-800 border border-emerald-200' };
+    case 'hire':
+      return { label: 'Đạt yêu cầu (Hire)', class: 'bg-blue-100 text-[#1769e8] border border-blue-200' };
+    case 'no_hire':
+      return { label: 'Chưa đạt (No Hire)', class: 'bg-amber-100 text-amber-800 border border-amber-200' };
+    case 'strong_no_hire':
+      return { label: 'Từ chối (Strong No Hire)', class: 'bg-rose-100 text-rose-800 border border-rose-200' };
+    default:
+      return { label: 'Đã hoàn thành', class: 'bg-slate-100 text-slate-700 border border-slate-200' };
+  }
+};
+
 const isSendOfferDisabled = computed(() => {
   if (updatingStatus.value) return true;
   if (!currentInterview.value) return true;
@@ -370,13 +500,22 @@ const handleNextAction = (): void => {
   void changeStatus(nextAction.value.next);
 };
 
-const onInterviewScheduled = (payload?: { interviewId?: string; meetingLink?: string | null }): void => {
+const onInterviewScheduled = (payload?: { interviewId?: string; meetingLink?: string | null; interviewType?: string }): void => {
+  showInterviewMore.value = false;
   const appId = props.application?.applicationId;
   if (!appId) return;
   if (detailData.value?.id === appId) {
+    // Nếu có buổi phỏng vấn cũ, đẩy vào interviewHistory để stt vòng phỏng vấn cập nhật ngay
+    if (detailData.value.interview) {
+      if (!detailData.value.interviewHistory) {
+        detailData.value.interviewHistory = [];
+      }
+      detailData.value.interviewHistory.unshift({ ...detailData.value.interview });
+    }
     detailData.value.status = 'interview';
     detailData.value.interview = {
-      id: payload?.interviewId || detailData.value.interview?.id || '',
+      id: payload?.interviewId || '',
+      interviewType: payload?.interviewType || 'technical',
       status: 'pending',
       scheduledAt: new Date().toISOString(),
       durationMin: 60,
@@ -717,38 +856,27 @@ const onInterviewEvent = (payload: { applicationId?: string; interviewId?: strin
 };
 
 // ---------------------------------------------------------------------------
-// Panel View Mode (Mở rộng chiều ngang & Phóng to toàn màn hình)
+// Panel View Mode (Phóng to toàn màn hình & Đóng)
 // ---------------------------------------------------------------------------
-const isWide = ref(false);
 const isFullscreen = ref(false);
-
-const toggleWide = (): void => {
-  if (isFullscreen.value) {
-    isFullscreen.value = false;
-  }
-  isWide.value = !isWide.value;
-  emit('wide-change', isWide.value);
-};
-
-const handleClose = (): void => {
-  if (isWide.value) {
-    isWide.value = false;
-    emit('wide-change', false);
-  }
-  emit('close');
-};
 
 const toggleFullscreen = (): void => {
   isFullscreen.value = !isFullscreen.value;
+};
+
+const handleClose = (): void => {
+  if (isFullscreen.value) {
+    isFullscreen.value = false;
+  }
+  emit('close');
 };
 
 const handleGlobalKeydown = (e: KeyboardEvent): void => {
   if (e.key === 'Escape') {
     if (isFullscreen.value) {
       isFullscreen.value = false;
-    } else if (isWide.value) {
-      isWide.value = false;
-      emit('wide-change', false);
+    } else {
+      emit('close');
     }
   }
 };
@@ -767,6 +895,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
   if (countRaf !== null) cancelAnimationFrame(countRaf);
+  if (scrollAnimationId !== null) cancelAnimationFrame(scrollAnimationId);
   if (aiTestPollTimer) clearInterval(aiTestPollTimer);
   cvRO?.disconnect();
   cvRO = null;
@@ -785,32 +914,19 @@ defineExpose({
 </script>
 
 <template>
-  <!-- Aside giữ vị trí footprint 32% trong flex container để danh sách không bị đổi chiều rộng -->
   <aside
-    class="border-t lg:border-t-0 border-[#e9edf3] p-0"
+    ref="panelRef"
+    class="bg-white border-l border-[#e9edf3] scrollbar-thin transition-all"
     :class="[
       isFullscreen
-        ? ''
-        : 'w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] lg:shrink-0 h-full'
+        ? 'fixed inset-0 z-50 overflow-y-auto overflow-x-hidden shadow-2xl'
+        : 'absolute top-0 right-0 bottom-0 z-30 w-full lg:w-[60%] lg:min-w-[650px] shadow-[-16px_0_40px_rgba(31,52,85,0.18)] overflow-y-auto overflow-x-hidden'
     ]"
   >
-    <!-- Khung panel hiển thị: luôn anchor ở right:0 để khi đổi width sẽ phóng to/thu nhỏ mượt mà từ kích thước cũ -->
     <div
-      :class="[
-        isFullscreen
-          ? 'fixed inset-0 z-40 bg-white overflow-y-auto overflow-x-hidden scrollbar-thin shadow-2xl'
-          : [
-              'absolute top-0 right-0 bottom-0 bg-white border-l border-[#e9edf3] p-0 overflow-y-auto overflow-x-hidden scrollbar-thin panel-expand-transition',
-              isWide
-                ? 'z-30 w-full lg:w-[60%] lg:min-w-[650px] lg:max-w-none shadow-[-16px_0_40px_rgba(31,52,85,0.18)]'
-                : 'z-10 w-full lg:w-[32%] lg:min-w-[390px] lg:max-w-[500px] shadow-none'
-            ]
-      ]"
+      class="border-none bg-white transition-all duration-300"
+      :class="isFullscreen ? 'max-w-5xl mx-auto min-h-screen border-x border-[#edf0f4]' : ''"
     >
-      <div
-        class="border-none bg-white transition-all duration-300"
-        :class="isFullscreen ? 'max-w-5xl mx-auto min-h-screen border-x border-[#edf0f4]' : 'lg:min-w-[390px]'"
-      >
       <!-- Empty state khi chưa chọn application -->
       <div v-if="!application || !application.applicationId" class="p-8 text-center text-[#94a3b8]">
         <Inbox class="w-10 h-10 mx-auto mb-2 text-[#cbd5e1]" />
@@ -820,21 +936,8 @@ defineExpose({
       <template v-else>
         <!-- Header block -->
         <div class="relative border-b border-[#edf0f4] px-5 pt-5 pb-5">
-          <!-- Action buttons group: Mở rộng / Phóng to / Đóng -->
+          <!-- Action buttons group: Phóng to / Đóng -->
           <div class="absolute top-4 right-4 flex items-center gap-1 z-10">
-            <!-- Nút mở rộng chiều ngang 60% (chỉ hiện khi không ở fullscreen) -->
-            <button
-              v-if="!isFullscreen"
-              type="button"
-              class="grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition cursor-pointer"
-              :class="isWide ? 'bg-blue-50 text-[#1769e8] font-semibold' : ''"
-              :title="isWide ? 'Thu hẹp bảng chi tiết (32%)' : 'Mở rộng bảng chi tiết (60%)'"
-              aria-label="Mở rộng bảng chi tiết"
-              @click="toggleWide"
-            >
-              <Columns2 class="h-4 w-4" />
-            </button>
-
             <!-- Nút phóng to toàn màn hình -->
             <button
               type="button"
@@ -852,7 +955,7 @@ defineExpose({
             <button
               type="button"
               class="grid h-8 w-8 place-items-center rounded-lg text-[#94a3b8] hover:bg-[#f1f5f9] hover:text-[#334155] transition cursor-pointer"
-              title="Đóng chi tiết"
+              title="Đóng chi tiết (Esc)"
               aria-label="Đóng chi tiết ứng viên"
               @click="handleClose"
             >
@@ -861,7 +964,7 @@ defineExpose({
           </div>
 
           <!-- Row 1: Avatar + identity -->
-          <div class="flex items-center gap-4 pr-28">
+          <div class="flex items-center gap-4 pr-20">
             <div
               class="relative h-20 w-20 shrink-0 rounded-xl overflow-hidden bg-gradient-to-br from-primary-50 to-primary-100 ring-4 ring-[#f1f4f8]"
               :aria-label="application.name"
@@ -1495,7 +1598,7 @@ defineExpose({
         </div>
 
         <!-- Action buttons -->
-        <div class="sticky bottom-0 z-10 -mx-5 bg-white border-t border-[#edf0f4] px-6 py-3">
+        <div class="sticky bottom-0 z-10 -mx-5 bg-white border-t border-gray-100 px-6 py-3.5">
           <!-- Khi đơn ở trạng thái rejected: Cho phép HR đưa lại vào sàng lọc -->
           <div v-if="application.status === 'rejected'" class="flex items-center justify-between gap-3">
             <span class="text-[11.5px] text-[#64748b]">
@@ -1504,7 +1607,7 @@ defineExpose({
             <button
               type="button"
               :disabled="updatingStatus || !canOpenReferences"
-              class="flex h-9 items-center justify-center gap-2 rounded-lg bg-[#1769e8] px-4 text-[11px] font-semibold text-white shadow-sm transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed"
+              class="flex items-center justify-center gap-2 rounded-xl bg-[#4338ca] hover:bg-[#3730a3] px-4 py-2 text-xs font-semibold text-white shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               title="Đưa lại đơn vào giai đoạn Sàng lọc"
               @click="changeStatus('screening')"
             >
@@ -1542,88 +1645,398 @@ defineExpose({
             <!-- Case B: Đang chờ ứng viên xác nhận -->
             <div
               v-else-if="!currentInterview || currentInterview.status === 'pending'"
-              class="rounded-xl border border-blue-200 bg-blue-50/70 p-3 flex items-center justify-between gap-3"
+              class="rounded-xl border border-blue-200 bg-blue-50/70 p-3 space-y-2.5"
             >
-              <div class="flex items-center gap-2 text-[#1769e8]">
-                <Clock class="h-4 w-4 shrink-0" />
-                <div class="text-xs">
-                  <span class="font-semibold text-slate-800">Đã gửi lời mời phỏng vấn</span>
-                  <p class="text-[11px] text-slate-500">Đang chờ ứng viên phản hồi xác nhận tham gia...</p>
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 text-[#1769e8]">
+                  <Clock class="h-4 w-4 shrink-0" />
+                  <div class="text-xs">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="font-semibold text-slate-800">
+                        {{ currentInterviewRound > 1 ? `Đã gửi lời mời phỏng vấn vòng ${currentInterviewRound}` : 'Đã gửi lời mời phỏng vấn' }}
+                      </span>
+                      <span v-if="currentInterview?.interviewType" class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-[#1769e8]">
+                        {{ getInterviewTypeLabel(currentInterview.interviewType) }}
+                      </span>
+                    </div>
+                    <p class="text-[11px] text-slate-500">Đang chờ ứng viên phản hồi xác nhận tham gia...</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  @click="scheduleInterviewOpen = true"
+                >
+                  Dời lịch
+                </button>
+              </div>
+
+              <!-- Nút Xem thêm (See more) cho nhận xét & lịch sử các vòng trước nếu có -->
+              <div
+                v-if="detailData?.interviewHistory && detailData.interviewHistory.length > 0"
+                class="pt-1.5 border-t border-blue-200/60"
+              >
+                <div class="flex items-center justify-between">
+                  <span class="text-[10.5px] text-slate-500 font-medium">Chi tiết nhận xét & lịch sử các vòng trước</span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1769e8] hover:text-blue-700 transition cursor-pointer select-none"
+                    @click="showInterviewMore = !showInterviewMore"
+                  >
+                    <span>{{ showInterviewMore ? 'Thu gọn' : 'Xem thêm' }}</span>
+                    <ChevronDown class="h-3.5 w-3.5 transition-transform duration-200" :class="showInterviewMore ? 'rotate-180' : ''" />
+                  </button>
+                </div>
+
+                <!-- Khối nội dung bung ra khi bấm Xem thêm -->
+                <div v-if="showInterviewMore" class="space-y-2 mt-2 pt-1.5 border-t border-blue-100/80">
+                  <div
+                    v-for="(hist, idx) in detailData.interviewHistory"
+                    :key="hist.id"
+                    class="rounded-lg bg-white p-2.5 border border-blue-100 space-y-1.5 shadow-xs text-xs"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="min-w-0">
+                        <span class="font-bold text-slate-800">
+                          Vòng {{ detailData.interviewHistory.length - idx }}: {{ getInterviewTypeLabel(hist.interviewType) }}
+                        </span>
+                        <span class="text-slate-400 ml-1.5 text-[10px]">
+                          {{ formatDate(hist.scheduledAt) }}
+                        </span>
+                      </div>
+                      <span
+                        v-if="hist.feedback?.recommendation"
+                        class="rounded px-1.5 py-0.5 text-[9px] font-bold shrink-0"
+                        :class="getRecommendationChip(hist.feedback.recommendation).class"
+                      >
+                        {{ getRecommendationChip(hist.feedback.recommendation).label }}
+                      </span>
+                      <span v-else class="text-slate-400 text-[9.5px] shrink-0 capitalize">
+                        {{ hist.status }}
+                      </span>
+                    </div>
+
+                    <!-- Nhận xét của vòng trước -->
+                    <div v-if="hist.feedback?.comments" class="bg-slate-50 rounded p-1.5 text-[11px] text-slate-700">
+                      <span class="font-semibold text-slate-400 text-[10px]">Nhận xét:</span>
+                      <p class="italic text-slate-800">"{{ hist.feedback.comments }}"</p>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                @click="scheduleInterviewOpen = true"
-              >
-                Dời lịch
-              </button>
             </div>
 
             <!-- Case C: Ứng viên đã xác nhận tham gia -->
             <div
               v-else-if="currentInterview.status === 'confirmed'"
-              class="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 flex items-center justify-between gap-3"
+              class="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 space-y-2.5"
             >
-              <div class="flex items-center gap-2 text-emerald-800">
-                <CheckCircle2 class="h-4 w-4 shrink-0 text-emerald-600" />
-                <div class="text-xs">
-                  <span class="font-semibold">Ứng viên đã xác nhận tham gia</span>
-                  <p class="text-[11px] text-emerald-700">Buổi phỏng vấn đã sẵn sàng diễn ra.</p>
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 text-emerald-800">
+                  <CheckCircle2 class="h-4 w-4 shrink-0 text-emerald-600" />
+                  <div class="text-xs">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="font-semibold">
+                        {{ currentInterviewRound > 1 ? `Ứng viên đã xác nhận tham gia vòng ${currentInterviewRound}` : 'Ứng viên đã xác nhận tham gia' }}
+                      </span>
+                      <span v-if="currentInterview?.interviewType" class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                        {{ getInterviewTypeLabel(currentInterview.interviewType) }}
+                      </span>
+                    </div>
+                    <p class="text-[11px] text-emerald-700">Buổi phỏng vấn đã sẵn sàng diễn ra.</p>
+                  </div>
+                </div>
+                <div class="flex flex-col gap-1.5 shrink-0 min-w-[96px]">
+                  <a
+                    v-if="currentInterview.meetingLink"
+                    :href="currentInterview.meetingLink"
+                    target="_blank"
+                    class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1769e8] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-blue-700 transition"
+                  >
+                    <Video class="h-3 w-3" />
+                    Vào Meet
+                  </a>
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-semibold shadow-xs transition cursor-pointer"
+                    title="Đánh giá & Hoàn thành phỏng vấn"
+                    @click="feedbackModalOpen = true"
+                  >
+                    <Check class="h-3.5 w-3.5" />
+                    Hoàn thành
+                  </button>
                 </div>
               </div>
-              <a
-                v-if="currentInterview.meetingLink"
-                :href="currentInterview.meetingLink"
-                target="_blank"
-                class="inline-flex items-center gap-1 rounded-lg bg-[#1769e8] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-700 transition"
+
+              <!-- Nút Xem thêm (See more) cho nhận xét & lịch sử các vòng trước nếu có -->
+              <div
+                v-if="detailData?.interviewHistory && detailData.interviewHistory.length > 0"
+                class="pt-1.5 border-t border-emerald-200/60"
               >
-                <Video class="h-3 w-3" />
-                Vào Meet
-              </a>
+                <div class="flex items-center justify-between">
+                  <span class="text-[10.5px] text-emerald-800 font-medium">Chi tiết nhận xét & lịch sử các vòng trước</span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 transition cursor-pointer select-none"
+                    @click="showInterviewMore = !showInterviewMore"
+                  >
+                    <span>{{ showInterviewMore ? 'Thu gọn' : 'Xem thêm' }}</span>
+                    <ChevronDown class="h-3.5 w-3.5 transition-transform duration-200" :class="showInterviewMore ? 'rotate-180' : ''" />
+                  </button>
+                </div>
+
+                <!-- Khối nội dung bung ra khi bấm Xem thêm -->
+                <div v-if="showInterviewMore" class="space-y-2 mt-2 pt-1.5 border-t border-emerald-100">
+                  <div
+                    v-for="(hist, idx) in detailData.interviewHistory"
+                    :key="hist.id"
+                    class="rounded-lg bg-white p-2.5 border border-emerald-100 space-y-1.5 shadow-xs text-xs"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="min-w-0">
+                        <span class="font-bold text-slate-800">
+                          Vòng {{ detailData.interviewHistory.length - idx }}: {{ getInterviewTypeLabel(hist.interviewType) }}
+                        </span>
+                        <span class="text-slate-400 ml-1.5 text-[10px]">
+                          {{ formatDate(hist.scheduledAt) }}
+                        </span>
+                      </div>
+                      <span
+                        v-if="hist.feedback?.recommendation"
+                        class="rounded px-1.5 py-0.5 text-[9px] font-bold shrink-0"
+                        :class="getRecommendationChip(hist.feedback.recommendation).class"
+                      >
+                        {{ getRecommendationChip(hist.feedback.recommendation).label }}
+                      </span>
+                    </div>
+
+                    <div v-if="hist.feedback?.comments" class="bg-slate-50 rounded p-1.5 text-[11px] text-slate-700">
+                      <span class="font-semibold text-slate-400 text-[10px]">Nhận xét:</span>
+                      <p class="italic text-slate-800">"{{ hist.feedback.comments }}"</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Case D: Buổi phỏng vấn bị huỷ hoặc ứng viên từ chối -->
             <div
               v-else-if="currentInterview.status === 'cancelled'"
-              class="rounded-xl border border-rose-200 bg-rose-50/80 p-3 flex items-center justify-between gap-3"
+              class="rounded-xl border border-rose-200 bg-rose-50/80 p-3 space-y-2.5"
             >
-              <div class="flex items-center gap-2 text-rose-800">
-                <AlertCircle class="h-4 w-4 shrink-0 text-rose-600" />
-                <div class="text-xs">
-                  <span class="font-semibold">Ứng viên đã từ chối phỏng vấn</span>
-                  <p v-if="currentInterview.cancelReason" class="text-[11px] text-rose-700 mt-0.5 italic">
-                    "{{ currentInterview.cancelReason }}"
-                  </p>
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 text-rose-800">
+                  <AlertCircle class="h-4 w-4 shrink-0 text-rose-600" />
+                  <div class="text-xs">
+                    <span class="font-semibold">
+                      {{ currentInterviewRound > 1 ? `Ứng viên đã từ chối phỏng vấn vòng ${currentInterviewRound}` : 'Ứng viên đã từ chối phỏng vấn' }}
+                    </span>
+                    <p v-if="currentInterview.cancelReason" class="text-[11px] text-rose-700 mt-0.5 italic">
+                      "{{ currentInterview.cancelReason }}"
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="rounded-lg border border-rose-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-rose-700 hover:bg-rose-50 transition cursor-pointer shrink-0"
+                  @click="scheduleInterviewOpen = true"
+                >
+                  Đặt lại lịch
+                </button>
+              </div>
+
+              <!-- Nút Xem thêm (See more) cho nhận xét & lịch sử các vòng trước nếu có -->
+              <div
+                v-if="detailData?.interviewHistory && detailData.interviewHistory.length > 0"
+                class="pt-1.5 border-t border-rose-200/60"
+              >
+                <div class="flex items-center justify-between">
+                  <span class="text-[10.5px] text-rose-800 font-medium">Chi tiết nhận xét & lịch sử các vòng trước</span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 hover:text-rose-900 transition cursor-pointer select-none"
+                    @click="showInterviewMore = !showInterviewMore"
+                  >
+                    <span>{{ showInterviewMore ? 'Thu gọn' : 'Xem thêm' }}</span>
+                    <ChevronDown class="h-3.5 w-3.5 transition-transform duration-200" :class="showInterviewMore ? 'rotate-180' : ''" />
+                  </button>
+                </div>
+
+                <!-- Khối nội dung bung ra khi bấm Xem thêm -->
+                <div v-if="showInterviewMore" class="space-y-2 mt-2 pt-1.5 border-t border-rose-100">
+                  <div
+                    v-for="(hist, idx) in detailData.interviewHistory"
+                    :key="hist.id"
+                    class="rounded-lg bg-white p-2.5 border border-rose-100 space-y-1.5 shadow-xs text-xs"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="min-w-0">
+                        <span class="font-bold text-slate-800">
+                          Vòng {{ detailData.interviewHistory.length - idx }}: {{ getInterviewTypeLabel(hist.interviewType) }}
+                        </span>
+                        <span class="text-slate-400 ml-1.5 text-[10px]">
+                          {{ formatDate(hist.scheduledAt) }}
+                        </span>
+                      </div>
+                      <span
+                        v-if="hist.feedback?.recommendation"
+                        class="rounded px-1.5 py-0.5 text-[9px] font-bold shrink-0"
+                        :class="getRecommendationChip(hist.feedback.recommendation).class"
+                      >
+                        {{ getRecommendationChip(hist.feedback.recommendation).label }}
+                      </span>
+                      <span v-else class="text-slate-400 text-[9.5px] shrink-0 capitalize">
+                        {{ hist.status }}
+                      </span>
+                    </div>
+
+                    <!-- Nhận xét của vòng trước -->
+                    <div v-if="hist.feedback?.comments" class="bg-slate-50 rounded p-1.5 text-[11px] text-slate-700">
+                      <span class="font-semibold text-slate-400 text-[10px]">Nhận xét:</span>
+                      <p class="italic text-slate-800">"{{ hist.feedback.comments }}"</p>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                class="rounded-lg border border-rose-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-rose-700 hover:bg-rose-50 transition cursor-pointer"
-                @click="scheduleInterviewOpen = true"
+            </div>
+
+            <!-- Case E: Buổi phỏng vấn đã hoàn thành (Đã nộp feedback) -->
+            <div
+              v-else-if="currentInterview.status === 'completed'"
+              class="rounded-xl border border-blue-200 bg-blue-50/70 p-3 space-y-2.5"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 min-w-0">
+                  <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-[#1769e8] shrink-0">
+                    <CheckCircle2 class="h-4 w-4" />
+                  </div>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="text-xs font-bold text-slate-800">
+                        Đã hoàn thành vòng {{ currentInterviewRound }}
+                      </span>
+                      <span v-if="currentInterview?.interviewType" class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-[#1769e8]">
+                        {{ getInterviewTypeLabel(currentInterview.interviewType) }}
+                      </span>
+                    </div>
+                    <p class="text-[10.5px] text-slate-500">
+                      {{ formatDate(currentInterview.scheduledAt) }}
+                    </p>
+                  </div>
+                </div>
+
+                <!-- Cột phải: Chip kết quả & Button Thêm lượt phỏng vấn (trên - dưới) -->
+                <div class="flex flex-col items-end gap-1.5 shrink-0">
+                  <span
+                    v-if="currentInterview.feedback?.recommendation"
+                    class="rounded-full px-2 py-0.5 text-[9.5px] font-bold shrink-0 text-center"
+                    :class="getRecommendationChip(currentInterview.feedback.recommendation).class"
+                  >
+                    {{ getRecommendationChip(currentInterview.feedback.recommendation).label }}
+                  </span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-1 rounded-lg bg-[#1769e8] hover:bg-blue-700 text-white px-2.5 py-1 text-[11px] font-semibold shadow-xs transition cursor-pointer"
+                    title="Lên lịch thêm vòng phỏng vấn khác"
+                    @click="scheduleInterviewOpen = true"
+                  >
+                    <Plus class="h-3.5 w-3.5" />
+                    Thêm vòng PV
+                  </button>
+                </div>
+              </div>
+
+              <!-- Nút Xem thêm (See more) cho nhận xét & lịch sử các vòng -->
+              <div
+                v-if="currentInterview.feedback?.comments || (detailData?.interviewHistory && detailData.interviewHistory.length > 0)"
+                class="pt-1.5 border-t border-blue-200/60"
               >
-                Đặt lại lịch
-              </button>
+                <div class="flex items-center justify-between">
+                  <span class="text-[10.5px] text-slate-500 font-medium">Chi tiết nhận xét & lịch sử</span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1769e8] hover:text-blue-700 transition cursor-pointer select-none"
+                    @click="showInterviewMore = !showInterviewMore"
+                  >
+                    <span>{{ showInterviewMore ? 'Thu gọn' : 'Xem thêm' }}</span>
+                    <ChevronDown class="h-3.5 w-3.5 transition-transform duration-200" :class="showInterviewMore ? 'rotate-180' : ''" />
+                  </button>
+                </div>
+
+                <!-- Khối nội dung bung ra khi bấm Xem thêm -->
+                <div v-if="showInterviewMore" class="space-y-2 mt-2 pt-1.5 border-t border-blue-100/80">
+                  <!-- Nhận xét của người phỏng vấn -->
+                  <div
+                    v-if="currentInterview.feedback?.comments"
+                    class="rounded-lg bg-white p-2.5 border border-blue-100 text-[11.5px] text-slate-700 leading-relaxed shadow-xs"
+                  >
+                    <p class="text-[10px] font-semibold text-slate-400 mb-0.5">Nhận xét của người phỏng vấn:</p>
+                    <p class="italic text-slate-800">"{{ currentInterview.feedback.comments }}"</p>
+                  </div>
+
+                  <!-- Lịch sử các vòng phỏng vấn trước đó -->
+                  <div
+                    v-if="detailData?.interviewHistory && detailData.interviewHistory.length > 0"
+                    class="space-y-1.5 pt-1 border-t border-blue-100"
+                  >
+                    <p class="text-[10.5px] font-bold text-slate-600 flex items-center gap-1">
+                      <Layers class="h-3 w-3 text-slate-400" />
+                      Lịch sử các vòng trước ({{ detailData.interviewHistory.length }}):
+                    </p>
+                    <div class="space-y-1.5">
+                      <div
+                        v-for="(hist, idx) in detailData.interviewHistory"
+                        :key="hist.id"
+                        class="rounded-lg bg-white p-2.5 border border-blue-100 space-y-1.5 shadow-xs text-xs"
+                      >
+                        <div class="flex items-center justify-between gap-2">
+                          <div class="min-w-0">
+                            <span class="font-bold text-slate-800">
+                              Vòng {{ detailData.interviewHistory.length - idx }}: {{ getInterviewTypeLabel(hist.interviewType) }}
+                            </span>
+                            <span class="text-slate-400 ml-1.5 text-[10px]">
+                              {{ formatDate(hist.scheduledAt) }}
+                            </span>
+                          </div>
+                          <span
+                            v-if="hist.feedback?.recommendation"
+                            class="rounded px-1.5 py-0.5 text-[9px] font-bold shrink-0"
+                            :class="getRecommendationChip(hist.feedback.recommendation).class"
+                          >
+                            {{ getRecommendationChip(hist.feedback.recommendation).label }}
+                          </span>
+                          <span v-else class="text-slate-400 text-[9.5px] shrink-0 capitalize">
+                            {{ hist.status }}
+                          </span>
+                        </div>
+
+                        <!-- Nhận xét của vòng trước -->
+                        <div v-if="hist.feedback?.comments" class="bg-slate-50 rounded p-1.5 text-[11px] text-slate-700">
+                          <span class="font-semibold text-slate-400 text-[10px]">Nhận xét:</span>
+                          <p class="italic text-slate-800">"{{ hist.feedback.comments }}"</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Nút hành động giai đoạn interview: Từ chối hoặc Gửi Offer -->
-            <div class="grid grid-cols-2 gap-3 pt-1">
-              <div class="flex items-center justify-center">
-                <span
-                  role="button"
-                  tabindex="0"
-                  class="cursor-pointer select-none text-[12px] font-medium text-rose-500 underline underline-offset-2 transition hover:text-rose-600"
-                  :class="updatingStatus ? 'pointer-events-none opacity-40' : ''"
-                  title="Đánh giá không đạt phỏng vấn"
-                  @click="changeStatus('rejected')"
-                >
-                  Không đạt
-                </span>
-              </div>
+            <div class="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                :disabled="updatingStatus"
+                class="rounded-xl border border-gray-200 bg-white py-2 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 hover:text-rose-600 hover:border-rose-200 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+                title="Đánh giá không đạt phỏng vấn"
+                @click="changeStatus('rejected')"
+              >
+                Không đạt
+              </button>
               <button
                 type="button"
                 :disabled="isSendOfferDisabled"
-                class="flex h-9 items-center justify-center gap-2 rounded-lg bg-[#5b4eea] text-[11px] font-semibold text-white shadow-sm transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                class="rounded-xl bg-[#4338ca] hover:bg-[#3730a3] py-2 text-xs font-semibold text-white shadow-sm transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 :title="sendOfferTooltip"
                 @click="changeStatus('offered')"
               >
@@ -1635,24 +2048,20 @@ defineExpose({
           </div>
 
           <!-- Các trạng thái có nextAction thông thường -->
-          <div v-else-if="nextAction" class="grid grid-cols-2 gap-3">
-            <div class="flex items-center justify-center">
-              <span
-                role="button"
-                tabindex="0"
-                class="cursor-pointer select-none text-[12px] font-medium text-rose-500 underline underline-offset-2 transition hover:text-rose-600"
-                :class="updatingStatus || !canOpenReferences ? 'pointer-events-none opacity-40' : ''"
-                title="Từ chối đơn ứng tuyển này"
-                @click="changeStatus('rejected')"
-                @keydown.enter="changeStatus('rejected')"
-              >
-                Chưa phù hợp
-              </span>
-            </div>
+          <div v-else-if="nextAction" class="grid grid-cols-2 gap-2.5">
             <button
               type="button"
               :disabled="updatingStatus || !canOpenReferences"
-              class="flex h-9 items-center justify-center gap-2 rounded-lg bg-[#5b4eea] text-[11px] font-semibold text-white shadow-sm transition hover:bg-[#0f5ccc] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              class="rounded-xl border border-gray-200 bg-white py-2 text-xs font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 hover:text-rose-600 hover:border-rose-200 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+              title="Từ chối đơn ứng tuyển này"
+              @click="changeStatus('rejected')"
+            >
+              Chưa phù hợp
+            </button>
+            <button
+              type="button"
+              :disabled="updatingStatus || !canOpenReferences"
+              class="rounded-xl bg-[#4338ca] hover:bg-[#3730a3] py-2 text-xs font-semibold text-white shadow-sm transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               :title="`Chuyển đơn sang ${nextAction.next}`"
               @click="handleNextAction"
             >
@@ -1672,7 +2081,6 @@ defineExpose({
         </div>
       </template>
     </div>
-  </div>
     <!-- Modals -->
     <ReferencesModal
       :application-id="application?.applicationId ?? ''"
@@ -1713,21 +2121,25 @@ defineExpose({
       :candidate-name="application?.name || 'Ứng viên'"
       :candidate-email="application?.email"
       :job-title="detailData?.jobTitle || application?.position"
+      :used-interview-types="usedInterviewTypes"
+      :round-number="nextInterviewRound"
       @close="scheduleInterviewOpen = false"
       @scheduled="onInterviewScheduled"
+    />
+
+    <InterviewFeedbackModal
+      :open="feedbackModalOpen"
+      :interview-id="currentInterview?.id ?? ''"
+      :interview-type="currentInterview?.interviewType"
+      :candidate-name="application?.name || 'Ứng viên'"
+      :job-title="detailData?.jobTitle || application?.position"
+      @close="feedbackModalOpen = false"
+      @submitted="onFeedbackSubmitted"
     />
   </aside>
 </template>
 
 <style scoped>
-.panel-expand-transition {
-  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
-              min-width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
-              max-width 0.35s cubic-bezier(0.25, 1, 0.5, 1),
-              box-shadow 0.35s cubic-bezier(0.25, 1, 0.5, 1);
-  will-change: width, min-width, max-width, box-shadow;
-}
-
 .match-ring {
   animation: draw-ring 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
