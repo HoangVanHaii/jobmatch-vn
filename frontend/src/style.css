@@ -55,6 +55,7 @@
   html {
     font-family: 'Poppins', system-ui, -apple-system, sans-serif;
     scrollbar-gutter: stable;
+    background-color: #f9fafb;
   }
   body {
     @apply bg-gray-50 text-gray-900 font-poppins;
@@ -225,6 +226,11 @@ html.no-page-scroll,
 html.no-page-scroll body {
   overflow: hidden !important;
   scrollbar-gutter: auto !important;
+}
+
+/* Khóa cuộn khi modal mở: dải scrollbar-gutter của html đổi sang màu backdrop (bg-slate-900/60 trên #f9fafb) để triệt tiêu dải trắng */
+html.scroll-locked {
+  background-color: var(--scroll-lock-bg, #6d727e) !important;
 }
 
 /* ============================================================================

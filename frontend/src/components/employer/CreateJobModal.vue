@@ -38,6 +38,7 @@ import {
 import { jobApi } from '@services/job.api';
 import { companyApi } from '@services/company.api';
 import { companyMemberApi } from '@services/companyMember.api';
+import { lockBodyScroll, unlockBodyScroll } from '@composables/useScrollLock';
 import { useAuthStore } from '@stores/auth';
 import { useToastStore } from '@stores/toast';
 import type { JobLevel, JobType, WorkType, JobExtraData, PaymentCycleType, HiringStatus, JobDetail } from '@/types/job';
@@ -1062,24 +1063,6 @@ function resetForm() {
 // Modal behavior: scroll lock + ESC handler
 // ============================================================================
 const dialogEl = ref<HTMLDivElement | null>(null);
-let prevBodyOverflow = '';
-let prevBodyPaddingRight = '';
-
-const lockScroll = (): void => {
-  prevBodyOverflow = document.body.style.overflow;
-  prevBodyPaddingRight = document.body.style.paddingRight;
-  const scrollbarGap = window.innerWidth - document.documentElement.clientWidth;
-  document.body.style.overflow = 'hidden';
-  if (scrollbarGap > 0) {
-    document.body.style.paddingRight = `${scrollbarGap}px`;
-  }
-};
-
-const unlockScroll = (): void => {
-  document.body.style.overflow = prevBodyOverflow;
-  document.body.style.paddingRight = prevBodyPaddingRight;
-};
-
 let triggerEl: HTMLElement | null = null;
 
 const onKeydown = (e: KeyboardEvent): void => {
@@ -1100,7 +1083,7 @@ watch(
   async (isOpen) => {
     if (isOpen) {
       triggerEl = (document.activeElement as HTMLElement) || null;
-      lockScroll();
+      lockBodyScroll();
       window.addEventListener('keydown', onKeydown);
       if (!company.value) {
         await fetchCompany();
@@ -1115,7 +1098,7 @@ watch(
       const firstInput = dialogEl.value?.querySelector<HTMLElement>('input, select');
       firstInput?.focus();
     } else {
-      unlockScroll();
+      unlockBodyScroll();
       window.removeEventListener('keydown', onKeydown);
       await nextTick();
       triggerEl?.focus();
@@ -1136,7 +1119,7 @@ watch(
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
-  unlockScroll();
+  unlockBodyScroll();
 });
 </script>
 
@@ -1152,7 +1135,7 @@ onBeforeUnmount(() => {
       >
         <!-- Modal Backdrop (Click bên ngoài để đóng) -->
         <div
-          class="absolute inset-0 bg-black/50 backdrop-blur-[2px] transition-opacity"
+          class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
           @mousedown="handleClose"
         />
 

@@ -10,8 +10,8 @@ const activeTab = ref<'upcoming' | 'past' | 'all'>('upcoming');
 </script>
 
 <template>
-  <div class="font-poppins min-h-screen bg-gray-50/50 p-5 md:p-8">
-    <div class="max-w-7xl mx-auto space-y-6">
+  <div class="font-poppins w-full min-h-full flex-1 bg-gray-50/50 p-5 md:p-8">
+    <div class="w-full max-w-7xl mx-auto space-y-6">
       <!-- Page Header -->
       <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>

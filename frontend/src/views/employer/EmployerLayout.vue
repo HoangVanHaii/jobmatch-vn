@@ -68,7 +68,7 @@ const getRouteKey = (route: RouteLocationNormalizedLoaded): string => {
         </div>
       </header>
 
-      <main class="flex-1 min-w-0">
+      <main class="flex-1 min-w-0 flex flex-col">
         <router-view v-slot="{ Component, route }">
           <Transition name="page-fade" mode="out-in">
             <component :is="Component" :key="getRouteKey(route)" />
@@ -82,17 +82,16 @@ const getRouteKey = (route: RouteLocationNormalizedLoaded): string => {
 <style>
 /* Page Transition đồng bộ cho các trang Employer - Phong cách SaaS cao cấp */
 .page-fade-enter-active {
-  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-              transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity;
 }
 
 .page-fade-leave-active {
-  transition: opacity 0.12s ease-out;
+  transition: opacity 0.06s ease-in;
 }
 
 .page-fade-enter-from {
   opacity: 0;
-  transform: translateY(5px);
 }
 
 .page-fade-leave-to {

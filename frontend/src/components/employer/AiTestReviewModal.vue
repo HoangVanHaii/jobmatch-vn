@@ -8,8 +8,9 @@
  * Props: open, test (full detail từ GET /ai-tests/:id), loading, assigning.
  * Emits: close, assign — parent tự gọi API (component pure).
  */
-import { computed } from 'vue'
+import { computed, toRef } from 'vue'
 import { X, Loader2, Send, CheckCircle2, Clock, HelpCircle } from 'lucide-vue-next'
+import { useScrollLock } from '@composables/useScrollLock'
 import type { AiTestDetail } from '@/services/aiTest.api'
 
 const props = withDefaults(
@@ -24,6 +25,8 @@ const props = withDefaults(
     canAssign: true,
   },
 )
+
+useScrollLock(toRef(props, 'open'))
 
 const emit = defineEmits<{ close: []; assign: [] }>()
 

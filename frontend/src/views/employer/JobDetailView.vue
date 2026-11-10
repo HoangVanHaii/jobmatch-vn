@@ -27,6 +27,7 @@ import UpgradePricing from '@components/pricing/UpgradePricing.vue';
 import type { JobDetail, JobStatus } from '@/types/job';
 import { formatDate, formatDateTime } from '@/utils/format';
 import { useSocket } from '@/composables/useSocket';
+import { useScrollLock } from '@composables/useScrollLock';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -135,6 +136,7 @@ const hasOpenedAssign = ref(false);
 const companyMembers = ref<CompanyMember[]>([]);
 const membersLoading = ref(false);
 const assignModalOpen = ref(false);
+useScrollLock(assignModalOpen);
 const assigning = ref(false);
 const selectedAssigneeId = ref<string>('');
 const assigneeSearchQuery = ref<string>('');
@@ -1259,6 +1261,7 @@ const goToAppPage = (n: number): void => {
 
 // Modal chi tiết đơn ứng tuyển
 const showAppDetailModal = ref(false);
+useScrollLock(showAppDetailModal);
 const appDetailLoading = ref(false);
 const selectedAppItem = ref<JobApplicationItem | null>(null);
 const selectedAppDetail = ref<ApplicationDetail | null>(null);
@@ -1478,13 +1481,13 @@ useSocket('ai-test:ready', (payload: any) => {
 </script>
 
 <template>
-  <div class="w-full min-h-screen bg-white relative pb-10 font-poppins text-gray-900">
+  <div class="w-full min-h-full flex-1 bg-white relative pb-10 font-poppins text-gray-900">
 
     <!-- 1. SKELETON LOADING -->
     <div v-if="loading" class="animate-pulse">
       <!-- 1. Header Skeleton -->
       <div class="bg-white">
-        <div class="max-w-[1240px] mx-auto px-6 lg:px-8 pt-5 pb-4">
+        <div class="w-full max-w-[1240px] mx-auto px-6 lg:px-8 pt-5 pb-4">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
             <!-- Trái: Back button + Title + Badges -->
             <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
@@ -1517,7 +1520,7 @@ useSocket('ai-test:ready', (payload: any) => {
 
       <!-- 2. Tabs Row Skeleton -->
       <div class="bg-white">
-        <div class="max-w-[1240px] mx-auto px-6 lg:px-8 pt-2.5 pb-2.5">
+        <div class="w-full max-w-[1240px] mx-auto px-6 lg:px-8 pt-2.5 pb-2.5">
           <div class="flex items-center gap-4">
             <div class="h-8 w-28 rounded-lg bg-gray-200"></div>
             <div class="h-8 w-32 rounded-lg bg-gray-200"></div>
@@ -1528,7 +1531,7 @@ useSocket('ai-test:ready', (payload: any) => {
       </div>
 
       <!-- 3. Body Skeleton (2 Cột 67% - 33%) -->
-      <div class="max-w-[1240px] mx-auto p-4 sm:p-5 lg:p-6">
+      <div class="w-full max-w-[1240px] mx-auto p-4 sm:p-5 lg:p-6">
         <div class="flex flex-col lg:flex-row gap-6 lg:gap-8 items-start">
           <!-- Cột trái (67%) -->
           <div class="w-full lg:w-[67%] space-y-6">
@@ -1665,7 +1668,7 @@ useSocket('ai-test:ready', (payload: any) => {
            KHU VỰC B: JOB HEADER (TẦNG 0 - 0ms)
            =================================================================== -->
       <div class="bg-white">
-        <div class="jd-stagger jd-d0 max-w-[1240px] mx-auto px-6 lg:px-8 pt-5 pb-4">
+        <div class="jd-stagger jd-d0 w-full max-w-[1240px] mx-auto px-6 lg:px-8 pt-5 pb-4">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <!-- Bên trái: Nút quay lại, Tên công việc, Badges trạng thái -->
           <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
@@ -1958,7 +1961,7 @@ useSocket('ai-test:ready', (payload: any) => {
            =================================================================== -->
       <div class="bg-white">
         <nav
-          class="jd-stagger jd-d1 relative max-w-[1240px] mx-auto px-6 lg:px-8 flex items-center gap-6 sm:gap-8 text-xs select-none"
+          class="jd-stagger jd-d1 relative w-full max-w-[1240px] mx-auto px-6 lg:px-8 flex items-center gap-6 sm:gap-8 text-xs select-none"
           aria-label="Job Detail Tabs"
         >
           <!-- Tab 1: Thông tin (Information) -->
@@ -2097,7 +2100,7 @@ useSocket('ai-test:ready', (payload: any) => {
                NỘI DUNG TAB 1: THÔNG TIN (Layout 2 cột: 67% - 33%)
                =================================================================== -->
           <main v-if="activeTab === 'information'" key="information" class="flex-1 min-w-0 bg-white">
-            <div class="max-w-[1240px] mx-auto flex flex-col lg:flex-row">
+            <div class="w-full max-w-[1240px] mx-auto flex flex-col lg:flex-row">
           <!-- =================================================================
                CỘT TRÁI (67% chiều rộng): AI Moderation & Job Description
                ================================================================= -->
@@ -2659,7 +2662,7 @@ useSocket('ai-test:ready', (payload: any) => {
            NỘI DUNG TAB 2: ĐƠN ỨNG TUYỂN (APPLICATION)
            =================================================================== -->
       <section v-else-if="activeTab === 'application'" key="application" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
-        <div class="max-w-[1240px] mx-auto">
+        <div class="w-full max-w-[1240px] mx-auto">
           <!-- Top bar: Tiêu đề + Bộ lọc trạng thái + Tìm kiếm -->
         <div class="mb-5 flex items-start justify-between gap-3 flex-wrap">
           <div>
@@ -2931,7 +2934,7 @@ useSocket('ai-test:ready', (payload: any) => {
         <!-- Quick Detail Modal khi click vào row -->
         <div
           v-if="showAppDetailModal"
-          class="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4"
+          class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
           @click.self="closeAppDetailModal"
         >
           <div class="bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
@@ -3113,7 +3116,7 @@ useSocket('ai-test:ready', (payload: any) => {
            NỘI DUNG TAB 3: BÀI KIỂM TRA (TEST)
            =================================================================== -->
       <section v-else-if="activeTab === 'test'" key="test" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
-        <div class="max-w-[1240px] mx-auto">
+        <div class="w-full max-w-[1240px] mx-auto">
           <!-- Top bar: Tiêu đề + Thống kê + Nút hành động (Sinh đề IQ / Tiếng Anh) -->
         <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -3388,7 +3391,7 @@ useSocket('ai-test:ready', (payload: any) => {
            NỘI DUNG TAB 4: ĐÁNH GIÁ (FEEDBACK)
            =================================================================== -->
       <section v-else-if="activeTab === 'feedback'" key="feedback" class="p-6 sm:p-8">
-        <div class="max-w-[1240px] mx-auto">
+        <div class="w-full max-w-[1240px] mx-auto">
           <div class="flex items-center justify-between mb-4">
           <div>
             <h2 class="text-base font-bold text-gray-900">Đánh giá từ ứng viên</h2>

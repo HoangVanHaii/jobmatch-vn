@@ -1116,9 +1116,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="font-poppins min-h-screen bg-white">
+  <div class="font-poppins w-full min-h-full flex-1 bg-white">
     <!-- Main container -->
-    <main class="mx-auto max-w-[1200px] overflow-hidden border border-slate-200/90 bg-white shadow-sm">
+    <main class="w-full mx-auto max-w-[1200px] overflow-hidden border border-slate-200/90 bg-white shadow-sm">
       <!-- ===== Cover + Profile Header Card ===== -->
       <div class="border-b border-slate-200 bg-white">
         <!-- Cover container: cố định h-60/h-72, z-20 để avatar nổi trên tabs bar -->

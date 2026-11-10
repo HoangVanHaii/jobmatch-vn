@@ -29,8 +29,9 @@
  * - Backdrop click = cancel (trừ khi `dismissible: false`).
  * - ESC = cancel.
  */
-import { nextTick, onBeforeUnmount, ref, watch as watchDeep } from 'vue';
+import { nextTick, onBeforeUnmount, ref, toRef, watch as watchDeep } from 'vue';
 import { AlertTriangle, X } from 'lucide-vue-next';
+import { useScrollLock } from '@composables/useScrollLock';
 
 const props = withDefaults(
   defineProps<{
@@ -63,6 +64,8 @@ const emit = defineEmits<{
 
 const dialogEl = ref<HTMLDivElement | null>(null);
 const confirmBtnEl = ref<HTMLButtonElement | null>(null);
+
+useScrollLock(toRef(props, 'open'));
 
 const close = (): void => {
   if (!props.dismissible || props.loading) return;
@@ -154,7 +157,7 @@ onBeforeUnmount(() => {
         @mousedown.self="close"
       >
         <!-- Backdrop -->
-        <div class="font-poppins absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
+        <div class="font-poppins absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
 
         <!-- Dialog -->
         <div

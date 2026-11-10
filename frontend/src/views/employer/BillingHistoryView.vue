@@ -562,8 +562,8 @@ onMounted(() => {
 </script>
 
 <template>
-    <div class="w-full bg-white min-h-screen">
-        <div class="font-poppins max-w-6xl mx-auto px-4 py-5 space-y-6">
+    <div class="w-full bg-white min-h-full flex-1">
+        <div class="font-poppins w-full max-w-6xl mx-auto px-4 py-5 space-y-6">
             <!-- Root element duy nhất bọc toàn bộ nội dung và modal để <transition mode="out-in"> hoạt động trơn tru -->
         <!-- ============ HEADER ============ -->
         <header class="mb-6 bm-rise">

@@ -1277,8 +1277,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-white p-4 sm:p-6 lg:p-8 font-poppins">
-    <div class="max-w-7xl mx-auto">
+  <div class="w-full min-h-full flex-1 bg-white p-4 sm:p-6 lg:p-8 font-poppins">
+    <div class="w-full max-w-7xl mx-auto">
       <!-- ============ Header Trang + 2 Tab Phân loại ============ -->
       <header class="mb-6">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
