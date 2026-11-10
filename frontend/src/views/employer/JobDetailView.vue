@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToastStore } from '@stores/toast';
 import { useAuthStore } from '@stores/auth';
@@ -122,6 +122,14 @@ const reopenOpen = ref(false);
 const showUpgradeModal = ref(false);
 const actionPending = ref(false);
 const showMoreActions = ref(false);
+
+// Lazy once mount cờ cho modal — chỉ mount khi mở lần đầu, sau đó giữ nguyên để bảo toàn form state & exit transition
+const hasOpenedEdit = ref(false);
+const hasOpenedDelete = ref(false);
+const hasOpenedReopen = ref(false);
+const hasOpenedRegenerate = ref(false);
+const hasOpenedReview = ref(false);
+const hasOpenedAssign = ref(false);
 
 // Company members & Assignee states
 const companyMembers = ref<CompanyMember[]>([]);
@@ -468,6 +476,7 @@ const openAssignModal = (): void => {
   }
   selectedAssigneeId.value = job.value?.assignedTo || job.value?.postedBy || '';
   assigneeSearchQuery.value = '';
+  hasOpenedAssign.value = true;
   assignModalOpen.value = true;
 };
 
@@ -631,32 +640,252 @@ const fetchScan = async (): Promise<void> => {
   }
 };
 
-const loadAll = async (): Promise<void> => {
-  loading.value = true;
-  error.value = null;
-  try {
-    await fetchDetail();
-    if (job.value?.companyId) {
-      void fetchCompanyMembers();
+// =========================================================================
+// TAB NAVIGATION & SEAMLESS TAB SWITCHING (CÁCH 3: GẠCH NỘI TẠI TỪNG BUTTON)
+// =========================================================================
+const tabContentWrapperRef = ref<HTMLElement | null>(null);
+const tabWrapperMinHeight = ref<string>('');
+let tabHeightTimer: ReturnType<typeof setTimeout> | null = null;
+const isInfoTabEntering = ref(false);
+let infoTabTimer: ReturnType<typeof setTimeout> | null = null;
+
+const switchTab = (tab: 'information' | 'application' | 'test' | 'feedback'): void => {
+  if (activeTab.value === tab) return;
+  // Giữ chiều cao tối thiểu bằng tab trước đó trong lúc chuyển để chống layout giật
+  if (tabContentWrapperRef.value) {
+    tabWrapperMinHeight.value = `${tabContentWrapperRef.value.offsetHeight}px`;
+    if (tabHeightTimer) clearTimeout(tabHeightTimer);
+    tabHeightTimer = setTimeout(() => {
+      tabWrapperMinHeight.value = '';
+    }, 180);
+  }
+
+  // Khi chuyển về tab Thông tin (và không phải lúc load lần đầu): kích hoạt stagger 2 tầng
+  if (tab === 'information' && !isEntering.value) {
+    isInfoTabEntering.value = true;
+    if (infoTabTimer) clearTimeout(infoTabTimer);
+    infoTabTimer = setTimeout(() => {
+      isInfoTabEntering.value = false;
+      infoTabTimer = null;
+    }, 350);
+  } else {
+    isInfoTabEntering.value = false;
+  }
+
+  activeTab.value = tab;
+};
+
+// =========================================================================
+// LIFECYCLE, ANIMATION & NEXT/PREV TRANSITION LOGIC
+// =========================================================================
+let activeLoadRequestId = 0;
+const LOAD_HARD_TIMEOUT_MS = 15_000;
+let loadTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+const isEntering = ref(false);
+let enterSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+let backgroundFetchTimer: ReturnType<typeof setTimeout> | null = null;
+
+let skeletonDelayTimer: ReturnType<typeof setTimeout> | null = null;
+const jobSlideAnimClass = ref('');
+let jobSlideEndTimer: ReturnType<typeof setTimeout> | null = null;
+
+const onMainAnimationEnd = (e: AnimationEvent): void => {
+  if (e.animationName === 'jd-fade-up') {
+    isEntering.value = false;
+    if (enterSafetyTimer) {
+      clearTimeout(enterSafetyTimer);
+      enterSafetyTimer = null;
     }
-    await fetchScan();
-    void fetchJobTests();
-  } finally {
-    loading.value = false;
+  } else if (e.animationName.startsWith('jobSlide')) {
+    jobSlideAnimClass.value = '';
+    if (jobSlideEndTimer) {
+      clearTimeout(jobSlideEndTimer);
+      jobSlideEndTimer = null;
+    }
   }
 };
 
-onMounted(loadAll);
-watch(jobId, () => {
+const loadAll = async (isSwitching = false): Promise<void> => {
+  const reqId = ++activeLoadRequestId;
+  error.value = null;
+
+  if (skeletonDelayTimer) {
+    clearTimeout(skeletonDelayTimer);
+    skeletonDelayTimer = null;
+  }
+
+  // Vào trang lần đầu: hiển thị skeleton ngay. Chuyển job: chỉ hiển thị skeleton nếu chờ quá 200ms
+  if (!isSwitching || !job.value) {
+    loading.value = true;
+  } else {
+    skeletonDelayTimer = setTimeout(() => {
+      if (reqId === activeLoadRequestId) {
+        loading.value = true;
+      }
+    }, 200);
+  }
+
+  // Hard safety timeout: chống kẹt skeleton nếu API phản hồi chậm
+  if (loadTimeoutTimer) clearTimeout(loadTimeoutTimer);
+  loadTimeoutTimer = setTimeout(() => {
+    if (reqId === activeLoadRequestId && loading.value) {
+      error.value = 'Tải dữ liệu lâu hơn dự kiến — bạn có thể thử lại.';
+      loading.value = false;
+    }
+  }, LOAD_HARD_TIMEOUT_MS);
+
+  try {
+    let fetchedJob: JobDetail | null = null;
+    let fetchedScan: unknown = undefined;
+
+    let targetSlugOrId = jobId.value;
+    if (!targetSlugOrId) {
+      try {
+        const res = await jobApi.listByCompany({ limit: 1 });
+        const firstJob = res.data?.data?.[0];
+        if (firstJob) targetSlugOrId = firstJob.slug || firstJob.id;
+      } catch {
+        try {
+          const publicRes = await jobApi.list({ limit: 1 });
+          const firstPublic = publicRes.data?.data?.[0];
+          if (firstPublic) targetSlugOrId = firstPublic.slug || firstPublic.id;
+        } catch {
+          // Ignored
+        }
+      }
+    }
+
+    if (!targetSlugOrId) {
+      if (reqId === activeLoadRequestId) {
+        error.value = 'Không tìm thấy tin tuyển dụng nào để hiển thị.';
+        loading.value = false;
+      }
+      return;
+    }
+
+    // Tải thông tin job
+    try {
+      const { data } = await jobApi.bySlug(targetSlugOrId);
+      fetchedJob = data.data ?? null;
+    } catch {
+      try {
+        const { data } = await jobApi.detail(targetSlugOrId);
+        fetchedJob = data.data ?? null;
+      } catch (e: any) {
+        if (reqId === activeLoadRequestId) {
+          error.value = e?.response?.data?.message || e?.message || 'Không thể tải chi tiết tin tuyển dụng.';
+        }
+      }
+    }
+
+    // Race condition check: Nếu đã có request mới hơn thì bỏ qua
+    if (reqId !== activeLoadRequestId) return;
+
+    // Tải scan moderation (với timeout 1.5s để chống layout shift của Card AI)
+    if (fetchedJob?.id) {
+      try {
+        const scanPromise = jobApi.scanResult(fetchedJob.id);
+        const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 1500));
+        const res: any = await Promise.race([scanPromise, timeoutPromise]);
+        if (res && res.data) {
+          fetchedScan = res.data.data ?? null;
+        }
+      } catch {
+        fetchedScan = null;
+      }
+    }
+
+    // Race condition check lần 2
+    if (reqId !== activeLoadRequestId) return;
+
+    if (skeletonDelayTimer) {
+      clearTimeout(skeletonDelayTimer);
+      skeletonDelayTimer = null;
+    }
+
+    if (fetchedJob) {
+      job.value = fetchedJob;
+      scan.value = fetchedScan;
+      loading.value = false;
+
+      if (isSwitching) {
+        // Next/Prev Job: cuộn về đầu trang tức thì
+        window.scrollTo({ top: 0, behavior: 'instant' });
+
+        // Kích hoạt trượt ngang theo hướng bấm (<250ms)
+        const animClass =
+          slideDirection.value === 'next'
+            ? 'job-slide-next'
+            : slideDirection.value === 'prev'
+              ? 'job-slide-prev'
+              : 'job-slide-fade';
+        jobSlideAnimClass.value = animClass;
+        slideDirection.value = 'fade';
+
+        if (jobSlideEndTimer) clearTimeout(jobSlideEndTimer);
+        jobSlideEndTimer = setTimeout(() => {
+          jobSlideAnimClass.value = '';
+          jobSlideEndTimer = null;
+        }, 260);
+
+        // Giữ nguyên tab đang chọn và nạp lại dữ liệu tương ứng của job mới
+        if (activeTab.value === 'application') {
+          void fetchJobApplications(1);
+        } else if (activeTab.value === 'test') {
+          void fetchJobTests();
+        }
+      } else {
+        // Vào trang lần đầu: kích hoạt stagger animation 1 lần duy nhất
+        isEntering.value = true;
+        if (enterSafetyTimer) clearTimeout(enterSafetyTimer);
+        enterSafetyTimer = setTimeout(() => {
+          isEntering.value = false;
+          enterSafetyTimer = null;
+        }, 1000);
+      }
+    }
+  } finally {
+    if (reqId === activeLoadRequestId) {
+      if (skeletonDelayTimer) clearTimeout(skeletonDelayTimer);
+      if (loadTimeoutTimer) clearTimeout(loadTimeoutTimer);
+    }
+  }
+
+  // Tải dữ liệu phụ trợ sau khi animation kết thúc (1000ms) để giải phóng hoàn toàn Main Thread
+  if (reqId === activeLoadRequestId && job.value) {
+    if (backgroundFetchTimer) clearTimeout(backgroundFetchTimer);
+    backgroundFetchTimer = setTimeout(() => {
+      if (reqId === activeLoadRequestId && job.value) {
+        if (job.value.companyId) {
+          void fetchCompanyMembers();
+        }
+        void fetchJobTests();
+      }
+    }, 1000);
+  }
+};
+
+onMounted(() => {
+  void loadAll(false);
+});
+
+onUnmounted(() => {
+  if (enterSafetyTimer) clearTimeout(enterSafetyTimer);
+  if (backgroundFetchTimer) clearTimeout(backgroundFetchTimer);
+  if (loadTimeoutTimer) clearTimeout(loadTimeoutTimer);
+  if (skeletonDelayTimer) clearTimeout(skeletonDelayTimer);
+  if (jobSlideEndTimer) clearTimeout(jobSlideEndTimer);
+  if (tabHeightTimer) clearTimeout(tabHeightTimer);
+  if (infoTabTimer) clearTimeout(infoTabTimer);
+});
+
+watch(jobId, (newId, oldId) => {
+  if (newId === oldId) return;
   isDescExpanded.value = false;
   isReqExpanded.value = false;
   isBenExpanded.value = false;
-  void loadAll();
-  if (activeTab.value === 'application') {
-    void fetchJobApplications(1);
-  } else if (activeTab.value === 'test') {
-    void fetchJobTests();
-  }
+  // Giữ nguyên job cũ trong DOM cho đến khi dữ liệu mới về, chỉ hiện skeleton nếu >200ms
+  void loadAll(true);
 });
 
 // Realtime socket: khi worker hoàn thành scan thì tự động refetch
@@ -687,10 +916,12 @@ useSocket(
 // =========================================================================
 const prevJob = computed(() => job.value?.prevJob ?? null);
 const nextJob = computed(() => job.value?.nextJob ?? null);
+const slideDirection = ref<'next' | 'prev' | 'fade'>('fade');
 
 const goToPrevJob = (): void => {
   const target = prevJob.value?.slug || prevJob.value?.id;
   if (target) {
+    slideDirection.value = 'prev';
     router.push({ name: route.name || 'employer-job-detail', params: { id: target } });
   }
 };
@@ -698,6 +929,7 @@ const goToPrevJob = (): void => {
 const goToNextJob = (): void => {
   const target = nextJob.value?.slug || nextJob.value?.id;
   if (target) {
+    slideDirection.value = 'next';
     router.push({ name: route.name || 'employer-job-detail', params: { id: target } });
   }
 };
@@ -706,13 +938,14 @@ const goBack = (): void => {
   if (window.history.length > 1) {
     router.back();
   } else {
-    router.push('/employer/jobs');
+    void router.push('/employer/jobs');
   }
 };
 
 const onEdit = (): void => {
   if (!job.value) return;
   showMoreActions.value = false;
+  hasOpenedEdit.value = true;
   editOpen.value = true;
 };
 
@@ -724,6 +957,7 @@ const onEditSaved = async (): Promise<void> => {
 const onDelete = (): void => {
   if (!job.value) return;
   showMoreActions.value = false;
+  hasOpenedDelete.value = true;
   deleteOpen.value = true;
 };
 const cancelDelete = (): void => { deleteOpen.value = false; };
@@ -752,6 +986,7 @@ const confirmDelete = async (): Promise<void> => {
 const onReopen = (): void => {
   if (!job.value) return;
   showMoreActions.value = false;
+  hasOpenedReopen.value = true;
   reopenOpen.value = true;
 };
 const cancelReopen = (): void => { reopenOpen.value = false; };
@@ -1170,6 +1405,7 @@ const handleGenerateTest = async (type: AiTestType): Promise<void> => {
 };
 
 const openReviewTest = async (testId: string): Promise<void> => {
+  hasOpenedReview.value = true;
   reviewModalOpen.value = true;
   reviewLoading.value = true;
   reviewTestDetail.value = null;
@@ -1194,6 +1430,7 @@ const requestRegenerateTest = (testItem: AiTestSummary): void => {
     return;
   }
   testToRegenerate.value = testItem;
+  hasOpenedRegenerate.value = true;
   confirmRegenerateOpen.value = true;
 };
 
@@ -1247,9 +1484,7 @@ useSocket('ai-test:ready', (payload: any) => {
 <template>
   <div class="max-w-[1240px] mx-auto bg-white border-none shadow-2xs overflow-hidden relative pb-6 font-poppins text-gray-900 min-h-screen">
 
-    <!-- ===================================================================
-         TRƯỜNG HỢP 1: SKELETON LOADING (HIỆU ỨNG KHI ĐANG TẢI HOẶC TẢI LẠI)
-         ======================================================f============= -->
+    <!-- 1. SKELETON LOADING -->
     <div v-if="loading" class="animate-pulse">
       <!-- 1. Header Skeleton -->
       <div class="px-6 lg:px-8 pt-5 pb-4 border-b border-gray-100 bg-white">
@@ -1390,9 +1625,7 @@ useSocket('ai-test:ready', (payload: any) => {
       </div>
     </div>
 
-    <!-- ===================================================================
-         TRƯỜNG HỢP 2: LỖI HOẶC KHÔNG TÌM THẤY TIN TUYỂN DỤNG
-         =================================================================== -->
+    <!-- 2. LỖI HOẶC KHÔNG TÌM THẤY -->
     <div v-else-if="error || !job" class="px-6 py-24 text-center max-w-md mx-auto">
       <div class="w-14 h-14 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-3">
         <AlertCircle class="w-7 h-7" />
@@ -1409,7 +1642,7 @@ useSocket('ai-test:ready', (payload: any) => {
         </button>
         <button
           type="button"
-          @click="loadAll"
+          @click="() => loadAll(false)"
           class="px-4 py-2 text-xs font-semibold rounded-lg bg-[#5b4eea] text-white hover:bg-[#4b3fd0] transition cursor-pointer"
         >
           Thử lại
@@ -1417,10 +1650,8 @@ useSocket('ai-test:ready', (payload: any) => {
       </div>
     </div>
 
-    <!-- ===================================================================
-         TRƯỜNG HỢP 3: HIỂN THỊ DỮ LIỆU THẬT TỪ API
-         =================================================================== -->
-    <div v-else>
+    <!-- 3. NỘI DUNG CHI TIẾT -->
+    <div v-else :class="[{ 'is-entering': isEntering }, jobSlideAnimClass]" @animationend="onMainAnimationEnd">
       <!-- Loading indicator nhỏ góc trên khi scan hoặc refetch ngầm -->
       <div
         v-if="scanLoading || actionPending"
@@ -1431,9 +1662,9 @@ useSocket('ai-test:ready', (payload: any) => {
       </div>
 
       <!-- ===================================================================
-           KHU VỰC B: JOB HEADER
+           KHU VỰC B: JOB HEADER (TẦNG 0 - 0ms)
            =================================================================== -->
-      <div class="px-6 lg:px-8 pt-5 pb-4 border-b border-gray-100 bg-white">
+      <div class="jd-stagger jd-d0 px-6 lg:px-8 pt-5 pb-4 border-b border-gray-100 bg-white">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <!-- Bên trái: Nút quay lại, Tên công việc, Badges trạng thái -->
           <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
@@ -1721,40 +1952,45 @@ useSocket('ai-test:ready', (payload: any) => {
       </div>
 
       <!-- ===================================================================
-           KHU VỰC C: NAVIGATION TABS ROW (4 TABS)
+           KHU VỰC C: NAVIGATION TABS ROW (TẦNG 1 - 60ms)
            =================================================================== -->
       <nav
-        class="px-6 lg:px-8 flex items-center gap-6 sm:gap-8 border-b border-gray-200 bg-white text-xs select-none"
+        class="jd-stagger jd-d1 relative px-6 lg:px-8 flex items-center gap-6 sm:gap-8 border-b border-gray-200 bg-white text-xs select-none"
         aria-label="Job Detail Tabs"
       >
         <!-- Tab 1: Thông tin (Information) -->
         <button
           type="button"
-          class="flex items-center gap-1.5 py-3 font-medium transition-colors border-b-2 -mb-[1px]"
+          class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
           :class="
             activeTab === 'information'
-              ? 'text-[#5b4eea] border-[#5b4eea] font-semibold'
-              : 'text-gray-500 border-transparent hover:text-gray-700'
+              ? 'text-[#5b4eea] font-semibold'
+              : 'text-gray-500 font-medium hover:text-gray-700'
           "
-          @click="activeTab = 'information'"
+          @click="switchTab('information')"
         >
           <Info
             class="h-3.5 w-3.5"
             :class="activeTab === 'information' ? 'text-[#5b4eea]' : 'text-gray-400'"
           />
           <span>Thông tin</span>
+          <!-- Gạch chỉ báo nội tại: luôn bám khít 100% độ rộng button, không bao giờ lệch -->
+          <span
+            v-if="activeTab === 'information'"
+            class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
+          ></span>
         </button>
 
         <!-- Tab 2: Đơn ứng tuyển (Application) -->
         <button
           type="button"
-          class="flex items-center gap-1.5 py-3 font-medium transition-colors border-b-2 -mb-[1px]"
+          class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
           :class="
             activeTab === 'application'
-              ? 'text-[#5b4eea] border-[#5b4eea] font-semibold'
-              : 'text-gray-500 border-transparent hover:text-gray-700'
+              ? 'text-[#5b4eea] font-semibold'
+              : 'text-gray-500 font-medium hover:text-gray-700'
           "
-          @click="activeTab = 'application'"
+          @click="switchTab('application')"
         >
           <FileText
             class="h-3.5 w-3.5"
@@ -1771,18 +2007,22 @@ useSocket('ai-test:ready', (payload: any) => {
           >
             {{ appTotal || job.appliesCount || 0 }}
           </span>
+          <span
+            v-if="activeTab === 'application'"
+            class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
+          ></span>
         </button>
 
         <!-- Tab 3: Bài kiểm tra (Test) -->
         <button
           type="button"
-          class="flex items-center gap-1.5 py-3 font-medium transition-colors border-b-2 -mb-[1px]"
+          class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
           :class="
             activeTab === 'test'
-              ? 'text-[#5b4eea] border-[#5b4eea] font-semibold'
-              : 'text-gray-500 border-transparent hover:text-gray-700'
+              ? 'text-[#5b4eea] font-semibold'
+              : 'text-gray-500 font-medium hover:text-gray-700'
           "
-          @click="activeTab = 'test'"
+          @click="switchTab('test')"
         >
           <CheckSquare
             class="h-3.5 w-3.5"
@@ -1800,18 +2040,22 @@ useSocket('ai-test:ready', (payload: any) => {
           >
             {{ testList.length }}
           </span>
+          <span
+            v-if="activeTab === 'test'"
+            class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
+          ></span>
         </button>
 
         <!-- Tab 4: Đánh giá (Feedback) -->
         <button
           type="button"
-          class="flex items-center gap-1.5 py-3 font-medium transition-colors border-b-2 -mb-[1px]"
+          class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
           :class="
             activeTab === 'feedback'
-              ? 'text-[#5b4eea] border-[#5b4eea] font-semibold'
-              : 'text-gray-500 border-transparent hover:text-gray-700'
+              ? 'text-[#5b4eea] font-semibold'
+              : 'text-gray-500 font-medium hover:text-gray-700'
           "
-          @click="activeTab = 'feedback'"
+          @click="switchTab('feedback')"
         >
           <Star
             class="h-3.5 w-3.5"
@@ -1829,27 +2073,41 @@ useSocket('ai-test:ready', (payload: any) => {
           >
             {{ job.feedbackStats.count }}
           </span>
+          <span
+            v-if="activeTab === 'feedback'"
+            class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
+          ></span>
         </button>
       </nav>
 
       <!-- ===================================================================
-           NỘI DUNG TAB 1: THÔNG TIN (Layout 2 cột: 67% - 33%)
+           TAB CONTENT WRAPPER VỚI FADE-IN TRANSITION & CHỐNG GIẬT CHIỀU CAO
            =================================================================== -->
-      <main v-if="activeTab === 'information'" class="flex-1 min-w-0 bg-white">
+      <div
+        ref="tabContentWrapperRef"
+        class="flex-1 min-w-0"
+        :style="tabWrapperMinHeight ? { minHeight: tabWrapperMinHeight } : undefined"
+      >
+        <Transition name="tab-fade">
+          <!-- ===================================================================
+               NỘI DUNG TAB 1: THÔNG TIN (Layout 2 cột: 67% - 33%)
+               =================================================================== -->
+          <main v-if="activeTab === 'information'" key="information" class="flex-1 min-w-0 bg-white">
         <div class="flex flex-col lg:flex-row">
           <!-- =================================================================
                CỘT TRÁI (67% chiều rộng): AI Moderation & Job Description
                ================================================================= -->
           <section
             class="w-full lg:w-[67%] p-4 sm:p-5 lg:p-6 lg:pr-7 min-w-0"
+            :class="{ 'tab-info-tier0': isInfoTabEntering }"
             aria-label="Thông tin chính việc làm"
           >
             <!-- -------------------------------------------------------------
-                 KHU VỰC E: CỘT TRÁI - CARD AI KIỂM DUYỆT (AI MODERATION)
+                 KHU VỰC E: CỘT TRÁI - CARD AI KIỂM DUYỆT (TẦNG 2 - 120ms)
                  ------------------------------------------------------------- -->
             <div
               v-if="currentScan"
-              class="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-2xs mb-6"
+              class="jd-stagger jd-d2 rounded-xl border border-gray-200 bg-white overflow-hidden shadow-2xs mb-6"
             >
               <!-- Dải thông báo ở trên cùng: đổi màu tương ứng với verdict -->
               <div
@@ -1999,7 +2257,7 @@ useSocket('ai-test:ready', (payload: any) => {
 
               <!-- CHI TIẾT CẢNH BÁO HOẶC THÔNG BÁO HỢP LỆ (Ẩn ban đầu, chỉ hiện khi bấm Xem thêm) -->
               <div
-                v-show="showModerationDetail"
+                v-if="showModerationDetail"
                 class="px-3 pb-2 pt-2.5 border-t border-gray-100 bg-white"
               >
                 <!-- TH1: Danh sách flags vi phạm -->
@@ -2079,10 +2337,10 @@ useSocket('ai-test:ready', (payload: any) => {
               </div>
             </div>
 
-            <!-- Trường hợp chưa có scan data -->
+            <!-- Trường hợp chưa có scan data (TẦNG 2 - 120ms) -->
             <div
               v-else
-              class="rounded-xl border border-gray-200 overflow-hidden shadow-2xs bg-white p-4 mb-6"
+              class="jd-stagger jd-d2 rounded-xl border border-gray-200 overflow-hidden shadow-2xs bg-white p-4 mb-6"
             >
               <div class="flex items-center justify-between gap-3 flex-wrap">
                 <div class="flex items-center gap-2">
@@ -2114,11 +2372,11 @@ useSocket('ai-test:ready', (payload: any) => {
             </div>
 
             <!-- -------------------------------------------------------------
-                 KHU VỰC F: CỘT TRÁI - JOB DESCRIPTION & BENEFITS
+                 KHU VỰC F: CỘT TRÁI - JOB DESCRIPTION & BENEFITS (TÁCH TẦNG 3, 4, 5)
                  ------------------------------------------------------------- -->
             <div class="space-y-5">
-              <!-- Tiêu đề Mô tả công việc -->
-              <div v-if="job.description">
+              <!-- Tầng 3 (180ms): Mô tả công việc -->
+              <div v-if="job.description" class="jd-stagger jd-d3">
                 <div class="flex items-center gap-2 mb-2">
                   <FileText class="h-4 w-4 text-gray-700" />
                   <h2 class="text-sm font-bold text-gray-900">Mô tả công việc</h2>
@@ -2148,8 +2406,8 @@ useSocket('ai-test:ready', (payload: any) => {
                 </div>
               </div>
 
-              <!-- Yêu cầu công việc -->
-              <div v-if="job.requirements" class="pt-2">
+              <!-- Tầng 4 (180ms): Yêu cầu công việc -->
+              <div v-if="job.requirements" class="jd-stagger jd-d4 pt-2" @animationend="onMainAnimationEnd">
                 <div class="flex items-center gap-2 mb-2">
                   <CheckSquare class="h-4 w-4 text-gray-700" />
                   <h2 class="text-sm font-bold text-gray-900">Yêu cầu công việc</h2>
@@ -2179,48 +2437,50 @@ useSocket('ai-test:ready', (payload: any) => {
                 </div>
               </div>
 
-              <!-- Lợi ích -->
-              <div v-if="job.benefits" class="pt-2">
-                <div class="flex items-center gap-2 mb-2">
-                  <Star class="h-4 w-4 text-gray-700" />
-                  <h2 class="text-sm font-bold text-gray-900">Quyền lợi & Phúc lợi</h2>
+              <!-- Tầng 4 (180ms): Quyền lợi & Phúc lợi + Kỹ năng chuyên môn -->
+              <div v-if="job.benefits || job.requiredSkills?.length" class="jd-stagger jd-d4 pt-2 space-y-4" @animationend="onMainAnimationEnd">
+                <div v-if="job.benefits">
+                  <div class="flex items-center gap-2 mb-2">
+                    <Star class="h-4 w-4 text-gray-700" />
+                    <h2 class="text-sm font-bold text-gray-900">Quyền lợi & Phúc lợi</h2>
+                  </div>
+                  <div class="text-xs leading-[1.7] text-gray-600 whitespace-pre-line">
+                    <template v-if="!isBenExpanded && isBenLong">
+                      <span>{{ getTruncatedText(job.benefits) }}... </span>
+                      <button
+                        type="button"
+                        @click="isBenExpanded = true"
+                        class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none"
+                      >
+                        Xem thêm
+                      </button>
+                    </template>
+                    <template v-else>
+                      <span>{{ job.benefits }} </span>
+                      <button
+                        v-if="isBenLong"
+                        type="button"
+                        @click="isBenExpanded = false"
+                        class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none ml-1"
+                      >
+                        Thu gọn
+                      </button>
+                    </template>
+                  </div>
                 </div>
-                <div class="text-xs leading-[1.7] text-gray-600 whitespace-pre-line">
-                  <template v-if="!isBenExpanded && isBenLong">
-                    <span>{{ getTruncatedText(job.benefits) }}... </span>
-                    <button
-                      type="button"
-                      @click="isBenExpanded = true"
-                      class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none"
-                    >
-                      Xem thêm
-                    </button>
-                  </template>
-                  <template v-else>
-                    <span>{{ job.benefits }} </span>
-                    <button
-                      v-if="isBenLong"
-                      type="button"
-                      @click="isBenExpanded = false"
-                      class="font-semibold text-gray-900 hover:underline cursor-pointer inline select-none ml-1"
-                    >
-                      Thu gọn
-                    </button>
-                  </template>
-                </div>
-              </div>
 
-              <!-- Kỹ năng yêu cầu -->
-              <div v-if="job.requiredSkills?.length" class="pt-2">
-                <h3 class="text-xs font-bold text-gray-900 mb-2">Kỹ năng chuyên môn</h3>
-                <div class="flex flex-wrap gap-1.5">
-                  <span
-                    v-for="skill in job.requiredSkills"
-                    :key="skill"
-                    class="px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200"
-                  >
-                    {{ skill }}
-                  </span>
+                <!-- Kỹ năng yêu cầu -->
+                <div v-if="job.requiredSkills?.length">
+                  <h3 class="text-xs font-bold text-gray-900 mb-2">Kỹ năng chuyên môn</h3>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="skill in job.requiredSkills"
+                      :key="skill"
+                      class="px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200"
+                    >
+                      {{ skill }}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2231,12 +2491,13 @@ useSocket('ai-test:ready', (payload: any) => {
                ================================================================= -->
           <aside
             class="w-full lg:w-[33%] p-4 sm:p-5 lg:p-6 lg:pl-7 border-t lg:border-t-0 lg:border-l border-gray-200 min-w-0"
+            :class="{ 'tab-info-tier1': isInfoTabEntering }"
             aria-label="Thông tin bổ sung việc làm"
           >
             <!-- -------------------------------------------------------------
-                 KHU VỰC G: CỘT PHẢI - JOB VACANCY CLOSING DATE
+                 KHU VỰC G: CỘT PHẢI - JOB VACANCY CLOSING DATE (TẦNG 2 - 100ms)
                  ------------------------------------------------------------- -->
-            <div class="mb-5">
+            <div class="jd-stagger jd-d2 mb-5">
               <!-- Tiêu đề + Nút Edit -->
               <div class="flex items-center justify-between mb-2.5">
                 <div class="flex items-center gap-1.5">
@@ -2279,9 +2540,9 @@ useSocket('ai-test:ready', (payload: any) => {
             </div>
 
             <!-- -------------------------------------------------------------
-                 KHU VỰC H: CỘT PHẢI - JOB DETAIL
+                 KHU VỰC H: CỘT PHẢI - JOB DETAIL (TẦNG 3 - 140ms)
                  ------------------------------------------------------------- -->
-            <div class="mb-5"> 
+            <div class="jd-stagger jd-d3 mb-5"> 
               <!-- Tiêu đề Job Detail -->
               <div class="flex items-center gap-1.5 mb-2.5">
                 <BookOpen class="h-4 w-4 text-gray-700" />
@@ -2303,9 +2564,9 @@ useSocket('ai-test:ready', (payload: any) => {
             </div>
 
             <!-- -------------------------------------------------------------
-                 KHU VỰC I: CỘT PHẢI - NGƯỜI PHỤ TRÁCH (ASSIGNEE)
+                 KHU VỰC I: CỘT PHẢI - NGƯỜI PHỤ TRÁCH (TẦNG 4 - 180ms)
                  ------------------------------------------------------------- -->
-            <div>
+            <div class="jd-stagger jd-d4" @animationend="onMainAnimationEnd">
               <!-- Tiêu đề + Nút Đổi người phụ trách -->
               <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-1.5">
@@ -2396,7 +2657,7 @@ useSocket('ai-test:ready', (payload: any) => {
       <!-- ===================================================================
            NỘI DUNG TAB 2: ĐƠN ỨNG TUYỂN (APPLICATION)
            =================================================================== -->
-      <section v-else-if="activeTab === 'application'" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
+      <section v-else-if="activeTab === 'application'" key="application" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
         <!-- Top bar: Tiêu đề + Bộ lọc trạng thái + Tìm kiếm -->
         <div class="mb-5 flex items-start justify-between gap-3 flex-wrap">
           <div>
@@ -2848,7 +3109,7 @@ useSocket('ai-test:ready', (payload: any) => {
       <!-- ===================================================================
            NỘI DUNG TAB 3: BÀI KIỂM TRA (TEST)
            =================================================================== -->
-      <section v-else-if="activeTab === 'test'" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
+      <section v-else-if="activeTab === 'test'" key="test" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
         <!-- Top bar: Tiêu đề + Thống kê + Nút hành động (Sinh đề IQ / Tiếng Anh) -->
         <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -2917,10 +3178,31 @@ useSocket('ai-test:ready', (payload: any) => {
           </div>
         </div>
 
-        <!-- Loading State -->
-        <div v-if="testLoading && !testList.length" class="py-16 text-center">
-          <Loader2 class="h-8 w-8 animate-spin text-[#5b4eea] mx-auto mb-3" />
-          <p class="text-sm font-medium text-gray-600">Đang tải danh sách bài kiểm tra...</p>
+        <!-- Loading State: Skeleton 2 card placeholder chuẩn kích thước -->
+        <div v-if="testLoading && !testList.length" class="grid grid-cols-1 md:grid-cols-2 gap-4 animate-pulse">
+          <div v-for="i in 2" :key="i" class="rounded-xl border border-gray-200 bg-white p-5 shadow-2xs flex flex-col justify-between h-[210px]">
+            <div>
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-xl bg-gray-200 shrink-0"></div>
+                  <div class="space-y-1.5">
+                    <div class="h-4 w-44 rounded bg-gray-200"></div>
+                    <div class="h-3 w-28 rounded bg-gray-200"></div>
+                  </div>
+                </div>
+                <div class="h-6 w-20 rounded-full bg-gray-200"></div>
+              </div>
+              <div class="grid grid-cols-3 gap-2 py-3 px-3.5 my-3 rounded-lg bg-gray-50 border border-gray-100">
+                <div class="h-7 bg-gray-200/70 rounded"></div>
+                <div class="h-7 bg-gray-200/70 rounded"></div>
+                <div class="h-7 bg-gray-200/70 rounded"></div>
+              </div>
+            </div>
+            <div class="pt-3 border-t border-gray-100 flex items-center justify-between">
+              <div class="h-4 w-24 bg-gray-200 rounded"></div>
+              <div class="h-7 w-32 bg-gray-200 rounded-lg"></div>
+            </div>
+          </div>
         </div>
 
         <!-- Error State -->
@@ -3100,7 +3382,7 @@ useSocket('ai-test:ready', (payload: any) => {
       <!-- ===================================================================
            NỘI DUNG TAB 4: ĐÁNH GIÁ (FEEDBACK)
            =================================================================== -->
-      <section v-else-if="activeTab === 'feedback'" class="p-6 sm:p-8">
+      <section v-else-if="activeTab === 'feedback'" key="feedback" class="p-6 sm:p-8">
         <div class="flex items-center justify-between mb-4">
           <div>
             <h2 class="text-base font-bold text-gray-900">Đánh giá từ ứng viên</h2>
@@ -3146,9 +3428,12 @@ useSocket('ai-test:ready', (payload: any) => {
           <p class="text-xs text-gray-400 mt-1">Đánh giá và phản hồi của ứng viên sau phỏng vấn sẽ xuất hiện tại đây</p>
         </div>
       </section>
+        </Transition>
+      </div>
     </div>
     <!-- ============ Delete confirm modal ============ -->
     <ConfirmModal
+      v-if="hasOpenedDelete"
       :open="deleteOpen"
       title="Đóng job này?"
       :message="`Job '${job?.title ?? ''}' sẽ chuyển sang trạng thái 'Đã đóng' và không còn hiển thị với ứng viên. Bạn có chắc muốn tiếp tục?`"
@@ -3160,6 +3445,7 @@ useSocket('ai-test:ready', (payload: any) => {
 
     <!-- ============ Reopen confirm modal ============ -->
     <ConfirmModal
+      v-if="hasOpenedReopen"
       :open="reopenOpen"
       title="Mở lại job này?"
       :message="`Job '${job?.title ?? ''}' sẽ chuyển về trạng thái 'Bản nháp'. Bạn có thể cập nhật thông tin và gửi AI kiểm duyệt để đăng lại. Bạn có chắc muốn tiếp tục?`"
@@ -3171,16 +3457,15 @@ useSocket('ai-test:ready', (payload: any) => {
 
     <!-- ============ Edit job modal ============ -->
     <EditJobModal
-      v-if="job?.id"
+      v-if="hasOpenedEdit && job?.id"
       v-model:open="editOpen"
       :job-id="job.id"
       @saved="onEditSaved"
     />
 
     <!-- ============ Upgrade Pricing modal khi hết lượt kiểm duyệt AI ============ -->
-    <Teleport to="body">
+    <Teleport to="body" v-if="showUpgradeModal">
       <UpgradePricing
-        v-if="showUpgradeModal"
         :open="showUpgradeModal"
         title="Nâng cấp gói dịch vụ của bạn"
         features-title="Mở khóa thêm lượt kiểm duyệt AI"
@@ -3192,6 +3477,7 @@ useSocket('ai-test:ready', (payload: any) => {
 
     <!-- ============ Regenerate AI Test confirm modal ============ -->
     <ConfirmModal
+      v-if="hasOpenedRegenerate"
       :open="confirmRegenerateOpen"
       title="Tạo lại đề kiểm tra?"
       :message="`Bạn có chắc chắn muốn dùng AI để tạo lại bộ câu hỏi mới cho đề ${testToRegenerate?.testType === 'iq' ? 'IQ' : 'Tiếng Anh'}? Bộ câu hỏi hiện tại sẽ được cập nhật mới.`"
@@ -3203,6 +3489,7 @@ useSocket('ai-test:ready', (payload: any) => {
 
     <!-- ============ Review AI Test Modal ============ -->
     <AiTestReviewModal
+      v-if="hasOpenedReview"
       :open="reviewModalOpen"
       :test="reviewTestDetail"
       :loading="reviewLoading"
@@ -3210,7 +3497,7 @@ useSocket('ai-test:ready', (payload: any) => {
     />
 
     <!-- ============ Phân công người phụ trách (Assign Job Modal) ============ -->
-    <Teleport to="body">
+    <Teleport to="body" v-if="hasOpenedAssign">
       <div
         v-if="assignModalOpen"
         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-all"
@@ -3360,15 +3647,163 @@ useSocket('ai-test:ready', (payload: any) => {
 </template>
 
 <style scoped>
-/* Đảm bảo toàn bộ mockup Job Detail dùng font Poppins đồng bộ */
-.font-poppins,
-.font-poppins * {
+/* Đồng bộ font Poppins */
+.font-poppins {
   font-family: 'Poppins', system-ui, -apple-system, sans-serif;
 }
 
 /* Giữ font mono chuyên dụng cho model name và scan ID */
-.font-poppins .font-mono,
-.font-poppins code {
+.font-mono,
+code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+}
+
+/* Stagger animation chuẩn nhịp CompanyView (duration 0.35s, translateY 10px, delay tối ưu 0-50-100-140-180ms) */
+.is-entering .jd-stagger {
+  animation: jd-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.is-entering .jd-d0 {
+  animation-delay: 0ms;
+}
+
+.is-entering .jd-d1 {
+  animation-delay: 50ms;
+}
+
+.is-entering .jd-d2 {
+  animation-delay: 100ms;
+}
+
+.is-entering .jd-d3 {
+  animation-delay: 140ms;
+}
+
+.is-entering .jd-d4 {
+  animation-delay: 180ms;
+}
+
+@keyframes jd-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Tab Active Indicator (Cách 3: Gạch nội tại từng button) - scaleX 0 -> 1 trong 200ms */
+.tab-indicator-bar {
+  animation: tabIndicatorScale 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: center bottom;
+}
+
+@keyframes tabIndicatorScale {
+  from {
+    transform: scaleX(0);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+/* Tab Information 2-tier Stagger (280ms, cubic-bezier(0.22, 1, 0.36, 1)): Tầng 0 (0ms) Cột trái, Tầng 1 (50ms) Cột phải */
+.tab-info-tier0 {
+  animation: jd-fade-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0ms;
+}
+.tab-info-tier1 {
+  animation: jd-fade-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 50ms;
+}
+
+/* Tab Transition: chỉ fade-in tab mới 180ms, không out-in, nội dung cũ biến mất tức thì */
+.tab-fade-enter-active {
+  transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1), transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.tab-fade-leave-active {
+  display: none;
+}
+.tab-fade-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.tab-fade-enter-to {
+  opacity: 1;
+  transform: none;
+}
+
+/* Next / Prev Job Transition: 220ms trượt nhẹ 14px kèm fade nhẹ, kết thúc bằng transform: none */
+.job-slide-next {
+  animation: jobSlideNext 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.job-slide-prev {
+  animation: jobSlidePrev 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.job-slide-fade {
+  animation: jobSlideFade 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes jobSlideNext {
+  from {
+    opacity: 0.6;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes jobSlidePrev {
+  from {
+    opacity: 0.6;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes jobSlideFade {
+  from {
+    opacity: 0.6;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-entering .jd-stagger {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .job-slide-next,
+  .job-slide-prev,
+  .job-slide-fade {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .tab-indicator-bar {
+    animation: none !important;
+  }
+  .tab-fade-enter-active {
+    transition: none !important;
+  }
+  .tab-info-tier0,
+  .tab-info-tier1 {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }
 </style>

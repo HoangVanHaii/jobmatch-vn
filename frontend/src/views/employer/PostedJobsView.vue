@@ -64,7 +64,7 @@ const route = useRoute();
  * Giữ skeleton khớp bố cục thật trong lần tải đầu, tránh nháy trang trắng hoặc
  * rơi vào trạng thái rỗng tạm thời trước khi API phản hồi.
  */
-const initialLoaded = ref(false);
+const initialLoaded = ref(items.value.length > 0);
 
 /**
  * Chu kỳ hiệu ứng khi dữ liệu danh sách thay đổi (filter, search, tab, sort, phân trang).
@@ -1119,7 +1119,11 @@ const handleMenuAction = (action: 'view-applies' | 'publish' | 'reopen' | 'flagg
       break;
     case 'flagged-reason':
     case 'view-detail':
-      void router.push(`/employer/jobs/${slugOrId}`);
+      if (job) {
+        navigateToDetail(job);
+      } else {
+        void router.push(`/employer/jobs/${slugOrId}`);
+      }
       break;
     case 'delete':
       askDelete(jobId);
@@ -1229,10 +1233,18 @@ const retryFetch = async (): Promise<void> => {
   }
 };
 
+const isDesktopView = ref(typeof window !== 'undefined' ? window.innerWidth >= 768 : true);
+const updateScreenSize = (): void => {
+  if (typeof window !== 'undefined') {
+    isDesktopView.value = window.innerWidth >= 768;
+  }
+};
+
 const navigateToDetail = (job: JobListItem): void => {
+  const targetId = job.slug || job.id;
   void router.push({
     name: 'employer-job-detail',
-    params: { id: job.slug || job.id },
+    params: { id: targetId },
   });
 };
 
@@ -1241,18 +1253,31 @@ const navigateToDetail = (job: JobListItem): void => {
  * ==========================================================================*/
 onMounted(async () => {
   const initialScope = activeTab.value === 'mine' ? 'me' : 'company';
-  try {
-    await store.fetchList({ scope: initialScope }, 1);
-  } finally {
+  if (items.value.length === 0) {
+    try {
+      await store.fetchList({ scope: initialScope }, 1);
+    } finally {
+      initialLoaded.value = true;
+    }
+  } else {
     initialLoaded.value = true;
   }
   void fetchIndustries();
   void locations.fetch();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', updateScreenSize);
+  }
+});
+
+onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateScreenSize);
+  }
 });
 </script>
 
 <template>
-  <div class="c3-fade min-h-screen bg-white p-4 sm:p-6 lg:p-8 font-poppins">
+  <div class="min-h-screen bg-white p-4 sm:p-6 lg:p-8 font-poppins">
     <div class="max-w-7xl mx-auto">
       <!-- ============ Header Trang + 2 Tab Phân loại ============ -->
       <header class="mb-6">
@@ -2109,7 +2134,7 @@ onMounted(async () => {
                       class="text-[15px] font-semibold tracking-normal truncate block leading-[23px] transition group-hover:text-primary-600"
                       :class="job.status === 'closed' ? 'text-gray-500' : 'text-gray-900'"
                       :title="job.title"
-                      @click.stop
+                      @click.prevent.stop="navigateToDetail(job)"
                     >
                       {{ job.title }}
                     </router-link>
@@ -2301,7 +2326,7 @@ onMounted(async () => {
             :to="`/employer/jobs/${job.slug || job.id}`"
             class="mt-2.5 text-sm font-semibold tracking-tight text-gray-900 block leading-snug line-clamp-2"
             :class="job.status === 'closed' ? 'text-gray-500' : 'text-gray-900'"
-            @click.stop
+            @click.prevent.stop="navigateToDetail(job)"
           >
             {{ job.title }}
           </router-link>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { Menu } from "lucide-vue-next";
 import EmployerSidebar from "@components/employer/EmployerSidebar.vue";
 
@@ -10,6 +11,18 @@ const openMobileSidebar = (): void => {
 };
 const closeMobileSidebar = (): void => {
   mobileSidebarOpen.value = false;
+};
+
+/**
+ * Phân biệt Route Transition và Content Transition:
+ * Khi chuyển giữa các slug trong Job Detail (Next/Prev job), key giữ nguyên 'employer-job-detail'
+ * để KHÔNG remount component ngoài cùng và KHÔNG chạy lại page entrance animation.
+ */
+const getRouteKey = (route: RouteLocationNormalizedLoaded): string => {
+  if (route.name === 'employer-job-detail') {
+    return 'employer-job-detail';
+  }
+  return route.fullPath;
 };
 </script>
 
@@ -56,8 +69,41 @@ const closeMobileSidebar = (): void => {
       </header>
 
       <main class="flex-1 min-w-0">
-        <router-view />
+        <router-view v-slot="{ Component, route }">
+          <Transition name="page-fade" mode="out-in">
+            <component :is="Component" :key="getRouteKey(route)" />
+          </Transition>
+        </router-view>
       </main>
     </div>
   </div>
 </template>
+
+<style>
+/* Page Transition đồng bộ cho các trang Employer - Phong cách SaaS cao cấp */
+.page-fade-enter-active {
+  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.page-fade-leave-active {
+  transition: opacity 0.12s ease-out;
+}
+
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateY(5px);
+}
+
+.page-fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-fade-enter-active,
+  .page-fade-leave-active {
+    transition: none !important;
+    transform: none !important;
+  }
+}
+</style>
