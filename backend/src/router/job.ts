@@ -19,6 +19,7 @@ import {
   jobSemanticSearchQuerySchema,
   jobFeedbackBodySchema,
   jobApplicantsOverTimeQuerySchema,
+  companyJobListQuerySchema,
 } from '../middleware/job';
 
 export const jobRouter = Router();
@@ -27,7 +28,7 @@ jobRouter.get('/search/semantic', optionalAuth, validate(jobSemanticSearchQueryS
 jobRouter.get('/search', optionalAuth, validate(jobSearchQuerySchema, 'query'), jobController.searchByKeyWord);
 // Employer xem job của company mình — yêu cầu auth, controller tự resolve
 // companyId từ session user (qua companyMemberService.findMembershipByUserId).
-jobRouter.get('/company', auth, employerOnly, validate(jobListQuerySchema, 'query'), jobController.listOfCompany);
+jobRouter.get('/company', auth, employerOnly, validate(companyJobListQuerySchema, 'query'), jobController.listOfCompany);
 // Slim list id + title cho dropdown filter đơn ứng tuyển — KHÔNG có query,
 // khai báo TRƯỚC `/:id` để Express không match "names" làm id.
 jobRouter.get('/names', auth, employerOnly, jobController.listNames);

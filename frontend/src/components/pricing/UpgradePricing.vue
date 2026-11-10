@@ -29,6 +29,7 @@ import { useAuthStore } from "@stores/auth";
 import { usePlanStore } from "@stores/plan";
 import { paymentApi } from "@services/payment.api";
 import { extractErrorMessage } from "@services/http";
+import { useScrollLock } from "@composables/useScrollLock";
 import PaymentQRModal from "@components/payment/PaymentQRModal.vue";
 import type { Plan } from "@/types/plan";
 import type { CreatePaymentResponse } from "@/types/payment";
@@ -78,6 +79,8 @@ const router = useRouter();
 const auth = useAuthStore();
 const planStore = usePlanStore();
 const { plans } = storeToRefs(planStore);
+
+useScrollLock(computed(() => Boolean(props.open && props.asModal)));
 
 const period = ref<BillingCycle>("yearly");
 const selectedTier = ref<TargetTier>("professional");
@@ -818,7 +821,7 @@ watch(
     <!-- Confirm Modal khi nâng cấp đè gói đang sử dụng -->
     <div
       v-if="confirmOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
       @click.self="cancelConfirm"
     >
       <div

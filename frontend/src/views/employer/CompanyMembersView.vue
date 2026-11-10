@@ -986,9 +986,9 @@ watch([sortKey, sortDir], () => {
 <template>
   <div
     id="members-page-root"
-    class="font-poppins min-h-screen bg-white p-5 text-slate-900 antialiased md:p-8"
+    class="font-poppins w-full min-h-full flex-1 bg-white p-5 text-slate-900 antialiased md:p-8"
   >
-    <div class="mx-auto max-w-6xl space-y-6">
+    <div class="w-full mx-auto max-w-6xl space-y-6">
       <!-- =================== Header =================== -->
       <!-- Skeleton placeholder cho toàn khối header khi loading -->
       <div

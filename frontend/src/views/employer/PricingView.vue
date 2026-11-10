@@ -9,6 +9,8 @@ import PricingComponent from "@components/pricing/PricingComponent.vue";
 </script>
 
 <template>
-  <PricingComponent role="employer" />
+  <div class="w-full min-h-full flex-1">
+    <PricingComponent role="employer" />
+  </div>
 </template>
 

@@ -38,6 +38,7 @@ import {
 import { jobApi } from '@services/job.api';
 import { companyApi } from '@services/company.api';
 import { companyMemberApi } from '@services/companyMember.api';
+import { lockBodyScroll, unlockBodyScroll } from '@composables/useScrollLock';
 import { useAuthStore } from '@stores/auth';
 import { useToastStore } from '@stores/toast';
 import type { JobLevel, JobType, WorkType, JobExtraData, PaymentCycleType, HiringStatus, JobDetail } from '@/types/job';
@@ -1062,28 +1063,13 @@ function resetForm() {
 // Modal behavior: scroll lock + ESC handler
 // ============================================================================
 const dialogEl = ref<HTMLDivElement | null>(null);
-let prevBodyOverflow = '';
-let prevBodyPaddingRight = '';
-
-const lockScroll = (): void => {
-  prevBodyOverflow = document.body.style.overflow;
-  prevBodyPaddingRight = document.body.style.paddingRight;
-  const scrollbarGap = window.innerWidth - document.documentElement.clientWidth;
-  document.body.style.overflow = 'hidden';
-  if (scrollbarGap > 0) {
-    document.body.style.paddingRight = `${scrollbarGap}px`;
-  }
-};
-
-const unlockScroll = (): void => {
-  document.body.style.overflow = prevBodyOverflow;
-  document.body.style.paddingRight = prevBodyPaddingRight;
-};
+let triggerEl: HTMLElement | null = null;
 
 const onKeydown = (e: KeyboardEvent): void => {
   if (!props.open) return;
   if (e.key === 'Escape') {
     e.preventDefault();
+    e.stopPropagation();
     if (showPreview.value) {
       showPreview.value = false;
     } else {
@@ -1096,7 +1082,8 @@ watch(
   () => props.open,
   async (isOpen) => {
     if (isOpen) {
-      lockScroll();
+      triggerEl = (document.activeElement as HTMLElement) || null;
+      lockBodyScroll();
       window.addEventListener('keydown', onKeydown);
       if (!company.value) {
         await fetchCompany();
@@ -1111,8 +1098,10 @@ watch(
       const firstInput = dialogEl.value?.querySelector<HTMLElement>('input, select');
       firstInput?.focus();
     } else {
-      unlockScroll();
+      unlockBodyScroll();
       window.removeEventListener('keydown', onKeydown);
+      await nextTick();
+      triggerEl?.focus();
     }
   },
   { immediate: true },
@@ -1130,7 +1119,7 @@ watch(
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
-  unlockScroll();
+  unlockBodyScroll();
 });
 </script>
 
@@ -1142,10 +1131,11 @@ onBeforeUnmount(() => {
         class="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 font-poppins text-[#24212D] antialiased"
         role="dialog"
         aria-modal="true"
+        :aria-label="isEditMode ? 'Chỉnh sửa tin tuyển dụng' : 'Đăng tin tuyển dụng mới'"
       >
         <!-- Modal Backdrop (Click bên ngoài để đóng) -->
         <div
-          class="absolute inset-0 bg-black/50 backdrop-blur-[2px] transition-opacity"
+          class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
           @mousedown="handleClose"
         />
 
@@ -1193,7 +1183,7 @@ onBeforeUnmount(() => {
                   {{ isEditMode ? 'Chỉnh sửa tin tuyển dụng' : 'Tạo tin tuyển dụng mới' }}
                 </h1>
                 <p v-if="company" class="text-[12px] text-white/70 leading-none mt-0.5">
-                  {{ isEditMode ? 'Chỉnh sửa tin cho' : 'Đăng tuyển cho' }} <span class="font-medium text-[#7C22E8]">{{ company.name }}</span>
+                  {{ isEditMode ? 'Chỉnh sửa tin cho' : 'Đăng tuyển cho' }} <span class="font-semibold text-purple-300">{{ company.name }}</span>
                 </p>
               </div>
             </div>
@@ -1335,12 +1325,12 @@ onBeforeUnmount(() => {
                       <div class="min-w-0">
                         <span
                           class="block text-[9.5px] font-bold tracking-wider uppercase leading-none"
-                          :class="currentStep === 1 ? 'text-[#7C22E8]' : 'text-white'"
+                          :class="currentStep === 1 ? 'text-[#7C22E8]' : 'text-white/70'"
                         >
                           BƯỚC 1
                         </span>
-                        <h3 class="text-[12px] font-semibold text-white/70 leading-tight mt-1 truncate"
-                            :class="currentStep === 1 ? 'text-black' : 'text-white'"
+                        <h3 class="text-[12px] font-semibold leading-tight mt-1 truncate"
+                            :class="currentStep === 1 ? 'text-[#24212D]' : 'text-white'"
                         >
                           Thông tin
                         </h3>
@@ -1383,12 +1373,12 @@ onBeforeUnmount(() => {
                       <div class="min-w-0">
                         <span
                           class="block text-[9.5px] font-bold tracking-wider uppercase leading-none"
-                          :class="currentStep === 2 ? 'text-[#7C22E8]' : 'text-white'"
+                          :class="currentStep === 2 ? 'text-[#7C22E8]' : 'text-white/70'"
                         >
                           BƯỚC 2
                         </span>
-                        <h3 class="text-[12px] font-semibol leading-tight mt-1 truncate"
-                            :class="currentStep === 2 ? 'text-black' : 'text-white/70'"
+                        <h3 class="text-[12px] font-semibold leading-tight mt-1 truncate"
+                            :class="currentStep === 2 ? 'text-[#24212D]' : 'text-white'"
                         >
                           Phụ trách
                         </h3>
@@ -1428,12 +1418,12 @@ onBeforeUnmount(() => {
                       <div class="min-w-0">
                         <span
                           class="block text-[9.5px] font-bold tracking-wider uppercase leading-none"
-                          :class="currentStep === 3 ? 'text-[#7C22E8]' : 'text-white'"
+                          :class="currentStep === 3 ? 'text-[#7C22E8]' : 'text-white/70'"
                         >
                           BƯỚC 3
                         </span>
                         <h3 class="text-[12px] font-semibold leading-tight mt-1 truncate"
-                            :class="currentStep === 3 ? 'text-black' : 'text-white/70'"
+                            :class="currentStep === 3 ? 'text-[#24212D]' : 'text-white'"
                         >
                           Kênh đăng
                         </h3>
@@ -1917,21 +1907,21 @@ onBeforeUnmount(() => {
                       <label class="block text-[11px] font-semibold text-[#24212D]">
                         Kỹ năng bắt buộc <span class="text-rose-500">*</span>
                       </label>
-                      <div class="flex flex-wrap gap-1 p-1.5 border border-[#E5E3E9] rounded-[6px] min-h-[30px] bg-white">
+                      <div class="flex flex-wrap items-center gap-1.5 p-2 border border-[#D8D6DF] rounded-lg min-h-[38px] bg-white focus-within:border-[#5b4eea] focus-within:ring-2 focus-within:ring-[#5b4eea]/15 transition-all">
                         <span
                           v-for="s in form.requiredSkills"
                           :key="s"
-                          class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] bg-[#EDE8FA] text-[10px] font-medium text-[#7C22E8]"
+                          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#EDE8FA] text-[10.5px] font-medium text-[#7C22E8] border border-[#E4DCF9]"
                         >
                           <span>{{ s }}</span>
-                          <button type="button" @click="removeRequiredSkill(s)" class="hover:text-rose-600 font-bold">×</button>
+                          <button type="button" @click="removeRequiredSkill(s)" class="w-3.5 h-3.5 inline-flex items-center justify-center rounded-full hover:bg-[#7C22E8]/15 hover:text-rose-600 font-bold transition-colors ml-0.5 cursor-pointer">×</button>
                         </span>
                         <input
                           type="text"
                           v-model="newSkillInput"
                           @keydown.enter.prevent="addRequiredSkill()"
                           placeholder="Thêm tag..."
-                          class="text-[10.5px] outline-none px-1 flex-1 min-w-[60px] bg-transparent"
+                          class="border-0 focus:ring-0 focus:outline-none p-0 py-0.5 px-1.5 text-[11.5px] text-[#24212D] flex-1 min-w-[80px] bg-transparent placeholder:text-[#9CA3AF] h-auto leading-normal"
                         />
                       </div>
                       <!-- Gợi ý kỹ năng -->
@@ -1952,21 +1942,21 @@ onBeforeUnmount(() => {
                       <label class="block text-[11px] font-semibold text-[#24212D]">
                         Kỹ năng ưu tiên (Điểm cộng)
                       </label>
-                      <div class="flex flex-wrap gap-1 p-1.5 border border-[#E5E3E9] rounded-[6px] min-h-[30px] bg-white">
+                      <div class="flex flex-wrap items-center gap-1.5 p-2 border border-[#D8D6DF] rounded-lg min-h-[38px] bg-white focus-within:border-[#5b4eea] focus-within:ring-2 focus-within:ring-[#5b4eea]/15 transition-all">
                         <span
                           v-for="s in form.niceToHaveSkills"
                           :key="s"
-                          class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] bg-gray-100 text-[10px] font-medium text-gray-700"
+                          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-gray-100 text-[10.5px] font-medium text-gray-700 border border-gray-200"
                         >
                           <span>{{ s }}</span>
-                          <button type="button" @click="removeNiceSkill(s)" class="hover:text-rose-600 font-bold">×</button>
+                          <button type="button" @click="removeNiceSkill(s)" class="w-3.5 h-3.5 inline-flex items-center justify-center rounded-full hover:bg-black/10 hover:text-rose-600 font-bold transition-colors ml-0.5 cursor-pointer">×</button>
                         </span>
                         <input
                           type="text"
                           v-model="newNiceSkillInput"
                           @keydown.enter.prevent="addNiceSkill()"
                           placeholder="Thêm tag..."
-                          class="text-[10.5px] outline-none px-1 flex-1 min-w-[60px] bg-transparent"
+                          class="border-0 focus:ring-0 focus:outline-none p-0 py-0.5 px-1.5 text-[11.5px] text-[#24212D] flex-1 min-w-[80px] bg-transparent placeholder:text-[#9CA3AF] h-auto leading-normal"
                         />
                       </div>
                       <div class="flex flex-wrap gap-1">
@@ -2499,12 +2489,13 @@ onBeforeUnmount(() => {
 .form-control-input {
   display: block;
   width: 100%;
-  height: 30px !important;
+  height: 34px !important;
+  padding: 0 10px;
   color: #24212D;
   background-color: #FFFFFF;
-  border: 1px solid #E5E3E9;
+  border: 1px solid #D8D6DF;
   border-radius: 6px;
-  font-size: 11.5px !important;
+  font-size: 12px;
   font-family: 'Poppins', system-ui, -apple-system, sans-serif;
   box-sizing: border-box;
   transition: all 0.15s ease-in-out;
@@ -2517,8 +2508,8 @@ onBeforeUnmount(() => {
 
 .form-control-input:focus {
   outline: none;
-  /* border-color: #203de6; */
-  box-shadow: 0 0 0 2px rgba(124, 34, 232, 0.12);
+  border-color: #5b4eea !important;
+  box-shadow: 0 0 0 3px rgba(91, 78, 234, 0.15) !important;
 }
 
 /* Reset @tailwindcss/forms trên thẻ select */
@@ -2528,25 +2519,21 @@ select.form-control-input {
   -webkit-appearance: none !important;
   -moz-appearance: none !important;
   appearance: none !important;
-  height: 30px !important;
+  height: 34px !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
-  padding-left: 10px !important;
-  padding-right: 28px !important;
-  line-height: 28px !important;
-  font-size: 11.5px !important;
+  line-height: 32px;
+  font-size: 12px;
   cursor: pointer;
 }
 
 /* Reset input type="date" */
 input[type="date"].form-control-input {
-  height: 30px !important;
+  height: 34px !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
-  padding-left: 10px !important;
-  padding-right: 28px !important;
-  line-height: 28px !important;
-  font-size: 11.5px !important;
+  line-height: 32px;
+  font-size: 12px;
   position: relative;
 }
 
@@ -2565,24 +2552,22 @@ input[type="date"].form-control-input::-webkit-calendar-picker-indicator {
 /* Reset input text chuẩn chiều cao & căn giữa */
 input[type="text"].form-control-input,
 input[type="number"].form-control-input {
-  height: 30px !important;
+  height: 34px !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
-  padding-left: 10px !important;
-  padding-right: 10px !important;
-  line-height: 28px !important;
-  font-size: 11.5px !important;
+  line-height: 32px;
+  font-size: 12px;
 }
 
-/* Textarea styling: font 11px, placeholder xám nhạt */
+/* Textarea styling: font 12px, placeholder xám nhạt */
 textarea.form-control-textarea {
   width: 100%;
   height: 80px;
   min-height: 80px;
-  font-size: 11px;
+  font-size: 12px;
   color: #24212D;
   background-color: #FFFFFF;
-  border: 1px solid #E5E3E9;
+  border: 1px solid #D8D6DF;
   border-radius: 6px;
   padding: 8px 10px;
   line-height: 1.5;
@@ -2594,13 +2579,13 @@ textarea.form-control-textarea {
 
 textarea.form-control-textarea::placeholder {
   color: #9CA3AF;
-  font-size: 11px;
+  font-size: 11.5px;
 }
 
 textarea.form-control-textarea:focus {
   outline: none;
-  border-color: #7C22E8;
-  box-shadow: 0 0 0 2px rgba(124, 34, 232, 0.12);
+  border-color: #5b4eea !important;
+  box-shadow: 0 0 0 3px rgba(91, 78, 234, 0.15) !important;
 }
 
 /* Custom scrollbar tinh gọn */

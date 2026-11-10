@@ -565,21 +565,21 @@ const confirmWithdraw = async (): Promise<void> => {
 </script>
 
 <template>
-  <!--
-    Layout 2-cột trên desktop / 1-cột trên mobile:
-
-      - Bên trái: list applications. Desktop → 60% width, fixed-height với
-        internal scroll (header + filter pin trên đầu, list cards scroll bên
-        dưới). Khi list ngắn hơn viewport → không scrollbar.
-      - Bên phải: detail panel khi đã chọn, empty-state redesign khi chưa.
-        Desktop luôn 40%. Mobile khi detailOpen → full-screen overlay (list ẩn),
-        khi đóng → hidden (chỉ list).
-
-    Outer `lg:h-screen lg:overflow-hidden` lock viewport trên desktop → body
-    không scroll, mọi thao tác scroll xảy ra bên trong list column. Mobile:
-    page scroll bình thường (lg: không áp dụng).
-  -->
   <div class="bg-white p-5 md:p-8 lg:h-screen lg:overflow-hidden font-poppins">
+    <!--
+      Layout 2-cột trên desktop / 1-cột trên mobile:
+
+        - Bên trái: list applications. Desktop → 60% width, fixed-height với
+          internal scroll (header + filter pin trên đầu, list cards scroll bên
+          dưới). Khi list ngắn hơn viewport → không scrollbar.
+        - Bên phải: detail panel khi đã chọn, empty-state redesign khi chưa.
+          Desktop luôn 40%. Mobile khi detailOpen → full-screen overlay (list ẩn),
+          khi đóng → hidden (chỉ list).
+
+      Outer `lg:h-screen lg:overflow-hidden` lock viewport trên desktop → body
+      không scroll, mọi thao tác scroll xảy ra bên trong list column. Mobile:
+      page scroll bình thường (lg: không áp dụng).
+    -->
     <div class="lg:flex lg:gap-6 lg:max-w-[1280px] lg:mx-auto lg:h-full">
 
       <!-- ====== List column (60%) — flex col với internal scroll ====== -->

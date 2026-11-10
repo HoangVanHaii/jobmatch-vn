@@ -93,8 +93,8 @@ export const jobApi = {
   salaryRange: () =>
     http.get<SalaryRangeResponse>('/jobs/salary-range'),
 
- listByCompany: (params?: ListJobQuery) =>
-    http.get<ApiResponse<JobListItem[]> & { pagination: JobListResponse['pagination'] }>(
+  listByCompany: (params?: ListJobQuery) =>
+    http.get<ApiResponse<JobListItem[]> & { pagination: JobListResponse['pagination']; counts?: { mine: number; company: number } }>(
       '/jobs/company',
       { params },
     ),

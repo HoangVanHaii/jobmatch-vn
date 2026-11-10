@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { Menu } from "lucide-vue-next";
 import EmployerSidebar from "@components/employer/EmployerSidebar.vue";
 
@@ -10,6 +11,18 @@ const openMobileSidebar = (): void => {
 };
 const closeMobileSidebar = (): void => {
   mobileSidebarOpen.value = false;
+};
+
+/**
+ * Phân biệt Route Transition và Content Transition:
+ * Khi chuyển giữa các slug trong Job Detail (Next/Prev job), key giữ nguyên 'employer-job-detail'
+ * để KHÔNG remount component ngoài cùng và KHÔNG chạy lại page entrance animation.
+ */
+const getRouteKey = (route: RouteLocationNormalizedLoaded): string => {
+  if (route.name === 'employer-job-detail') {
+    return 'employer-job-detail';
+  }
+  return route.fullPath;
 };
 </script>
 
@@ -50,14 +63,46 @@ const closeMobileSidebar = (): void => {
         >
           <Menu class="h-5 w-5" />
         </button>
-        <h1 class="text-sm font-semibold tracking-tight text-gray-900">
+        <div class="text-sm font-semibold tracking-tight text-gray-900">
           JOBMATCH<span class="text-primary-600">VN</span>
-        </h1>
+        </div>
       </header>
 
-      <main class="flex-1 min-w-0">
-        <router-view />
+      <main class="flex-1 min-w-0 flex flex-col">
+        <router-view v-slot="{ Component, route }">
+          <Transition name="page-fade" mode="out-in">
+            <component :is="Component" :key="getRouteKey(route)" />
+          </Transition>
+        </router-view>
       </main>
     </div>
   </div>
 </template>
+
+<style>
+/* Page Transition đồng bộ cho các trang Employer - Phong cách SaaS cao cấp */
+.page-fade-enter-active {
+  transition: opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity;
+}
+
+.page-fade-leave-active {
+  transition: opacity 0.06s ease-in;
+}
+
+.page-fade-enter-from {
+  opacity: 0;
+}
+
+.page-fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-fade-enter-active,
+  .page-fade-leave-active {
+    transition: none !important;
+    transform: none !important;
+  }
+}
+</style>

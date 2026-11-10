@@ -42,6 +42,7 @@ export const http = axios.create({
 });
 
 let isRefreshing = false;
+let isRedirecting = false;
 let failedQueue: Array<{ resolve: (v: string) => void; reject: (e: unknown) => void }> = [];
 
 /** Timeout cho queued requests chờ refresh. Nếu refresh bị stuck (do BE treo),
@@ -89,6 +90,27 @@ export class HttpError extends Error {
     this.details = details;
   }
 }
+
+/**
+ * Điều hướng về trang /login kèm param `redirect` để sau khi đăng nhập
+ * người dùng quay lại đúng trang họ đang làm việc dở.
+ *
+ * Chỉ chấp nhận đường dẫn nội bộ bắt đầu bằng "/" và không bắt đầu bằng "//".
+ * Dùng cờ `isRedirecting` để ngăn gọi nhiều lần khi có nhiều 401 đồng thời.
+ */
+const redirectToLogin = (): void => {
+  const onCallback = window.location.pathname.startsWith('/auth/callback/');
+  const onAuthPage = /^\/(login|register|verify-otp|forgot-password)/.test(window.location.pathname);
+  if (!onCallback && !onAuthPage && !isRedirecting) {
+    isRedirecting = true;
+    const currentPath = window.location.pathname + window.location.search;
+    const isSafeInternalPath = currentPath.startsWith('/') && !currentPath.startsWith('//') && !currentPath.startsWith('/\\') && !currentPath.includes('\\');
+    const redirectTarget = isSafeInternalPath && currentPath !== '/'
+      ? `/login?redirect=${encodeURIComponent(currentPath)}`
+      : '/login';
+    window.location.href = redirectTarget;
+  }
+};
 
 const processQueue = (error: unknown, token: string | null = null): void => {
   failedQueue.forEach(({ resolve, reject }) => {
@@ -273,6 +295,7 @@ http.interceptors.response.use(
             401, 'NO_REFRESH_TOKEN', 'Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.',
           );
           processQueue(noSession);
+          redirectToLogin();
           return Promise.reject(noSession);
         }
         // Dùng instance `http` (đã có timeout 30s) thay vì raw axios.
@@ -289,14 +312,7 @@ http.interceptors.response.use(
         processQueue(refreshErr);
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
-        const onCallback = window.location.pathname.startsWith('/auth/callback/');
-        // Đang ở trang auth (kể cả /login) thì KHÔNG redirect — assign
-        // location.href trùng URL hiện tại vẫn trigger full reload → app mount
-        // lại → 401 → refresh → redirect... thành reload loop (bug F5 /login).
-        const onAuthPage = /^\/(login|register|verify-otp|forgot-password)/.test(window.location.pathname);
-        if (!onCallback && !onAuthPage) {
-          window.location.href = '/login';
-        }
+        redirectToLogin();
         return Promise.reject(refreshErr);
       } finally {
         isRefreshing = false;

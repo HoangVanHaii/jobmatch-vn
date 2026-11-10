@@ -560,9 +560,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="bg-[#f7f9fc] font-poppins text-[#17233c]">
+  <div class="w-full min-h-full flex-1 bg-[#f7f9fc] font-poppins text-[#17233c] flex flex-col">
     <div
-      class="relative flex flex-col lg:flex-row lg:h-screen lg:overflow-hidden bg-white shadow-[0_10px_40px_rgba(31,52,85,.08)]"
+      class="w-full flex-1 relative flex flex-col lg:flex-row lg:h-screen lg:overflow-hidden bg-white shadow-[0_10px_40px_rgba(31,52,85,.08)]"
     >
       <!-- ============ Main: list ============ -->
       <main class="min-w-0 flex-1 p-4 sm:p-5 lg:p-6 overflow-y-auto lg:overflow-y-hidden scrollbar-thin main-list-area">

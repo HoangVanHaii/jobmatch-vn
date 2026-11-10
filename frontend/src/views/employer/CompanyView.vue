@@ -236,10 +236,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div ref="rootEl" class="min-h-screen bg-white font-poppins text-slate-900 antialiased">
+  <div ref="rootEl" class="w-full min-h-full flex-1 bg-white font-poppins text-slate-900 antialiased">
     <Transition name="c3-mode" mode="out-in" @before-enter="onModeBeforeEnter" @after-enter="onModeAfterEnter">
       <CompanyProfileSkeleton v-if="pageState === 'loading'" />
-      <div v-else-if="pageState === 'error'" class="mx-auto max-w-[1240px] px-6 py-10">
+      <div v-else-if="pageState === 'error'" class="w-full mx-auto max-w-[1240px] px-6 py-10">
         <p class="text-sm text-red-600" role="alert">{{ companyLoadError }}</p>
         <button
           type="button"
@@ -249,7 +249,7 @@ onMounted(async () => {
           Thử lại
         </button>
       </div>
-      <div v-else-if="pageState === 'empty'" class="c3-fade mx-auto max-w-[1240px] px-6 py-10">
+      <div v-else-if="pageState === 'empty'" class="c3-fade w-full mx-auto max-w-[1240px] px-6 py-10">
         <p class="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-600">Hồ sơ doanh nghiệp / 01</p>
         <h1
           tabindex="-1"

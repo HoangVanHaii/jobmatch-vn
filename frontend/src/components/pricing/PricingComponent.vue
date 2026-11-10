@@ -416,10 +416,10 @@ const DECOR_RIGHT = [
 </script>
 
 <template>
-  <!-- Gốc là style của <body> trong mockup — ẩn scrollbar, trang vẫn cuộn được -->
   <div
-    class="font-poppins h-auto min-h-screen overflow-visible flex items-start justify-center p-3 bg-white text-[#17243a] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden min-[801px]:p-5 min-[1051px]:h-screen min-[1051px]:overflow-hidden min-[1051px]:items-center min-[1051px]:p-[clamp(16px,4vh,40px)]"
+    class="font-poppins w-full min-h-full flex-1 h-auto overflow-visible flex items-start justify-center p-3 bg-white text-[#17243a] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden min-[801px]:p-5 min-[1051px]:h-screen min-[1051px]:overflow-hidden min-[1051px]:items-center min-[1051px]:p-[clamp(16px,4vh,40px)]"
   >
+    <!-- Gốc là style của <body> trong mockup — ẩn scrollbar, trang vẫn cuộn được -->
     <!-- Hero: nền trắng, ::before tạo dải blue chỉ chiếm phần trên -->
     <section
       class="anim-fade-up relative h-auto max-h-none flex flex-col bg-white rounded-[14px] overflow-hidden p-[36px_16px_24px] before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-[42%] before:bg-[linear-gradient(180deg,#0758c8_0%,#1768d2_55%,#4b83cf_100%)] before:rounded-t-[20px] min-[801px]:p-[40px_24px_30px] min-[1051px]:h-full min-[1051px]:w-full min-[1051px]:max-w-[1140px] min-[1051px]:max-h-[1000px] min-[1051px]:rounded-[20px] min-[1051px]:p-[clamp(22px,4.6vh,44px)_clamp(24px,5vh,50px)_clamp(18px,3.5vh,34px)] min-[1051px]:before:h-[58%]"

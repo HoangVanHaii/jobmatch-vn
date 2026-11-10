@@ -829,8 +829,7 @@ const selectEvent = (evt: InterviewEvent): void => {
 </script>
 
 <template>
-  <div class="font-poppins h-[calc(100vh-49px)] md:h-screen max-h-screen bg-[#fafbfc] text-[#1e293b] flex flex-col overflow-hidden">
-    <!-- ==================== HEADER BAR ==================== -->
+ <div class="font-poppins w-full h-[calc(100vh-49px)] md:h-screen max-h-screen bg-[#fafbfc] text-[#1e293b] flex flex-col overflow-hidden">
     <header class="border-b border-[#edf1f7] bg-white px-5 py-3.5 lg:px-8 shrink-0">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>

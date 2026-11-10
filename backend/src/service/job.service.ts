@@ -66,6 +66,28 @@ const SORT_MAP: Record<'newest' | 'oldest' | 'views' | 'applies', SQL> = {
   applies: desc(jobs.appliesCount),
 };
 
+/**
+ * Map sortBy cho danh sách job của công ty (/jobs/company) → Drizzle ORDER BY clause với NULLS LAST.
+ * Chỉ hỗ trợ deadline, viewsCount, appliesCount với asc/desc.
+ */
+const COMPANY_SORT_MAP: Record<
+  'deadline' | 'viewsCount' | 'appliesCount',
+  Record<'asc' | 'desc', SQL>
+> = {
+  deadline: {
+    asc: sql`${jobs.deadline} ASC NULLS LAST`,
+    desc: sql`${jobs.deadline} DESC NULLS LAST`,
+  },
+  viewsCount: {
+    asc: sql`${jobs.viewsCount} ASC NULLS LAST`,
+    desc: sql`${jobs.viewsCount} DESC NULLS LAST`,
+  },
+  appliesCount: {
+    asc: sql`${jobs.appliesCount} ASC NULLS LAST`,
+    desc: sql`${jobs.appliesCount} DESC NULLS LAST`,
+  },
+};
+
 const slugify = (s: string): string => {
   const base = s
     .toLowerCase()
@@ -222,7 +244,7 @@ export const jobService = {
   list: async (
     filters: JobListQuery,
     companyId?: string,
-    userContext?: { userId: string; role: 'owner' | 'member' },
+    userContext?: { userId: string; role: 'owner' | 'member'; scope?: 'company' | 'me' },
   ): Promise<{ data: JobListItem[]; total: number }> => {
     const conditions = [];
     // Logic filter status tuỳ ngữ cảnh:
@@ -235,16 +257,18 @@ export const jobService = {
     if (companyId) {
       conditions.push(eq(jobs.companyId, companyId));
 
-      // Phân quyền nội bộ công ty:
-      // - Member thường: Chỉ thấy tin do mình tạo (postedBy) HOẶC được gán (assignedTo)
-      // - Owner: Thấy toàn bộ tin của công ty
-      if (userContext && userContext.role === 'member') {
-        conditions.push(
-          or(
-            eq(jobs.postedBy, userContext.userId),
-            eq(jobs.assignedTo, userContext.userId),
-          )!,
-        );
+      // Phân quyền / Phạm vi tin tuyển dụng:
+      // - Member thường hoặc scope='me': Chỉ thấy tin do mình tạo (postedBy) HOẶC được gán (assignedTo)
+      // - Owner (mặc định scope='company'): Thấy toàn bộ tin của công ty
+      if (userContext) {
+        if (userContext.role === 'member' || userContext.scope === 'me') {
+          conditions.push(
+            or(
+              eq(jobs.postedBy, userContext.userId),
+              eq(jobs.assignedTo, userContext.userId),
+            )!,
+          );
+        }
       }
     } else if (filters.status && filters.status.length > 0) {
       conditions.push(inArray(jobs.status, filters.status));
@@ -303,6 +327,20 @@ export const jobService = {
       conditions.push(eq(jobs.industry, filters.industry));
     }
 
+    const orderClauses: (SQL | ReturnType<typeof desc> | ReturnType<typeof asc>)[] = [];
+    const order = filters.sortOrder === 'asc' ? 'asc' : 'desc';
+
+    if (filters.sortBy && COMPANY_SORT_MAP[filters.sortBy]) {
+      orderClauses.push(COMPANY_SORT_MAP[filters.sortBy][order]);
+      // Tie-break cố định để phân trang ổn định không trùng không thiếu
+      orderClauses.push(desc(jobs.createdAt));
+      orderClauses.push(asc(jobs.id));
+    } else {
+      orderClauses.push(SORT_MAP[filters.sort ?? 'newest']);
+      orderClauses.push(desc(jobs.createdAt));
+      orderClauses.push(asc(jobs.id));
+    }
+
     const [data, [{ total }]] = await Promise.all([
       db.select({
         id: jobs.id,
@@ -335,6 +373,11 @@ export const jobService = {
         appliesCount: jobs.appliesCount,
         publishedAt: jobs.publishedAt,
         createdAt: jobs.createdAt,
+        paymentCycle: sql<string | null>`CASE 
+          WHEN COALESCE(${jobs.extraData}->>'paymentCycle', ${jobs.extraData}->>'paymentType') IN ('hourly', 'daily', 'weekly', 'monthly', 'yearly', 'contract') 
+          THEN COALESCE(${jobs.extraData}->>'paymentCycle', ${jobs.extraData}->>'paymentType') 
+          ELSE NULL 
+        END`,
         /**
          * Trung bình rating 1–5 + số feedback của job. Correlated subquery —
          * dùng index `idx_job_feedbacks_job(job_id, createdAt)`, không làm
@@ -359,8 +402,7 @@ export const jobService = {
         .from(jobs)
         .leftJoin(companies, eq(jobs.companyId, companies.id))
         .where(and(...conditions))
-        // Order theo filter.sort (Zod default = 'newest'). Tie-break createdAt DESC.
-        .orderBy(SORT_MAP[filters.sort ?? 'newest'], desc(jobs.createdAt))
+        .orderBy(...orderClauses)
         .limit(filters.limit)
         .offset((filters.page - 1) * filters.limit),
 
@@ -1366,6 +1408,24 @@ generateDraft: async (
    */
   changeStatusAdmin: async (jobId: string, status: JobStatus): Promise<void> => {
     await db.update(jobs).set({ status, updatedAt: new Date() }).where(eq(jobs.id, jobId));
+  },
+
+  /**
+   * Đếm tổng số job của công ty và số job thuộc về user (postedBy hoặc assignedTo).
+   * Dùng cho badge bộ đếm 2 tab (Của tôi / Của công ty) ở trang Việc làm đã đăng.
+   */
+  countCompanyJobs: async (companyId: string, userId: string): Promise<{ mine: number; company: number }> => {
+    const [countsResult] = await db
+      .select({
+        company: sql<number>`count(*)::int`,
+        mine: sql<number>`count(*) filter (where ${jobs.postedBy} = ${userId} or ${jobs.assignedTo} = ${userId})::int`,
+      })
+      .from(jobs)
+      .where(eq(jobs.companyId, companyId));
+    return {
+      mine: countsResult?.mine ?? 0,
+      company: countsResult?.company ?? 0,
+    };
   },
 } as const;
 

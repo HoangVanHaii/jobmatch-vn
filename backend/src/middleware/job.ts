@@ -71,7 +71,7 @@ const csvEnumArray = <T extends z.ZodTypeAny>(item: T, max: number) =>
   );
 
 
-export const jobListQuerySchema = z.object({
+const jobListQueryShape = {
   search: z.string().min(1).optional(),
   // Multi-select (CSV/repeated-key) — BE lọc bằng IN; single cũ vẫn parse được.
   jobLevel: csvEnumArray(jobLevelEnum, 7),
@@ -105,6 +105,7 @@ export const jobListQuerySchema = z.object({
   salaryMax: z.coerce.number().int().nonnegative().optional(),
   workType: workTypeEnum.optional(),
   industry: z.string().min(1).max(100).optional(),
+  scope: z.enum(['me', 'company']).optional(),
 
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
@@ -113,13 +114,29 @@ export const jobListQuerySchema = z.object({
    * Áp dụng cho cả /jobs public, /jobs/company và /admin/jobs.
    */
   sort: jobSortEnum.optional().default('newest'),
-}).refine(
+};
+
+export const jobListQuerySchema = z.object(jobListQueryShape).refine(
   (d) =>
     d.salaryMin === undefined ||
     d.salaryMax === undefined ||
     d.salaryMax >= d.salaryMin,
   { message: 'salaryMax phải >= salaryMin', path: ['salaryMax'] },
 );
+
+export const companyJobListQuerySchema = z
+  .object({
+    ...jobListQueryShape,
+    sortBy: z.enum(['deadline', 'viewsCount', 'appliesCount']).optional(),
+    sortOrder: z.enum(['asc', 'desc']).optional(),
+  })
+  .refine(
+    (d) =>
+      d.salaryMin === undefined ||
+      d.salaryMax === undefined ||
+      d.salaryMax >= d.salaryMin,
+    { message: 'salaryMax phải >= salaryMin', path: ['salaryMax'] },
+  );
 
 export const jobSearchQuerySchema = z.object({
   keyword: z.string().min(2).max(200),
@@ -213,7 +230,11 @@ export const jobUpdateSchema = z
     { message: 'salaryMax phải >= salaryMin', path: ['salaryMax'] },
   );
 
-export type JobListQuery = z.infer<typeof jobListQuerySchema>;
+export type JobListQuery = z.infer<typeof jobListQuerySchema> & {
+  sortBy?: 'deadline' | 'viewsCount' | 'appliesCount';
+  sortOrder?: 'asc' | 'desc';
+};
+export type CompanyJobListQuery = z.infer<typeof companyJobListQuerySchema>;
 export type JobCreateBody = z.infer<typeof jobCreateSchema>;
 export type JobUpdateBody = z.infer<typeof jobUpdateSchema>;
 export type JobSemanticSearchQuery = z.infer<typeof jobSemanticSearchQuerySchema>;

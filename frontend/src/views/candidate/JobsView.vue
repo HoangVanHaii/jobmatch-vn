@@ -833,10 +833,10 @@ const onToggleSaveJob = async (jobId: string): Promise<void> => {
 
 
 <template>
-  <!-- Outer = full viewport height + flex column. `overflow-hidden` chặn body
-       scroll toàn trang — chỉ cho phép scroll trong 2 cột (sidebar + main).
-       `flex-1 min-h-0` quan trọng để cho phép children overflow. -->
-    <div class="h-screen overflow-clip w-full bg-white font-poppins text-[#0F172A] flex flex-col">
+  <div class="h-screen overflow-clip w-full bg-white font-poppins text-[#0F172A] flex flex-col">
+    <!-- Outer = full viewport height + flex column. `overflow-hidden` chặn body
+         scroll toàn trang — chỉ cho phép scroll trong 2 cột (sidebar + main).
+         `flex-1 min-h-0` quan trọng để cho phép children overflow. -->
     <!-- ============ Body: sidebar + main ============ -->
     <div class="w-full grid grid-cols-12 lg:grid-rows-[minmax(0,1fr)] gap-4 flex-1 min-h-0">
       <!-- ============ Sidebar filter (cuộn riêng, ẩn thanh cuộn) ============ -->

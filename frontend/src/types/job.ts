@@ -16,6 +16,17 @@ export type JobStatus =
   | 'draft' | 'pending' | 'ai_scanning' | 'ai_flagged'
   | 'live' | 'expired' | 'closed';
 
+/** Map nhãn trạng thái dùng chung toàn bộ frontend. */
+export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
+  live: 'Đang hiển thị',
+  pending: 'Chờ duyệt',
+  ai_scanning: 'AI đang quét',
+  ai_flagged: 'Bị gắn cờ',
+  draft: 'Bản nháp',
+  expired: 'Hết hạn',
+  closed: 'Đã đóng',
+};
+
 /**
  * Mirror `hiring_status` enum ở backend (migration 0038). Employer set thủ
  * công — FE chỉ đọc + render badge tương ứng.
@@ -85,6 +96,8 @@ export interface JobListItem {
   postedBy?: string | null;
   /** User id của người phụ trách tin tuyển dụng. */
   assignedTo?: string | null;
+  /** Chu kỳ trả lương (lấy từ jobs.extra_data->>'paymentCycle', giá trị hợp lệ: hourly, daily, weekly, monthly, yearly, contract). */
+  paymentCycle?: PaymentCycleType | string | null;
 }
 
 /**
@@ -325,6 +338,9 @@ export interface SalaryRangeResponse {
   data: { min: number; max: number };
 }
 
+export type CompanyJobSortBy = 'deadline' | 'viewsCount' | 'appliesCount';
+export type JobSortOrder = 'asc' | 'desc';
+
 /** Query params cho GET /jobs. Mọi field optional — backend default = không filter. */
 export interface ListJobQuery {
   search?: string;
@@ -355,6 +371,10 @@ export interface ListJobQuery {
    */
   salaryMin?: number;
   salaryMax?: number;
+  scope?: 'me' | 'company';
   page?: number;
   limit?: number;
+  /** Server-side sort params (cho GET /jobs/company) */
+  sortBy?: CompanyJobSortBy;
+  sortOrder?: JobSortOrder;
 }
