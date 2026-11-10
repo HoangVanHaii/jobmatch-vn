@@ -922,7 +922,7 @@ const goToPrevJob = (): void => {
   const target = prevJob.value?.slug || prevJob.value?.id;
   if (target) {
     slideDirection.value = 'prev';
-    router.push({ name: route.name || 'employer-job-detail', params: { id: target } });
+    void router.replace({ name: route.name || 'employer-job-detail', params: { id: target } });
   }
 };
 
@@ -930,16 +930,12 @@ const goToNextJob = (): void => {
   const target = nextJob.value?.slug || nextJob.value?.id;
   if (target) {
     slideDirection.value = 'next';
-    router.push({ name: route.name || 'employer-job-detail', params: { id: target } });
+    void router.replace({ name: route.name || 'employer-job-detail', params: { id: target } });
   }
 };
 
 const goBack = (): void => {
-  if (window.history.length > 1) {
-    router.back();
-  } else {
-    void router.push('/employer/jobs');
-  }
+  void router.push({ name: 'employer-jobs' });
 };
 
 const onEdit = (): void => {
@@ -1482,53 +1478,57 @@ useSocket('ai-test:ready', (payload: any) => {
 </script>
 
 <template>
-  <div class="max-w-[1240px] mx-auto bg-white border-none shadow-2xs overflow-hidden relative pb-6 font-poppins text-gray-900 min-h-screen">
+  <div class="w-full min-h-screen bg-white relative pb-10 font-poppins text-gray-900">
 
     <!-- 1. SKELETON LOADING -->
     <div v-if="loading" class="animate-pulse">
       <!-- 1. Header Skeleton -->
-      <div class="px-6 lg:px-8 pt-5 pb-4 border-b border-gray-100 bg-white">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
-          <!-- Trái: Back button + Title + Badges -->
-          <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
-            <div class="w-7 h-7 rounded-full bg-gray-200"></div>
-            <div class="h-6 sm:h-7 w-64 sm:w-96 rounded-md bg-gray-200"></div>
-            <div class="h-5 w-24 rounded-full bg-gray-200"></div>
-            <div class="h-5 w-28 rounded-full bg-gray-200 hidden sm:block"></div>
+      <div class="bg-white">
+        <div class="max-w-[1240px] mx-auto px-6 lg:px-8 pt-5 pb-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+            <!-- Trái: Back button + Title + Badges -->
+            <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+              <div class="w-7 h-7 rounded-full bg-gray-200"></div>
+              <div class="h-6 sm:h-7 w-64 sm:w-96 rounded-md bg-gray-200"></div>
+              <div class="h-5 w-24 rounded-full bg-gray-200"></div>
+              <div class="h-5 w-28 rounded-full bg-gray-200 hidden sm:block"></div>
+            </div>
+            <!-- Phải: Action buttons -->
+            <div class="flex items-center gap-1.5 self-end sm:self-auto">
+              <div class="w-7 h-7 rounded-full bg-gray-200"></div>
+              <div class="w-7 h-7 rounded-full bg-gray-200"></div>
+              <div class="w-7 h-7 rounded-full bg-gray-200"></div>
+              <div class="w-7 h-7 rounded-lg bg-gray-200"></div>
+              <div class="w-7 h-7 rounded-lg bg-gray-200"></div>
+              <div class="h-7 w-20 rounded-lg bg-gray-200"></div>
+            </div>
           </div>
-          <!-- Phải: Action buttons -->
-          <div class="flex items-center gap-1.5 self-end sm:self-auto">
-            <div class="w-7 h-7 rounded-full bg-gray-200"></div>
-            <div class="w-7 h-7 rounded-full bg-gray-200"></div>
-            <div class="w-7 h-7 rounded-full bg-gray-200"></div>
-            <div class="w-7 h-7 rounded-lg bg-gray-200"></div>
-            <div class="w-7 h-7 rounded-lg bg-gray-200"></div>
-            <div class="h-7 w-20 rounded-lg bg-gray-200"></div>
-          </div>
-        </div>
 
-        <!-- Meta row skeleton -->
-        <div class="flex items-center gap-x-4 gap-y-2 flex-wrap mt-3 pt-1">
-          <div class="h-4 w-28 rounded bg-gray-200"></div>
-          <div class="h-4 w-24 rounded bg-gray-200"></div>
-          <div class="h-4 w-24 rounded bg-gray-200"></div>
-          <div class="h-4 w-36 rounded bg-gray-200"></div>
-          <div class="h-4 w-32 rounded bg-gray-200"></div>
+          <!-- Meta row skeleton -->
+          <div class="flex items-center gap-x-4 gap-y-2 flex-wrap mt-3 pt-1">
+            <div class="h-4 w-28 rounded bg-gray-200"></div>
+            <div class="h-4 w-24 rounded bg-gray-200"></div>
+            <div class="h-4 w-24 rounded bg-gray-200"></div>
+            <div class="h-4 w-36 rounded bg-gray-200"></div>
+            <div class="h-4 w-32 rounded bg-gray-200"></div>
+          </div>
         </div>
       </div>
 
       <!-- 2. Tabs Row Skeleton -->
-      <div class="px-6 lg:px-8 border-b border-gray-100 bg-white pt-2.5 pb-2.5">
-        <div class="flex items-center gap-4">
-          <div class="h-8 w-28 rounded-lg bg-gray-200"></div>
-          <div class="h-8 w-32 rounded-lg bg-gray-200"></div>
-          <div class="h-8 w-28 rounded-lg bg-gray-200"></div>
-          <div class="h-8 w-24 rounded-lg bg-gray-200"></div>
+      <div class="bg-white">
+        <div class="max-w-[1240px] mx-auto px-6 lg:px-8 pt-2.5 pb-2.5">
+          <div class="flex items-center gap-4">
+            <div class="h-8 w-28 rounded-lg bg-gray-200"></div>
+            <div class="h-8 w-32 rounded-lg bg-gray-200"></div>
+            <div class="h-8 w-28 rounded-lg bg-gray-200"></div>
+            <div class="h-8 w-24 rounded-lg bg-gray-200"></div>
+          </div>
         </div>
       </div>
 
       <!-- 3. Body Skeleton (2 Cột 67% - 33%) -->
-      <div class="p-4 sm:p-5 lg:p-6">
+      <div class="max-w-[1240px] mx-auto p-4 sm:p-5 lg:p-6">
         <div class="flex flex-col lg:flex-row gap-6 lg:gap-8 items-start">
           <!-- Cột trái (67%) -->
           <div class="w-full lg:w-[67%] space-y-6">
@@ -1664,8 +1664,9 @@ useSocket('ai-test:ready', (payload: any) => {
       <!-- ===================================================================
            KHU VỰC B: JOB HEADER (TẦNG 0 - 0ms)
            =================================================================== -->
-      <div class="jd-stagger jd-d0 px-6 lg:px-8 pt-5 pb-4 border-b border-gray-100 bg-white">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+      <div class="bg-white">
+        <div class="jd-stagger jd-d0 max-w-[1240px] mx-auto px-6 lg:px-8 pt-5 pb-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <!-- Bên trái: Nút quay lại, Tên công việc, Badges trạng thái -->
           <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
             <!-- Nút back -->
@@ -1949,136 +1950,139 @@ useSocket('ai-test:ready', (payload: any) => {
             <span>{{ job.status === 'ai_scanning' ? 'Đang quét...' : 'Đăng tin ngay' }}</span>
           </button>
         </div> -->
+        </div>
       </div>
 
       <!-- ===================================================================
            KHU VỰC C: NAVIGATION TABS ROW (TẦNG 1 - 60ms)
            =================================================================== -->
-      <nav
-        class="jd-stagger jd-d1 relative px-6 lg:px-8 flex items-center gap-6 sm:gap-8 border-b border-gray-200 bg-white text-xs select-none"
-        aria-label="Job Detail Tabs"
-      >
-        <!-- Tab 1: Thông tin (Information) -->
-        <button
-          type="button"
-          class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
-          :class="
-            activeTab === 'information'
-              ? 'text-[#5b4eea] font-semibold'
-              : 'text-gray-500 font-medium hover:text-gray-700'
-          "
-          @click="switchTab('information')"
+      <div class="bg-white">
+        <nav
+          class="jd-stagger jd-d1 relative max-w-[1240px] mx-auto px-6 lg:px-8 flex items-center gap-6 sm:gap-8 text-xs select-none"
+          aria-label="Job Detail Tabs"
         >
-          <Info
-            class="h-3.5 w-3.5"
-            :class="activeTab === 'information' ? 'text-[#5b4eea]' : 'text-gray-400'"
-          />
-          <span>Thông tin</span>
-          <!-- Gạch chỉ báo nội tại: luôn bám khít 100% độ rộng button, không bao giờ lệch -->
-          <span
-            v-if="activeTab === 'information'"
-            class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
-          ></span>
-        </button>
+          <!-- Tab 1: Thông tin (Information) -->
+          <button
+            type="button"
+            class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
+            :class="
+              activeTab === 'information'
+                ? 'text-[#5b4eea] font-semibold'
+                : 'text-gray-500 font-medium hover:text-gray-700'
+            "
+            @click="switchTab('information')"
+          >
+            <Info
+              class="h-3.5 w-3.5"
+              :class="activeTab === 'information' ? 'text-[#5b4eea]' : 'text-gray-400'"
+            />
+            <span>Thông tin</span>
+            <!-- Gạch chỉ báo nội tại: luôn bám khít 100% độ rộng button, không bao giờ lệch -->
+            <span
+              v-if="activeTab === 'information'"
+              class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
+            ></span>
+          </button>
 
-        <!-- Tab 2: Đơn ứng tuyển (Application) -->
-        <button
-          type="button"
-          class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
-          :class="
-            activeTab === 'application'
-              ? 'text-[#5b4eea] font-semibold'
-              : 'text-gray-500 font-medium hover:text-gray-700'
-          "
-          @click="switchTab('application')"
-        >
-          <FileText
-            class="h-3.5 w-3.5"
-            :class="activeTab === 'application' ? 'text-[#5b4eea]' : 'text-gray-400'"
-          />
-          <span>Đơn ứng tuyển</span>
-          <span
-            class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+          <!-- Tab 2: Đơn ứng tuyển (Application) -->
+          <button
+            type="button"
+            class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
             :class="
               activeTab === 'application'
-                ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
-                : 'bg-gray-100 text-gray-500'
+                ? 'text-[#5b4eea] font-semibold'
+                : 'text-gray-500 font-medium hover:text-gray-700'
             "
+            @click="switchTab('application')"
           >
-            {{ appTotal || job.appliesCount || 0 }}
-          </span>
-          <span
-            v-if="activeTab === 'application'"
-            class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
-          ></span>
-        </button>
+            <FileText
+              class="h-3.5 w-3.5"
+              :class="activeTab === 'application' ? 'text-[#5b4eea]' : 'text-gray-400'"
+            />
+            <span>Đơn ứng tuyển</span>
+            <span
+              class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+              :class="
+                activeTab === 'application'
+                  ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
+                  : 'bg-gray-100 text-gray-500'
+              "
+            >
+              {{ appTotal || job.appliesCount || 0 }}
+            </span>
+            <span
+              v-if="activeTab === 'application'"
+              class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
+            ></span>
+          </button>
 
-        <!-- Tab 3: Bài kiểm tra (Test) -->
-        <button
-          type="button"
-          class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
-          :class="
-            activeTab === 'test'
-              ? 'text-[#5b4eea] font-semibold'
-              : 'text-gray-500 font-medium hover:text-gray-700'
-          "
-          @click="switchTab('test')"
-        >
-          <CheckSquare
-            class="h-3.5 w-3.5"
-            :class="activeTab === 'test' ? 'text-[#5b4eea]' : 'text-gray-400'"
-          />
-          <span>Bài kiểm tra</span>
-          <span
-            v-if="testList.length"
-            class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+          <!-- Tab 3: Bài kiểm tra (Test) -->
+          <button
+            type="button"
+            class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
             :class="
               activeTab === 'test'
-                ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
-                : 'bg-gray-100 text-gray-500'
+                ? 'text-[#5b4eea] font-semibold'
+                : 'text-gray-500 font-medium hover:text-gray-700'
             "
+            @click="switchTab('test')"
           >
-            {{ testList.length }}
-          </span>
-          <span
-            v-if="activeTab === 'test'"
-            class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
-          ></span>
-        </button>
+            <CheckSquare
+              class="h-3.5 w-3.5"
+              :class="activeTab === 'test' ? 'text-[#5b4eea]' : 'text-gray-400'"
+            />
+            <span>Bài kiểm tra</span>
+            <span
+              v-if="testList.length"
+              class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+              :class="
+                activeTab === 'test'
+                  ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
+                  : 'bg-gray-100 text-gray-500'
+              "
+            >
+              {{ testList.length }}
+            </span>
+            <span
+              v-if="activeTab === 'test'"
+              class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
+            ></span>
+          </button>
 
-        <!-- Tab 4: Đánh giá (Feedback) -->
-        <button
-          type="button"
-          class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
-          :class="
-            activeTab === 'feedback'
-              ? 'text-[#5b4eea] font-semibold'
-              : 'text-gray-500 font-medium hover:text-gray-700'
-          "
-          @click="switchTab('feedback')"
-        >
-          <Star
-            class="h-3.5 w-3.5"
-            :class="activeTab === 'feedback' ? 'text-[#5b4eea]' : 'text-gray-400'"
-          />
-          <span>Đánh giá</span>
-          <span
-            v-if="job.feedbackStats?.count"
-            class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+          <!-- Tab 4: Đánh giá (Feedback) -->
+          <button
+            type="button"
+            class="relative flex items-center gap-1.5 py-3 transition-colors cursor-pointer"
             :class="
               activeTab === 'feedback'
-                ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
-                : 'bg-gray-100 text-gray-500'
+                ? 'text-[#5b4eea] font-semibold'
+                : 'text-gray-500 font-medium hover:text-gray-700'
             "
+            @click="switchTab('feedback')"
           >
-            {{ job.feedbackStats.count }}
-          </span>
-          <span
-            v-if="activeTab === 'feedback'"
-            class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
-          ></span>
-        </button>
-      </nav>
+            <Star
+              class="h-3.5 w-3.5"
+              :class="activeTab === 'feedback' ? 'text-[#5b4eea]' : 'text-gray-400'"
+            />
+            <span>Đánh giá</span>
+            <span
+              v-if="job.feedbackStats?.count"
+              class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-semibold"
+              :class="
+                activeTab === 'feedback'
+                  ? 'bg-[#5b4eea]/10 text-[#5b4eea]'
+                  : 'bg-gray-100 text-gray-500'
+              "
+            >
+              {{ job.feedbackStats.count }}
+            </span>
+            <span
+              v-if="activeTab === 'feedback'"
+              class="tab-indicator-bar absolute bottom-0 inset-x-0 h-0.5 bg-[#5b4eea]"
+            ></span>
+          </button>
+        </nav>
+      </div>
 
       <!-- ===================================================================
            TAB CONTENT WRAPPER VỚI FADE-IN TRANSITION & CHỐNG GIẬT CHIỀU CAO
@@ -2093,7 +2097,7 @@ useSocket('ai-test:ready', (payload: any) => {
                NỘI DUNG TAB 1: THÔNG TIN (Layout 2 cột: 67% - 33%)
                =================================================================== -->
           <main v-if="activeTab === 'information'" key="information" class="flex-1 min-w-0 bg-white">
-        <div class="flex flex-col lg:flex-row">
+            <div class="max-w-[1240px] mx-auto flex flex-col lg:flex-row">
           <!-- =================================================================
                CỘT TRÁI (67% chiều rộng): AI Moderation & Job Description
                ================================================================= -->
@@ -2654,11 +2658,9 @@ useSocket('ai-test:ready', (payload: any) => {
       <!-- ===================================================================
            NỘI DUNG TAB 2: ĐƠN ỨNG TUYỂN (APPLICATION)
            =================================================================== -->
-      <!-- ===================================================================
-           NỘI DUNG TAB 2: ĐƠN ỨNG TUYỂN (APPLICATION)
-           =================================================================== -->
       <section v-else-if="activeTab === 'application'" key="application" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
-        <!-- Top bar: Tiêu đề + Bộ lọc trạng thái + Tìm kiếm -->
+        <div class="max-w-[1240px] mx-auto">
+          <!-- Top bar: Tiêu đề + Bộ lọc trạng thái + Tìm kiếm -->
         <div class="mb-5 flex items-start justify-between gap-3 flex-wrap">
           <div>
             <div class="flex items-center gap-2.5 flex-wrap">
@@ -3104,13 +3106,15 @@ useSocket('ai-test:ready', (payload: any) => {
             </div>
           </div>
         </div>
+        </div>
       </section>
 
       <!-- ===================================================================
            NỘI DUNG TAB 3: BÀI KIỂM TRA (TEST)
            =================================================================== -->
       <section v-else-if="activeTab === 'test'" key="test" class="p-4 sm:p-6 lg:p-8 bg-[#f8fafc]/50 min-h-[500px]">
-        <!-- Top bar: Tiêu đề + Thống kê + Nút hành động (Sinh đề IQ / Tiếng Anh) -->
+        <div class="max-w-[1240px] mx-auto">
+          <!-- Top bar: Tiêu đề + Thống kê + Nút hành động (Sinh đề IQ / Tiếng Anh) -->
         <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <div class="flex items-center gap-2">
@@ -3377,13 +3381,15 @@ useSocket('ai-test:ready', (payload: any) => {
             </div>
           </div>
         </div>
+        </div>
       </section>
 
       <!-- ===================================================================
            NỘI DUNG TAB 4: ĐÁNH GIÁ (FEEDBACK)
            =================================================================== -->
       <section v-else-if="activeTab === 'feedback'" key="feedback" class="p-6 sm:p-8">
-        <div class="flex items-center justify-between mb-4">
+        <div class="max-w-[1240px] mx-auto">
+          <div class="flex items-center justify-between mb-4">
           <div>
             <h2 class="text-base font-bold text-gray-900">Đánh giá từ ứng viên</h2>
             <p class="text-xs text-gray-500 mt-0.5">
@@ -3426,6 +3432,7 @@ useSocket('ai-test:ready', (payload: any) => {
           <Star class="h-10 w-10 text-amber-400 mx-auto mb-3 opacity-80" />
           <p class="text-sm font-semibold text-gray-700">Chưa có đánh giá nào từ ứng viên</p>
           <p class="text-xs text-gray-400 mt-1">Đánh giá và phản hồi của ứng viên sau phỏng vấn sẽ xuất hiện tại đây</p>
+        </div>
         </div>
       </section>
         </Transition>
