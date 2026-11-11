@@ -24,6 +24,10 @@ import { googleCalendarService } from './googleCalendar.service';
 import { n8nService } from './n8n.service';
 import { env } from '../config/env';
 import { sendInterviewFallbackEmail, getInterviewTypeLabel } from '../utils/interviewEmail';
+import {
+  scheduleInterviewReminders,
+  cancelInterviewReminders,
+} from './interviewReminder.service';
 import type { CreateInterviewBody, UpdateInterviewBody } from '../middleware/interview';
 import type { CandidateInterviewRow, EmployerInterviewRow, InterviewDetail } from '../interface/interview';
 import crypto from 'crypto'
@@ -621,7 +625,10 @@ export const interviewService = {
       throw new AppError(400, 'INTERVIEW_IMMUTABLE', `Cannot update interview with status "${existing.status}"`);
     }
 
-    const resetConfirm = body.scheduledAt ? { confirmedAt: null } : {};
+    const isRescheduled = Boolean(body.scheduledAt && new Date(body.scheduledAt).getTime() !== existing.scheduledAt?.getTime());
+    const resetConfirm = body.scheduledAt
+      ? { confirmedAt: null, reminder24hSent: false, reminder2hSent: false, reminder15mSent: false }
+      : {};
 
     const [updated] = await db
       .update(interviews)
@@ -638,6 +645,17 @@ export const interviewService = {
       .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to update interview');
+
+    if (isRescheduled) {
+      void cancelInterviewReminders(interviewId).catch((err) =>
+        logger.warn({ err, interviewId }, 'update: cancel old reminders failed'),
+      );
+      if (updated.status === 'confirmed' && body.scheduledAt) {
+        void scheduleInterviewReminders(interviewId, new Date(body.scheduledAt)).catch((err) =>
+          logger.warn({ err, interviewId }, 'update: re-schedule reminders failed'),
+        );
+      }
+    }
 
     if (existing.googleEventId) {
       void googleCalendarService
@@ -674,6 +692,10 @@ export const interviewService = {
       .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to cancel interview');
+
+    void cancelInterviewReminders(interviewId).catch((err) =>
+      logger.warn({ err, interviewId }, 'cancel: cancel reminders failed'),
+    );
 
     if (existing.googleEventId) {
       void googleCalendarService
@@ -849,6 +871,11 @@ export const interviewService = {
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to confirm interview');
 
+    // Lên lịch Delayed Jobs nhắc phỏng vấn (24h, 2h, 15m)
+    void scheduleInterviewReminders(interviewId, row.scheduledAt).catch((err) =>
+      logger.warn({ err, interviewId }, 'confirm: schedule reminders failed'),
+    );
+
     return { id: updated.id, status: updated.status ?? 'confirmed' };
   },
 
@@ -889,6 +916,11 @@ export const interviewService = {
       .returning({ id: interviews.id, status: interviews.status, interviewType: interviews.interviewType });
 
     if (!updated) throw new AppError(500, 'UPDATE_FAILED', 'Failed to reject interview');
+
+    // Hủy các Delayed Jobs nhắc phỏng vấn đang chờ
+    void cancelInterviewReminders(interviewId).catch((err) =>
+      logger.warn({ err, interviewId }, 'reject: cancel reminders failed'),
+    );
 
     // Xoá sự kiện trên Google Calendar của HR nếu có liên kết
     if (row.googleEventId) {
@@ -1034,6 +1066,11 @@ export const interviewService = {
         .set({ status: 'confirmed', confirmedAt: new Date() })
         .where(eq(interviews.id, row.id));
 
+      // Lên lịch Delayed Jobs nhắc phỏng vấn
+      void scheduleInterviewReminders(row.id, row.scheduledAt).catch((err) =>
+        logger.warn({ err, interviewId: row.id }, 'respondPublicByToken: schedule reminders failed'),
+      );
+
       // Thông báo cho HR qua notification & socket
       void notificationService.create({
         userId: row.interviewerId,
@@ -1084,6 +1121,10 @@ export const interviewService = {
         .set({ cancelReason: `Xin dời lịch: ${fullText}`, googleEventId: null })
         .where(eq(interviews.id, row.id));
 
+      void cancelInterviewReminders(row.id).catch((err) =>
+        logger.warn({ err, interviewId: row.id }, 'respondPublicByToken: cancel reminders on reschedule failed'),
+      );
+
       // Xoá sự kiện cũ trên Google Calendar của HR để giải phóng khung giờ
       if (row.googleEventId) {
         void googleCalendarService
@@ -1128,6 +1169,10 @@ export const interviewService = {
       .update(interviews)
       .set({ status: 'cancelled', cancelledAt: new Date(), cancelReason, googleEventId: null })
       .where(eq(interviews.id, row.id));
+
+    void cancelInterviewReminders(row.id).catch((err) =>
+      logger.warn({ err, interviewId: row.id }, 'respondPublicByToken: cancel reminders on reject failed'),
+    );
 
     // Xoá sự kiện trên Google Calendar của HR để giải phóng khung giờ
     if (row.googleEventId) {

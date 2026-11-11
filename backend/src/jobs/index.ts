@@ -34,13 +34,7 @@ export const startWorkers = (): void => {
 
 
   // Schedule periodic jobs
-  // Interview reminder — mỗi 15 phút
-  const reminderQueue = new Queue('ai', { connection: redis });
-  reminderQueue.add(
-    'interview-reminder',
-    {},
-    { repeat: { pattern: '*/15 * * * *' } },
-  );
+  // (Interview reminder đã chuyển sang Delayed Job event-driven trong interviewReminder.service.ts)
 
   // Job expiry — mỗi ngày 0h (Asia/Ho_Chi_Minh) → live → expired khi quá deadline
   void scheduleJobExpiry();

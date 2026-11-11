@@ -131,10 +131,10 @@ const activeFilterCount = computed(() => {
   return count;
 });
 
-// Time & Days structure: 08:00 -> 19:00
-const startHourBase = 8;
+// Time & Days structure: 06:00 -> 19:00
+const startHourBase = 6;
 const timeSlots = [
-  '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
+  '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
 ];
 
 export interface WeekDayItem {
@@ -812,7 +812,7 @@ const triggerDatePicker = () => {
   }
 };
 
-// Tính toán vị trí top và height của Event card trên lưới theo giờ (8:00 = 0px)
+// Tính toán vị trí top và height của Event card trên lưới theo giờ (6:00 = 0px)
 const calculateEventPosition = (startHourDecimal: number, durationHours: number) => {
   const h = hourHeight.value;
   const top = (startHourDecimal - startHourBase) * h;
@@ -1304,7 +1304,7 @@ const selectEvent = (evt: InterviewEvent): void => {
               </div>
             </div>
 
-            <!-- 1. Cột hiển thị giờ bên trái (08:00 - 19:00) -->
+            <!-- 1. Cột hiển thị giờ bên trái (06:00 - 19:00) -->
             <div class="border-r border-[#edf1f7] bg-white select-none">
               <div
                 v-for="time in timeSlots"
@@ -1333,7 +1333,7 @@ const selectEvent = (evt: InterviewEvent): void => {
 
                 <!-- Red Current Time Line nếu là hôm nay -->
                 <div
-                  v-if="d.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 19"
+                  v-if="d.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 20"
                   class="absolute left-0 right-0 z-20 pointer-events-none flex items-center"
                   :style="{ top: `calc((${nowTimeInfo.decimalHour} - ${startHourBase}) * ${hourHeight}px)` }"
                 >
@@ -1408,7 +1408,7 @@ const selectEvent = (evt: InterviewEvent): void => {
 
                 <!-- Red Current Time Line (chỉ hiển thị khi đang xem ngày hôm nay) -->
                 <div
-                  v-if="currentDayInfo.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 19"
+                  v-if="currentDayInfo.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 20"
                   class="absolute left-0 right-0 z-20 pointer-events-none flex items-center"
                   :style="{ top: `calc((${nowTimeInfo.decimalHour} - ${startHourBase}) * ${hourHeight}px)` }"
                 >

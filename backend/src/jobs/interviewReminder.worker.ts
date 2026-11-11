@@ -1,21 +1,38 @@
 /**
- * Interview Reminder worker — Phase 3
- * Cron mỗi 15 phút, gửi reminder 24h/2h/15m trước
+ * Interview Reminder Worker
+ * Lắng nghe các Delayed Jobs từ `interviewReminder` queue và thực thi gửi thông báo nhắc lịch
  */
 import { Worker } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
-import { interviewService } from '../service/interview.service';
+import {
+  processInterviewReminder,
+  type InterviewReminderJobData,
+} from '../service/interviewReminder.service';
 
-export const interviewReminderWorker = new Worker(
-  'ai',
+export const interviewReminderWorker = new Worker<InterviewReminderJobData>(
+  'interviewReminder',
   async (job) => {
-    if (job.name === 'interview-reminder') {
-      logger.info('Worker: Interview reminder check started');
-      // await interviewService.sendReminders();
+    logger.info(
+      { jobId: job.id, interviewId: job.data.interviewId, reminderType: job.data.reminderType },
+      'Interview reminder delayed job fired',
+    );
+
+    const { interviewId, reminderType, expectedScheduledAt } = job.data;
+    if (!interviewId || !reminderType) {
+      logger.warn({ jobId: job.id, data: job.data }, 'Invalid interview reminder job data, skipping');
+      return;
     }
+
+    await processInterviewReminder(interviewId, reminderType, expectedScheduledAt);
   },
-  { connection: redis, concurrency: 1 },
+  { connection: redis, concurrency: 5 },
 );
 
-interviewReminderWorker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, 'Interview reminder failed'));
+interviewReminderWorker.on('failed', (job, err) => {
+  logger.error({ jobId: job?.id, err }, 'Interview reminder delayed job failed');
+});
+
+interviewReminderWorker.on('completed', (job) => {
+  logger.info({ jobId: job.id }, 'Interview reminder delayed job completed successfully');
+});
