@@ -19,6 +19,7 @@ import { ref, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import {
+  AlertTriangle,
   Check,
   CircleAlert,
   TriangleAlert,
@@ -818,49 +819,96 @@ watch(
       </div>
     </div>
 
-    <!-- Confirm Modal khi nâng cấp đè gói đang sử dụng -->
-    <div
-      v-if="confirmOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
-      @click.self="cancelConfirm"
-    >
-      <div
-        class="bg-white rounded-md p-5 max-w-md w-full shadow-2xl border border-gray-100"
-        role="dialog"
-        aria-modal="true"
-      >
-        <div class="flex items-center gap-2.5 mb-3">
-          <TriangleAlert class="h-5 w-5 shrink-0 text-amber-500" />
-          <h3 class="text-base font-bold text-gray-900">
-            Xác nhận thay đổi gói dịch vụ
-          </h3>
-        </div>
-        <p class="text-[13px] text-gray-600 mb-5 leading-relaxed">
-          Gói hiện tại của bạn
-          {{ remainingDays !== null ? `còn ${remainingDays} ngày` : "" }}. Khi nâng
-          cấp lên gói
-          <strong>{{ confirmPlan?.name || "mới" }}</strong
-          >, gói hiện tại sẽ kết thúc và gói mới sẽ kích hoạt ngay hôm nay. Thời gian
-          còn lại không được cộng dồn.
-        </p>
-        <div class="flex gap-3 justify-end">
-          <button
-            type="button"
-            class="px-4 py-2 rounded-md text-sm font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 transition"
-            @click="cancelConfirm"
+    <!-- Confirm Modal khi nâng cấp đè gói đang sử dụng (đồng bộ DeleteMemberModal) -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="confirmOpen"
+          class="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-upgrade-modal-title"
+          aria-describedby="confirm-upgrade-modal-desc"
+          @keydown.escape="cancelConfirm"
+          @mousedown.self="cancelConfirm"
+        >
+          <!-- Backdrop -->
+          <div
+            class="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+            @click.self="cancelConfirm"
+          />
+
+          <!-- Dialog container: đồng bộ chuẩn DeleteMemberModal -->
+          <div
+            class="relative z-10 w-full max-w-[540px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl ring-1 ring-slate-200 md:p-7"
+            @mousedown.stop
           >
-            Hủy
-          </button>
-          <button
-            type="button"
-            class="px-4 py-2 rounded-md text-sm font-semibold text-white bg-[#5b4eea] hover:bg-[#4a3ed6] transition"
-            @click="proceedConfirm"
-          >
-            Tiếp tục
-          </button>
+            <!-- Header: tiêu đề trái + nút đóng phải -->
+            <div class="flex items-start justify-between gap-4">
+              <h2
+                id="confirm-upgrade-modal-title"
+                class="text-[22px] font-semibold leading-snug tracking-[-0.01em] text-slate-900"
+              >
+                Xác nhận thay đổi gói dịch vụ
+              </h2>
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-slate-400 transition duration-150 hover:bg-slate-100 hover:text-slate-600 active:scale-95 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40"
+                title="Đóng"
+                aria-label="Đóng"
+                @click="cancelConfirm"
+              >
+                <X class="h-4 w-4" />
+              </button>
+            </div>
+
+            <!-- Nội dung mô tả -->
+            <p
+              id="confirm-upgrade-modal-desc"
+              class="mt-2.5 text-[15px] leading-relaxed text-slate-600"
+            >
+              Gói hiện tại của bạn
+              <span class="font-medium text-slate-900">
+                {{ remainingDays !== null ? `còn ${remainingDays} ngày` : "" }}
+              </span>.
+              Khi nâng cấp lên gói
+              <span class="font-medium text-slate-900">
+                {{ confirmPlan?.name || "mới" }}
+              </span>, gói mới sẽ được kích hoạt ngay hôm nay.
+            </p>
+
+            <!-- Warning panel cảnh báo không cộng dồn — đồng bộ style DeleteMemberModal -->
+            <div class="mt-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+              <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />
+              <div class="min-w-0">
+                <p class="text-sm font-semibold text-slate-900">Thời gian còn lại không được cộng dồn</p>
+                <p class="mt-1 text-[13px] leading-relaxed text-slate-600">
+                  Gói hiện tại sẽ kết thúc ngay lập tức và số ngày sử dụng còn lại không được bảo lưu khi gói mới có hiệu lực.
+                </p>
+              </div>
+            </div>
+
+            <!-- Footer: 2 nút ngang, căn phải -->
+            <div class="mt-6 flex justify-end gap-2.5">
+              <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-[13px] font-medium text-slate-700 transition duration-150 hover:border-slate-300 hover:text-slate-900 active:scale-[0.98] focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
+                @click="cancelConfirm"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-lg border border-transparent bg-[#5b4eea] px-5 py-2.5 text-[13px] font-semibold tracking-[0.02em] text-white transition duration-150 hover:bg-[#4a3ed6] active:scale-[0.98] focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40 motion-reduce:transition-none"
+                @click="proceedConfirm"
+              >
+                Tiếp tục
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      </Transition>
+    </Teleport>
 
     <!-- QR Payment Modal (PayOS QR) -->
     <PaymentQRModal
@@ -887,5 +935,33 @@ watch(
 
 .animate-fade-in {
   animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Modal fade-in/out — đồng bộ DeleteMemberModal */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.18s ease;
+}
+.modal-enter-active > div:last-child,
+.modal-leave-active > div:last-child {
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-from > div:last-child,
+.modal-leave-to > div:last-child {
+  transform: scale(0.96);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .modal-enter-active,
+  .modal-leave-active {
+    transition: none;
+    animation: none;
+  }
 }
 </style>

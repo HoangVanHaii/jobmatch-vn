@@ -344,6 +344,7 @@ export const paymentService = {
   create: async (
     userId: string,
     planId: string,
+    userRole?: string,
   ): Promise<{
     payment: Payment;
     checkoutUrl: string;
@@ -378,7 +379,7 @@ export const paymentService = {
       );
 
       // 2. Gọi PayOS create payment link — xem helper doc.
-      const payosData = await createPayOSPaymentLink(orderCode, plan);
+      const payosData = await createPayOSPaymentLink(orderCode, plan, userRole);
 
       // 3. UPDATE rawResponse trong cùng tx (commit cùng payment row).
       await tx
@@ -1123,6 +1124,33 @@ interface PayOSPaymentLinkData {
 }
 
 /**
+ * Xác định returnUrl và cancelUrl động theo role của user (candidate / employer),
+ * kế thừa origin & port từ PAYOS_RETURN_URL/PAYOS_CANCEL_URL trong config.
+ */
+function getPaymentRedirectUrls(userRole?: string): {
+  returnUrl: string;
+  cancelUrl: string;
+} {
+  const rolePrefix = userRole === "employer" ? "employer" : "candidate";
+  try {
+    const returnUrlObj = new URL(env.PAYOS_RETURN_URL);
+    returnUrlObj.pathname = `/${rolePrefix}/billing/success`;
+    const cancelUrlObj = new URL(env.PAYOS_CANCEL_URL);
+    cancelUrlObj.pathname = `/${rolePrefix}/billing/cancel`;
+    return {
+      returnUrl: returnUrlObj.toString(),
+      cancelUrl: cancelUrlObj.toString(),
+    };
+  } catch {
+    const base = env.FRONTEND_URL.replace(/\/+$/, "");
+    return {
+      returnUrl: `${base}/${rolePrefix}/billing/success`,
+      cancelUrl: `${base}/${rolePrefix}/billing/cancel`,
+    };
+  }
+}
+
+/**
  * Gọi PayOS API tạo payment link.
  *
  * Flow:
@@ -1138,11 +1166,11 @@ interface PayOSPaymentLinkData {
 async function createPayOSPaymentLink(
   orderCode: number,
   plan: { name: string; priceVnd: string },
+  userRole?: string,
 ): Promise<PayOSPaymentLinkData> {
   const amount = Number(plan.priceVnd);
   const description = `Mua goi ${plan.name}`;
-  const returnUrl = env.PAYOS_RETURN_URL;
-  const cancelUrl = env.PAYOS_CANCEL_URL;
+  const { returnUrl, cancelUrl } = getPaymentRedirectUrls(userRole);
 
   const signature = createPayOSSignature({
     orderCode,
@@ -1152,10 +1180,13 @@ async function createPayOSPaymentLink(
     cancelUrl,
   });
 
+  // Hạn thanh toán PayOS: 24 giờ kể từ thời điểm tạo đơn (tính bằng Unix timestamp - giây)
+  const expiredAt = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
+
   try {
     const { data: payosResponse } = await axios.post(
       `${PAYOS_API}/payment-requests`,
-      { orderCode, amount, description, returnUrl, cancelUrl, signature },
+      { orderCode, amount, description, returnUrl, cancelUrl, signature, expiredAt },
       {
         headers: {
           "x-client-id": env.PAYOS_CLIENT_ID,
@@ -1185,7 +1216,7 @@ async function createPayOSPaymentLink(
               fullResponse: err.response?.data,
             }
           : null,
-        requestPayload: { orderCode, amount, description, returnUrl, cancelUrl },
+        requestPayload: { orderCode, amount, description, returnUrl, cancelUrl, expiredAt },
         errorMessage: err instanceof Error ? err.message : String(err),
       },
       "Gọi PayOS API tạo payment link thất bại",

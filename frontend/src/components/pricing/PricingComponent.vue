@@ -26,12 +26,14 @@ import { ref, computed, onMounted, type Component } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import {
+  AlertTriangle,
   CircleAlert,
   CircleCheck,
   Crown,
   Gem,
   Gift,
   TriangleAlert,
+  X,
 } from "lucide-vue-next";
 import { useAuthStore } from "@stores/auth";
 import { usePlanStore } from "@stores/plan";
@@ -213,8 +215,11 @@ const TIER_RANK: Record<TierCode, number> = {
 };
 
 /** Nâng cấp khi gói đích ở tier CAO hơn gói hiện tại (cover cả yearly). */
-function isUpgradePair(target: Plan, current: Plan | null): boolean {
-  if (!current) return false;
+function isUpgradePair(
+  target: { code: string } | null,
+  current: { code: string } | null,
+): boolean {
+  if (!target || !current) return false;
   return TIER_RANK[tierOf(target.code)] > TIER_RANK[tierOf(current.code)];
 }
 
@@ -278,7 +283,8 @@ const displayPlans = computed<PlanCard[]>(() => {
 });
 
 /** Tên plan cho confirm modal — API là nguồn truth. */
-const displayPlanName = (p: Plan): string => p.name;
+const displayPlanName = (p: { name: string } | null | undefined): string =>
+  p?.name ?? "";
 
 /* ============================================================================
  * Flow mua (port từ PricingView) — confirm → paymentApi.create → QR modal
@@ -638,43 +644,101 @@ const DECOR_RIGHT = [
       </div>
     </section>
 
-    <!-- Confirmation modal — mua gói khi đang có gói trả phí (port từ
-         PricingView; mua mới KẾT THÚC gói cũ, thời gian không cộng dồn). -->
-    <div
-      v-if="confirmOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50"
-      @click.self="cancelConfirm"
-    >
-      <div
-        class="anim-fade-up bg-white rounded-2xl p-6 max-w-md w-full shadow-xl"
-        role="dialog"
-        aria-modal="true"
-      >
-        <div class="flex items-center gap-2.5 mb-3">
-          <TriangleAlert class="h-6 w-6 shrink-0 text-amber-500" />
-          <h3 class="text-lg font-bold text-[#17243a]">{{ confirmTitle }}</h3>
-        </div>
-        <p class="text-[13.5px] text-[#536a8d] mb-6 leading-relaxed">
-          {{ confirmBody }}
-        </p>
-        <div class="flex gap-3 justify-end">
-          <button
-            type="button"
-            class="px-4 py-2 rounded-xl font-medium border-[1.5px] border-slate-200 text-slate-700 hover:bg-slate-50 transition"
-            @click="cancelConfirm"
+    <!-- Confirmation modal — mua gói khi đang có gói trả phí (giao diện đồng bộ DeleteMemberModal) -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="confirmOpen"
+          class="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-plan-modal-title"
+          aria-describedby="confirm-plan-modal-desc"
+          @keydown.escape="cancelConfirm"
+          @mousedown.self="cancelConfirm"
+        >
+          <!-- Backdrop -->
+          <div
+            class="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+            @click.self="cancelConfirm"
+          />
+
+          <!-- Dialog container: đồng bộ chuẩn DeleteMemberModal -->
+          <div
+            class="relative z-10 w-full max-w-[540px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl ring-1 ring-slate-200 md:p-7"
+            @mousedown.stop
           >
-            Hủy
-          </button>
-          <button
-            type="button"
-            class="px-4 py-2 rounded-xl font-semibold text-white bg-gradient-to-br from-[#0d6ee8] to-[#075bc9] shadow-[0_4px_10px_rgba(7,91,201,0.16)] hover:shadow-[0_6px_14px_rgba(7,91,201,0.22)] transition"
-            @click="proceedConfirm"
-          >
-            Tiếp tục
-          </button>
+            <!-- Header: tiêu đề trái + nút đóng phải -->
+            <div class="flex items-start justify-between gap-4">
+              <h2
+                id="confirm-plan-modal-title"
+                class="text-[22px] font-semibold leading-snug tracking-[-0.01em] text-slate-900"
+              >
+                {{ confirmTitle }}
+              </h2>
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-slate-400 transition duration-150 hover:bg-slate-100 hover:text-slate-600 active:scale-95 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-[#5b4eea]/40"
+                title="Đóng"
+                aria-label="Đóng"
+                @click="cancelConfirm"
+              >
+                <X class="h-4 w-4" />
+              </button>
+            </div>
+
+            <!-- Nội dung mô tả -->
+            <p
+              id="confirm-plan-modal-desc"
+              class="mt-2.5 text-[15px] leading-relaxed text-slate-600"
+            >
+              Gói
+              <span class="font-medium text-slate-900">
+                {{ planStore.currentPlan ? displayPlanName(planStore.currentPlan) : "hiện tại" }}
+              </span>
+              của bạn
+              <span class="font-medium text-slate-900">
+                {{ remainingDays !== null ? `còn ${remainingDays} ngày` : "chưa kích hoạt" }}
+              </span>.
+              Khi {{ isUpgradePair(confirmPlan, planStore.currentPlan) ? "nâng cấp" : "mua gói mới" }}, gói
+              <span class="font-medium text-slate-900">
+                {{ confirmPlan ? displayPlanName(confirmPlan) : "" }}
+              </span>
+              sẽ được kích hoạt ngay hôm nay.
+            </p>
+
+            <!-- Warning panel cảnh báo không cộng dồn — đồng bộ style DeleteMemberModal -->
+            <div class="mt-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+              <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />
+              <div class="min-w-0">
+                <p class="text-sm font-semibold text-slate-900">Thời gian còn lại không được cộng dồn</p>
+                <p class="mt-1 text-[13px] leading-relaxed text-slate-600">
+                  Gói {{ planStore.currentPlan ? displayPlanName(planStore.currentPlan) : "hiện tại" }} sẽ kết thúc và thời gian sử dụng còn lại không được bảo lưu khi gói mới có hiệu lực.
+                </p>
+              </div>
+            </div>
+
+            <!-- Footer: 2 nút ngang, căn phải -->
+            <div class="mt-6 flex justify-end gap-2.5">
+              <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-[13px] font-medium text-slate-700 transition duration-150 hover:border-slate-300 hover:text-slate-900 active:scale-[0.98] focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-600/40 motion-reduce:transition-none"
+                @click="cancelConfirm"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-lg border border-transparent bg-blue-600 px-5 py-2.5 text-[13px] font-semibold tracking-[0.02em] text-white transition duration-150 hover:bg-blue-700 active:scale-[0.98] focus:outline-none focus-visible:ring-[3px] focus-visible:ring-blue-500/40 motion-reduce:transition-none"
+                @click="proceedConfirm"
+              >
+                Tiếp tục
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      </Transition>
+    </Teleport>
 
     <!-- QR Payment Modal (PayOS) -->
     <PaymentQRModal
@@ -738,6 +802,25 @@ const DECOR_RIGHT = [
   transform: translateY(6px);
 }
 
+/* Modal fade-in/out — đồng bộ DeleteMemberModal */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.18s ease;
+}
+.modal-enter-active > div:last-child,
+.modal-leave-active > div:last-child {
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-from > div:last-child,
+.modal-leave-to > div:last-child {
+  transform: scale(0.96);
+  opacity: 0;
+}
+
 /* Tôn trọng cài đặt giảm chuyển động của người dùng */
 @media (prefers-reduced-motion: reduce) {
   .anim-fade-up,
@@ -746,7 +829,9 @@ const DECOR_RIGHT = [
   }
 
   .price-enter-active,
-  .price-leave-active {
+  .price-leave-active,
+  .modal-enter-active,
+  .modal-leave-active {
     transition: none;
   }
 }

@@ -203,6 +203,26 @@ const routes: RouteRecordRaw[] = [
     },
   },
 
+  // Billing — route dùng chung, tự động redirect theo role kèm query parameters
+  {
+    path: '/billing/success',
+    name: 'billing-success-root',
+    redirect: (to) => {
+      const auth = useAuthStore();
+      const prefix = auth.user?.role === 'employer' ? '/employer' : '/candidate';
+      return { path: `${prefix}/billing/success`, query: to.query };
+    },
+  },
+  {
+    path: '/billing/cancel',
+    name: 'billing-cancel-root',
+    redirect: (to) => {
+      const auth = useAuthStore();
+      const prefix = auth.user?.role === 'employer' ? '/employer' : '/candidate';
+      return { path: `${prefix}/billing/cancel`, query: to.query };
+    },
+  },
+
   // Errors
   { path: '/403', name: 'forbidden', component: () => import('@views/errors/Forbidden.vue') },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@views/errors/PageNotFound.vue') },
