@@ -73,6 +73,8 @@ export const createInterviewBodySchema = z
   .object({
     applicationId: z.string().uuid(),
     interviewerId: z.string().uuid(),
+    interviewerName: z.string().trim().max(255).optional(),
+    interviewerEmail: z.string().email().optional().or(z.literal('')),
     interviewType: z.enum(INTERVIEW_TYPES).default('technical').optional(),
     scheduledAt: z
       .string()
@@ -100,6 +102,8 @@ export type CreateInterviewBody = z.infer<typeof createInterviewBodySchema>;
 export const updateInterviewBodySchema = z
   .object({
     interviewerId: z.string().uuid().optional(),
+    interviewerName: z.string().trim().max(255).optional(),
+    interviewerEmail: z.string().email().optional().or(z.literal('')),
     interviewType: z.enum(INTERVIEW_TYPES).optional(),
     scheduledAt: z
       .string()

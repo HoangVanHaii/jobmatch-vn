@@ -409,6 +409,7 @@ export const interviewService = {
         scheduledAt: scheduledDate,
         durationMin: body.durationMin,
         attendeeEmail: candidateEmail ?? undefined,
+        interviewerEmail: body.interviewerEmail ?? undefined,
         createMeet: true,
       });
 
@@ -427,6 +428,8 @@ export const interviewService = {
       .values({
         applicationId: body.applicationId,
         interviewerId: body.interviewerId,
+        interviewerName: body.interviewerName ?? null,
+        interviewerEmail: body.interviewerEmail ?? null,
         interviewType: body.interviewType ?? 'technical',
         scheduledAt: new Date(body.scheduledAt),
         durationMin: body.durationMin,
@@ -457,6 +460,7 @@ export const interviewService = {
         candidateName: candidateName ?? 'Ứng viên',
         jobTitle: jobTitle ?? 'Vị trí ứng tuyển',
         companyName: companyName ?? 'Nhà tuyển dụng',
+        interviewerName: body.interviewerName ?? undefined,
         interviewType: body.interviewType,
         scheduledAt: new Date(body.scheduledAt),
         durationMin: body.durationMin,
@@ -534,7 +538,8 @@ export const interviewService = {
         candidatePhone: userProfiles.phone,
         candidateAvatar: userProfiles.avatarUrl,
         interviewerId: interviews.interviewerId,
-        interviewerName: interviewerProfiles.fullName,
+        interviewerName: sql<string | null>`COALESCE(${interviews.interviewerName}, ${interviewerProfiles.fullName})`,
+        interviewerEmail: interviews.interviewerEmail,
         interviewerAvatar: interviewerProfiles.avatarUrl,
         interviewType: interviews.interviewType,
         scheduledAt: interviews.scheduledAt,
@@ -584,7 +589,8 @@ export const interviewService = {
         candidatePhone: userProfiles.phone,
         candidateAvatar: userProfiles.avatarUrl,
         interviewerId: interviews.interviewerId,
-        interviewerName: interviewerProfiles.fullName,
+        interviewerName: sql<string | null>`COALESCE(${interviews.interviewerName}, ${interviewerProfiles.fullName})`,
+        interviewerEmail: interviews.interviewerEmail,
         interviewerAvatar: interviewerProfiles.avatarUrl,
         interviewType: interviews.interviewType,
         scheduledAt: interviews.scheduledAt,
@@ -634,6 +640,8 @@ export const interviewService = {
       .update(interviews)
       .set({
         ...(body.interviewerId ? { interviewerId: body.interviewerId } : {}),
+        ...(body.interviewerName !== undefined ? { interviewerName: body.interviewerName } : {}),
+        ...(body.interviewerEmail !== undefined ? { interviewerEmail: body.interviewerEmail } : {}),
         ...(body.interviewType ? { interviewType: body.interviewType } : {}),
         ...(body.scheduledAt ? { scheduledAt: new Date(body.scheduledAt) } : {}),
         ...(body.durationMin !== undefined ? { durationMin: body.durationMin } : {}),
@@ -820,6 +828,8 @@ export const interviewService = {
         location: interviews.location,
         meetingLink: interviews.meetingLink,
         status: interviews.status,
+        interviewerName: interviews.interviewerName,
+        interviewerEmail: interviews.interviewerEmail,
         confirmedAt: interviews.confirmedAt,
         cancelledAt: interviews.cancelledAt,
         cancelReason: interviews.cancelReason,
@@ -992,6 +1002,9 @@ export const interviewService = {
         jobTitle: jobs.title,
         companyName: companies.name,
         companyLogoUrl: companies.logoUrl,
+        interviewerName: sql<string | null>`COALESCE(${interviews.interviewerName}, ${interviewerProfiles.fullName})`,
+        interviewerEmail: interviews.interviewerEmail,
+        interviewerAvatar: interviewerProfiles.avatarUrl,
       })
       .from(interviews)
       .innerJoin(applications, eq(interviews.applicationId, applications.id))
@@ -999,6 +1012,7 @@ export const interviewService = {
       .leftJoin(companies, eq(jobs.companyId, companies.id))
       .leftJoin(users, eq(applications.candidateId, users.id))
       .leftJoin(userProfiles, eq(users.id, userProfiles.userId))
+      .leftJoin(interviewerProfiles, eq(interviews.interviewerId, interviewerProfiles.userId))
       .where(eq(interviews.confirmationToken, token))
       .limit(1);
 

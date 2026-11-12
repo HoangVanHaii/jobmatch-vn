@@ -195,8 +195,8 @@ export const processInterviewReminder = async (
   }
 
   // 5. Lấy tên người phỏng vấn nếu có
-  let interviewerName = row.company?.name || '';
-  if (row.interview.interviewerId) {
+  let interviewerName = row.interview.interviewerName || '';
+  if (!interviewerName && row.interview.interviewerId) {
     const [interviewer] = await db
       .select({ fullName: userProfiles.fullName })
       .from(userProfiles)
@@ -205,6 +205,9 @@ export const processInterviewReminder = async (
     if (interviewer?.fullName) {
       interviewerName = interviewer.fullName;
     }
+  }
+  if (!interviewerName) {
+    interviewerName = row.company?.name || 'Nhà tuyển dụng';
   }
 
   const candidateName = row.candidateProfile?.fullName || 'Ứng viên';
