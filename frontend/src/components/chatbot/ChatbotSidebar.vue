@@ -30,11 +30,17 @@ dayjs.locale('vi');
 
 const formatRelative = (iso: string): string => dayjs(iso).fromNow();
 
-const props = defineProps<{
-  sessions: ChatSession[];
-  activeSessionId: string | null;
-  collapsed: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    sessions: ChatSession[];
+    activeSessionId: string | null;
+    collapsed: boolean;
+    loading?: boolean;
+  }>(),
+  {
+    loading: false,
+  },
+);
 
 const emit = defineEmits<{
   (e: 'select', sessionId: string): void;
@@ -178,11 +184,30 @@ const onEditKeydown = (e: KeyboardEvent): void => {
       </div>
 
       <div class="flex-1 min-h-0 overflow-y-auto scrollbar-visible">
-        <div v-if="!props.sessions.length" class="px-4 py-8 text-center text-sm text-gray-500">
+        <!-- Skeleton loading khi đang tải danh sách phiên -->
+        <div v-if="props.loading && !props.sessions.length" class="space-y-2 p-3">
+          <div
+            v-for="i in 5"
+            :key="`skel-session-${i}`"
+            class="flex items-center gap-3 rounded-lg p-2"
+          >
+            <div class="h-4 w-4 shrink-0 rounded skeleton-shimmer" />
+            <div class="min-w-0 flex-1 space-y-1.5">
+              <div class="h-3.5 w-3/4 rounded skeleton-shimmer" />
+              <div class="h-2.5 w-1/3 rounded skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+        <div v-else-if="!props.sessions.length" class="px-4 py-8 text-center text-sm text-gray-500">
           Chưa có phiên nào.
         </div>
         <ul v-else class="divide-y divide-gray-100">
-          <li v-for="s in props.sessions" :key="s.id" class="group relative">
+          <li
+            v-for="(s, idx) in props.sessions"
+            :key="s.id"
+            class="chat-fade group relative"
+            :style="{ animationDelay: `${Math.min(idx * 35, 210)}ms` }"
+          >
             <!--
               Khi đang edit session này → render <input> thay cho title block.
               - Row vẫn giữ padding giống button để layout không nhảy khi switch
@@ -274,3 +299,50 @@ const onEditKeydown = (e: KeyboardEvent): void => {
     </template>
   </aside>
 </template>
+
+<style scoped>
+/* Hiệu ứng shimmer ánh sáng lướt ngang mượt mà khi tải danh sách */
+@keyframes shimmer-sweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(241, 245, 249, 1) 0%,
+    rgba(226, 232, 240, 0.7) 50%,
+    rgba(241, 245, 249, 1) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+
+/* Stagger fade-up khi danh sách xuất hiện (chuẩn CompanyView: 0.35s cubic-bezier(0.22, 1, 0.36, 1)) */
+.chat-fade {
+  animation: chat-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes chat-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer,
+  .chat-fade {
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+  }
+}
+</style>

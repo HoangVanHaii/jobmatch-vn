@@ -27,8 +27,10 @@ import type {
 export const useChatbotStore = defineStore('chatbot', () => {
   // === State ===
   const sessions = ref<ChatSession[]>([]);
+  const loadingSessions = ref(false);
   const activeSessionId = ref<string | null>(null);
   const messages = ref<ChatMessage[]>([]);
+  const loadingMessages = ref(false);
   const jobIds = ref<string[]>([]);
   const cvIds = ref<string[]>([]);
   /**
@@ -61,7 +63,12 @@ export const useChatbotStore = defineStore('chatbot', () => {
   // === Actions ===
 
   const loadSessions = async (): Promise<void> => {
-    sessions.value = await chatbotApi.listSessions();
+    loadingSessions.value = true;
+    try {
+      sessions.value = await chatbotApi.listSessions();
+    } finally {
+      loadingSessions.value = false;
+    }
   };
 
   const createSession = async (): Promise<ChatSession> => {
@@ -73,14 +80,19 @@ export const useChatbotStore = defineStore('chatbot', () => {
 
   const selectSession = async (sessionId: string): Promise<void> => {
     activeSessionId.value = sessionId;
-    const session = await chatbotApi.getSession(sessionId);
-    messages.value = session.messages ?? [];
-    jobIds.value = session.context?.jobIds ?? [];
-    cvIds.value = session.context?.cvIds ?? [];
-    totalTokens.value = session.context?.totalTokens ?? 0;
-    // Hydrate attached items từ API response — đây là "last-sent context" từ DB.
-    attachedJobs.value = session.attachedJobs ?? [];
-    attachedCvs.value = session.attachedCvs ?? [];
+    loadingMessages.value = true;
+    try {
+      const session = await chatbotApi.getSession(sessionId);
+      messages.value = session.messages ?? [];
+      jobIds.value = session.context?.jobIds ?? [];
+      cvIds.value = session.context?.cvIds ?? [];
+      totalTokens.value = session.context?.totalTokens ?? 0;
+      // Hydrate attached items từ API response — đây là "last-sent context" từ DB.
+      attachedJobs.value = session.attachedJobs ?? [];
+      attachedCvs.value = session.attachedCvs ?? [];
+    } finally {
+      loadingMessages.value = false;
+    }
   };
 
   /**
@@ -106,6 +118,7 @@ export const useChatbotStore = defineStore('chatbot', () => {
     attachedCvs.value = [];
     totalTokens.value = 0;
     lastEvent.value = null;
+    loadingMessages.value = false;
   };
 
   /**
@@ -353,8 +366,10 @@ export const useChatbotStore = defineStore('chatbot', () => {
   return {
     // state
     sessions,
+    loadingSessions,
     activeSessionId,
     messages,
+    loadingMessages,
     jobIds,
     cvIds,
     attachedJobs,

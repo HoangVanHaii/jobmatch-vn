@@ -373,6 +373,7 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
           :sessions="store.sessions"
           :active-session-id="store.activeSessionId"
           :collapsed="sidebarCollapsed"
+          :loading="store.loadingSessions"
           @select="onSelect"
           @new="onCreate"
           @toggle="toggleSidebar"
@@ -389,6 +390,31 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
         class="relative flex flex-1 flex-col overflow-hidden"
         :class="[isMobileSidebar ? 'hidden' : 'flex', 'md:flex']"
       >
+        <!-- Skeleton loading khi đang nạp tin nhắn của phiên -->
+        <div
+          v-if="store.loadingMessages && !store.messages.length"
+          class="flex-1 overflow-y-auto px-3 pb-36 pt-6 md:px-6 md:pb-40 space-y-6"
+          aria-label="Đang tải tin nhắn"
+        >
+          <!-- User bubble skeleton -->
+          <div class="flex flex-col items-end gap-1.5">
+            <div class="h-10 w-64 max-w-[80%] rounded-2xl rounded-br-sm skeleton-shimmer-user" />
+          </div>
+
+          <!-- Assistant bubble skeleton -->
+          <div class="flex flex-col items-start gap-1.5">
+            <div class="flex items-center gap-1.5 px-1 text-[11px] font-medium text-gray-400">
+              <Sparkles class="h-3 w-3 shrink-0 text-gray-400" />
+              <span>JobMatch AI</span>
+            </div>
+            <div class="max-w-[85%] rounded-2xl rounded-bl-sm border border-gray-200 bg-white p-4 shadow-xs space-y-2.5 w-full md:w-[480px]">
+              <div class="h-3.5 w-full rounded skeleton-shimmer" />
+              <div class="h-3.5 w-5/6 rounded skeleton-shimmer" />
+              <div class="h-3.5 w-2/3 rounded skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+
         <!--
           Messages area (v-show thay vì v-if để giữ DOM + ref `messagesEl`,
           scroll-to-bottom hoạt động ngay khi load session cũ). Padding-bottom
@@ -397,9 +423,10 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
           gian cho bubble.
         -->
         <div
-          v-show="!isEmpty"
+          v-show="!isEmpty && !(store.loadingMessages && !store.messages.length)"
           ref="messagesEl"
-          class="flex-1 overflow-y-auto scrollbar-visible px-3 pb-36 pt-4 md:px-6 md:pb-40"
+          :key="store.activeSessionId ?? ''"
+          class="chat-fade flex-1 overflow-y-auto scrollbar-visible px-3 pb-36 pt-4 md:px-6 md:pb-40"
         >
           <ChatbotMessage
             :messages="store.messages"
@@ -510,7 +537,7 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
           >
             <!-- Greeting (chỉ khi empty, fade out khi có message) -->
             <Transition name="fade">
-              <div v-if="isEmpty" key="greeting" class="text-center pb-4">
+              <div v-if="isEmpty && !store.loadingMessages" key="greeting" class="chat-fade text-center pb-4">
                 <Sparkles class="mx-auto mb-2 h-6 w-6 text-gray-900" />
                 <h2 class="text-base font-semibold tracking-tight text-gray-900">
                   Chào {{ userName }}, tôi có thể giúp gì cho bạn?
@@ -558,6 +585,53 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
 </template>
 
 <style scoped>
+/* Hiệu ứng shimmer ánh sáng lướt ngang mượt mà khi tải trang & đổi phiên */
+@keyframes shimmer-sweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(241, 245, 249, 1) 0%,
+    rgba(226, 232, 240, 0.7) 50%,
+    rgba(241, 245, 249, 1) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+
+.skeleton-shimmer-user {
+  background: linear-gradient(
+    90deg,
+    rgba(31, 41, 55, 0.8) 0%,
+    rgba(55, 65, 81, 1) 50%,
+    rgba(31, 41, 55, 0.8) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+
+/* Stagger fade-up khi nội dung xuất hiện (chuẩn CompanyView: 0.35s cubic-bezier(0.22, 1, 0.36, 1)) */
+.chat-fade {
+  animation: chat-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes chat-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /*
  * Fade transition cho greeting + banner — chạy NGẦM với CSS transition của
  * input container (300ms) để khi user gửi tin nhắn đầu:
@@ -574,5 +648,17 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer,
+  .skeleton-shimmer-user,
+  .chat-fade,
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+  }
 }
 </style>
