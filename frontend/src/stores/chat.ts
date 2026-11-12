@@ -13,6 +13,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { chatApi } from '@services/chat.api';
+import { useAuthStore } from './auth';
 import type {
   ConversationWithPeer,
   ChatMessage,
@@ -233,6 +234,8 @@ export const useChatStore = defineStore('chat', () => {
       attachments?: ChatMessage['attachments'];
     };
   }): void => {
+    const auth = useAuthStore();
+    const isFromMe = Boolean(auth.user?.id && payload.lastMessage.senderId === auth.user.id);
     const idx = conversations.value.findIndex((c) => c.id === payload.conversationId);
     const isActive = payload.conversationId === activeId.value;
 
@@ -253,7 +256,7 @@ export const useChatStore = defineStore('chat', () => {
       ...prev,
       lastMessageAt: payload.lastMessage.createdAt,
       lastMessagePreview: preview,
-      unreadCount: isActive ? 0 : prev.unreadCount + 1,
+      unreadCount: isActive ? 0 : isFromMe ? prev.unreadCount : prev.unreadCount + 1,
     };
 
     upsertConversation(next);

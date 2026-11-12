@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@stores/auth';
 import { useChatStore } from '@stores/chat';
@@ -25,13 +26,10 @@ const route = useRoute();
 const router = useRouter();
 
 /**
- * Tên route chat theo role — dùng cho guard "đang ở trang chat thì bỏ qua toast"
- * trong listener `chat:new` bên dưới + reuse cho `goToChat`. Trước đây gate
- * dùng `route.path.startsWith('/chat')` không khớp vì các route thật là
- * `/candidate/chat/:id?` (name `chat`) và `/employer/chat/:id?` (name `e-chat`),
- * path KHÔNG bắt đầu bằng `/chat` → guard lọt, toast spam.
+ * Tên route chat theo role (reactive qua computed) — dùng cho guard và navigation.
+ * Tránh trường hợp App.vue mount khi auth.user chưa load xong khiến giá trị bị gán cứng.
  */
-const chatRouteName = auth.user?.role === 'candidate' ? 'chat' : 'e-chat';
+const chatRouteName = computed(() => (auth.user?.role === 'employer' ? 'e-chat' : 'chat'));
 
 /**
  * Global `chat:new` listener — đăng ký ở App.vue nên luôn sống cùng app.
@@ -41,21 +39,22 @@ useSocket('chat:new', (payload: ChatNewPayload) => {
   // 1. Update sidebar cache (unread + sort) — chạy ở mọi trang.
   chat.handleChatNew(payload);
 
-  // 2. Toast CHỈ khi user KHÔNG ở trang chat — tránh spam khi sidebar đã là
-  //    indicator đủ rõ. So sánh `route.name` thay vì `path.startsWith('/chat')`
-  //    vì 2 route thật là `/candidate/chat/:id?` (name `chat`) và
-  //    `/employer/chat/:id?` (name `e-chat`) — path KHÔNG bắt đầu `/chat`.
-  const onChatPage = route.name === chatRouteName;
+  // 2. Không bao giờ hiển thị toast cho tin nhắn do chính mình gửi (kể cả khi vừa chuyển trang)
+  if (auth.user?.id && payload.lastMessage.senderId === auth.user.id) {
+    return;
+  }
+
+  // 3. Toast CHỈ khi user KHÔNG ở trang chat — tránh spam khi sidebar đã là indicator đủ rõ.
+  const onChatPage = route.name === 'chat' || route.name === 'e-chat';
   if (onChatPage) return;
 
   // Look up peer info từ chat store — nếu conversation chưa có trong cache
-  // (vd user vừa mới nhận tin từ người lạ, hoặc sidebar chưa fetch) → fallback
-  // title generic.
+  // (vd user vừa mới nhận tin từ người lạ, hoặc sidebar chưa fetch) → fallback title generic.
   const peer = chat.conversations.find((c) => c.id === payload.conversationId)?.peer;
 
-  // Tự navigate về chat theo role (giống ChatView.onSelect).
+  // Tự navigate về chat đúng role của user hiện tại.
   const goToChat = (): void => {
-    void router.push({ name: chatRouteName, params: { id: payload.conversationId } });
+    void router.push({ name: chatRouteName.value, params: { id: payload.conversationId } });
   };
 
   toast.push({
