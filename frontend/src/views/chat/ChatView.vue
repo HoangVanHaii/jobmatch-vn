@@ -375,7 +375,10 @@ const sendMessage = (): void => {
   }
   attachments.value = []
   chatHook?.typing(false)
-  void nextTick(() => textareaEl.value?.focus())
+  void nextTick(() => {
+    textareaEl.value?.focus()
+    scrollToBottom()
+  })
 }
 
 const onComposerKeydown = (e: KeyboardEvent): void => {
@@ -419,6 +422,16 @@ const filenameFromUrl = (url: string): string => {
 const messagesEl = ref<HTMLElement | null>(null)
 const lastMessageCount = ref(0)
 
+const scrollToBottom = (): void => {
+  if (!messagesEl.value) return
+  messagesEl.value.scrollTop = messagesEl.value.scrollHeight
+  requestAnimationFrame(() => {
+    if (messagesEl.value) {
+      messagesEl.value.scrollTop = messagesEl.value.scrollHeight
+    }
+  })
+}
+
 watch(
   () => chatHook?.messages.value.length ?? 0,
   async (count) => {
@@ -432,15 +445,20 @@ watch(
     if (messagesEl.value) {
       if (isFirstBatch) {
         messagesEl.value.scrollTop = messagesEl.value.scrollHeight
-        setTimeout(() => {
-          isInitialScrollDone.value = true
-        }, 150)
+        isInitialScrollDone.value = true
       } else {
-        messagesEl.value.scrollTo({
-          top: messagesEl.value.scrollHeight,
-          behavior: 'smooth',
-        })
+        scrollToBottom()
       }
+    }
+  },
+)
+
+// Khi hội thoại rỗng tải xong mà không có tin nhắn nào, vẫn đánh dấu là đã cuộn xong
+watch(
+  () => store.loadingMessages,
+  (loading) => {
+    if (!loading && (chatHook?.messages.value.length ?? 0) === 0) {
+      isInitialScrollDone.value = true
     }
   },
 )
@@ -520,7 +538,7 @@ onBeforeUnmount(() => {
     }"
   >
     <div
-      class="font-poppins mx-auto flex h-full max-w-[1600px] overflow-hidden bg-white shadow-[0_20px_60px_rgba(15,23,42,0.08)]"
+      class="font-poppins relative mx-auto flex h-full max-w-[1600px] overflow-hidden bg-white shadow-[0_20px_60px_rgba(15,23,42,0.08)]"
     >
       <!-- ================= LEFT SIDEBAR ================= -->
       <ChatSidebar
@@ -541,47 +559,48 @@ onBeforeUnmount(() => {
             <!-- Mobile back button to conversations list -->
             <button
               type="button"
-              class="mr-1 -ml-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 lg:hidden"
+              class="mr-1 -ml-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-all duration-150 hover:bg-slate-100 active:scale-95 lg:hidden"
               aria-label="Quay lại"
               @click="goBackToList"
             >
               <ArrowLeft :size="20" />
             </button>
 
-            <div class="relative shrink-0">
-              <img
-                v-if="store.activeConversation?.peer.avatarUrl"
-                :src="store.activeConversation.peer.avatarUrl"
-                :alt="store.activeConversation?.peer.fullName ?? 'Người dùng'"
-                class="h-11 w-11 rounded-full object-cover"
-              />
+            <!-- Peer Info — phản hồi tức thì khi chọn hội thoại, không trễ hay chớp DOM -->
+            <div :key="activeId ?? ''" class="chat-fade flex min-w-0 flex-1 items-center gap-3">
+              <div class="relative shrink-0">
+                <img
+                  v-if="store.activeConversation?.peer.avatarUrl"
+                  :src="store.activeConversation.peer.avatarUrl"
+                  :alt="store.activeConversation?.peer.fullName ?? 'Người dùng'"
+                  class="h-11 w-11 rounded-full object-cover ring-2 ring-slate-100 transition-opacity duration-150"
+                />
 
-              <img
-                v-else
-                src="/avatars/peer-default.svg"
-                alt="Người dùng"
-                class="h-11 w-11 rounded-full object-cover"
-              />
+                <img
+                  v-else
+                  src="/avatars/peer-default.svg"
+                  alt="Người dùng"
+                  class="h-11 w-11 rounded-full object-cover ring-2 ring-slate-100 transition-opacity duration-150"
+                />
+              </div>
 
-              <!-- Chấm xanh online tạm ẩn cho đến khi có presence thật -->
-            </div>
+              <div class="min-w-0 flex-1">
+                <h1 class="truncate text-base font-semibold text-slate-900">
+                  {{
+                    activeId
+                      ? (store.activeConversation?.peer?.fullName?.trim() || 'Người dùng')
+                      : 'Chọn cuộc hội thoại'
+                  }}
+                </h1>
 
-            <div class="min-w-0 flex-1">
-              <h1 class="truncate text-base font-semibold text-slate-900">
-                {{
-                  activeId
-                    ? (store.activeConversation?.peer?.fullName?.trim() || 'Người dùng')
-                    : 'Chọn cuộc hội thoại'
-                }}
-              </h1>
-
-              <p class="mt-0.5 truncate text-xs text-slate-400">
-                {{
-                  activeId && store.activeConversation?.peer
-                    ? roleLabel(store.activeConversation.peer.role)
-                    : '—'
-                }}
-              </p>
+                <p class="mt-0.5 truncate text-xs text-slate-400">
+                  {{
+                    activeId && store.activeConversation?.peer
+                      ? roleLabel(store.activeConversation.peer.role)
+                      : '—'
+                  }}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -589,10 +608,10 @@ onBeforeUnmount(() => {
             <button
               ref="toggleInfoBtnEl"
               @click="toggleInfoPanel"
-              class="flex h-10 w-10 items-center justify-center rounded-xl transition"
+              class="flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-200 active:scale-95"
               :class="
                 showInfoPanel
-                  ? 'bg-blue-50 text-blue-500'
+                  ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-100'
                   : 'text-slate-500 hover:bg-slate-100'
               "
               aria-label="Thông tin hội thoại"
@@ -646,17 +665,53 @@ onBeforeUnmount(() => {
               <Loader2 class="h-5 w-5 animate-spin text-slate-400" />
             </div>
 
+            <!-- Skeleton Chat Loading khi đang tải tin nhắn lần đầu (cùng kích thước & layout với tin nhắn thật, hiệu ứng Shimmer mượt mà) -->
             <div
               v-if="store.loadingMessages && (chatHook?.messages.value.length ?? 0) === 0"
-              class="flex justify-center py-12"
+              class="mx-auto max-w-[760px] space-y-4 py-1"
+              aria-label="Đang tải tin nhắn"
             >
-              <Loader2 class="h-6 w-6 animate-spin text-slate-400" />
+              <!-- Tin nhắn nhận 1 -->
+              <div class="flex justify-start">
+                <div class="mr-2 shrink-0 self-end">
+                  <div class="h-8 w-8 rounded-full skeleton-shimmer" />
+                </div>
+                <div class="max-w-[70%] rounded-2xl rounded-bl-md border border-slate-200/80 bg-slate-50/80 px-3.5 py-2.5 space-y-2">
+                  <div class="h-3.5 w-48 rounded skeleton-shimmer" />
+                  <div class="h-3 w-32 rounded skeleton-shimmer" />
+                </div>
+              </div>
+
+              <!-- Tin nhắn gửi 1 -->
+              <div class="flex justify-end">
+                <div class="max-w-[70%] rounded-2xl rounded-br-none bg-blue-100/60 border border-blue-200/40 px-3.5 py-2.5">
+                  <div class="h-3.5 w-56 rounded skeleton-shimmer-blue" />
+                </div>
+              </div>
+
+              <!-- Tin nhắn nhận 2 -->
+              <div class="flex justify-start">
+                <div class="mr-2 shrink-0 self-end">
+                  <div class="h-8 w-8 rounded-full skeleton-shimmer" />
+                </div>
+                <div class="max-w-[70%] rounded-2xl rounded-bl-md border border-slate-200/80 bg-slate-50/80 px-3.5 py-2.5">
+                  <div class="h-3.5 w-40 rounded skeleton-shimmer" />
+                </div>
+              </div>
+
+              <!-- Tin nhắn gửi 2 -->
+              <div class="flex justify-end">
+                <div class="max-w-[70%] rounded-2xl rounded-br-none bg-blue-100/60 border border-blue-200/40 px-3.5 py-2.5 space-y-2">
+                  <div class="h-3.5 w-44 rounded skeleton-shimmer-blue" />
+                  <div class="h-3 w-28 rounded skeleton-shimmer-blue" />
+                </div>
+              </div>
             </div>
 
             <!-- Empty conversation state -->
             <div
               v-else-if="groupedMessages.length === 0"
-              class="flex h-full flex-col items-center justify-center py-16 text-center"
+              class="chat-fade flex h-full flex-col items-center justify-center py-16 text-center"
             >
               <div
                 class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400"
@@ -673,7 +728,7 @@ onBeforeUnmount(() => {
               </p>
             </div>
 
-            <div v-else class="mx-auto max-w-[760px] space-y-5">
+            <div v-else :key="activeId ?? ''" class="chat-fade mx-auto max-w-[760px] space-y-5">
               <template v-for="group in groupedMessages" :key="group.date">
                 <!-- Date divider -->
                 <div class="flex items-center gap-4 py-2">
@@ -686,10 +741,12 @@ onBeforeUnmount(() => {
                   <div class="h-px flex-1 bg-slate-200" />
                 </div>
 
-                <template v-for="m in group.items" :key="m.id">
+                <div class="space-y-3">
                   <!-- Real chat message -->
                   <div
-                    class="group flex cursor-pointer"
+                    v-for="m in group.items"
+                    :key="m.tempId || m.id"
+                    class="group flex cursor-pointer transition-transform duration-100 active:scale-[0.995]"
                     :class="isOwn(m) ? 'justify-end' : 'justify-start'"
                     @click="toggleExpand(m.id)"
                   >
@@ -713,7 +770,7 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div
-                      class="max-w-[70%] text-sm leading-relaxed"
+                      class="max-w-[70%] text-sm leading-relaxed transition-all duration-150"
                       :class="(() => {
                         const hasAtt = !!(m.attachments && m.attachments.length > 0)
                         const hasText = !!m.content?.trim()
@@ -723,8 +780,8 @@ onBeforeUnmount(() => {
                           return 'rounded-2xl rounded-br-none bg-transparent text-slate-700'
                         }
                         return own
-                          ? 'rounded-2xl rounded-br-none bg-blue-700 px-3.5 py-2 text-white shadow-sm'
-                          : 'rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-slate-700 shadow-sm'
+                          ? 'rounded-2xl rounded-br-none bg-blue-700 px-3.5 py-2 text-white shadow-xs'
+                          : 'rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-slate-700 shadow-xs'
                       })()"
                     >
                       <!-- Attachments -->
@@ -741,12 +798,12 @@ onBeforeUnmount(() => {
                             :href="att.url"
                             target="_blank"
                             rel="noopener noreferrer"
-                            class="block overflow-hidden rounded-md bg-slate-100"
+                            class="group/img block overflow-hidden rounded-md bg-slate-100"
                           >
                             <img
                               :src="att.url"
                               :alt="att.name ?? att.mime"
-                              class="max-h-[200px] max-w-[200px] object-cover"
+                              class="max-h-[200px] max-w-[200px] object-cover transition-transform duration-200 group-hover/img:scale-105"
                               loading="lazy"
                             />
                           </a>
@@ -822,30 +879,32 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                   </div>
-                </template>
+                </div>
               </template>
 
               <!-- Typing indicator -->
-              <div v-if="chatHook?.peerTyping.value" class="flex justify-start">
-                <div class="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3 py-2">
-                  <div class="flex gap-1">
-                    <span
-                      class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                      style="animation-delay: 0ms"
-                    />
+              <Transition name="typing-fade">
+                <div v-if="chatHook?.peerTyping.value" class="flex justify-start">
+                  <div class="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2.5 shadow-xs">
+                    <div class="flex items-center gap-1.5">
+                      <span
+                        class="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500"
+                        style="animation-delay: 0ms"
+                      />
 
-                    <span
-                      class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                      style="animation-delay: 150ms"
-                    />
+                      <span
+                        class="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500"
+                        style="animation-delay: 150ms"
+                      />
 
-                    <span
-                      class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                      style="animation-delay: 300ms"
-                    />
+                      <span
+                        class="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500"
+                        style="animation-delay: 300ms"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              </Transition>
             </div>
           </template>
         </section>
@@ -953,7 +1012,7 @@ onBeforeUnmount(() => {
                 type="button"
                 aria-label="Đính kèm file"
                 title="Đính kèm file"
-                class="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                class="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 transition-all duration-150 hover:bg-slate-50 hover:text-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="!activeId"
                 @click="onPickFile"
               >
@@ -964,11 +1023,16 @@ onBeforeUnmount(() => {
                 type="button"
                 aria-label="Gửi"
                 title="Gửi"
-                class="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500 text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                class="group/send flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200 active:scale-90 disabled:cursor-not-allowed shadow-xs"
+                :class="
+                  canSend
+                    ? 'bg-blue-600 text-white hover:bg-blue-700 hover:shadow-md hover:scale-105 active:scale-95'
+                    : 'bg-slate-100 text-slate-300'
+                "
                 :disabled="!canSend"
                 @click="sendMessage"
               >
-                <Send :size="16" />
+                <Send :size="16" class="transition-transform duration-150 group-hover/send:translate-x-0.5 group-active/send:scale-90" />
               </button>
             </div>
           </div>
@@ -986,7 +1050,7 @@ onBeforeUnmount(() => {
 
       <!-- ================= RIGHT INFO PANEL ================= -->
       <ChatInfoPanel
-        v-if="showInfoPanel"
+        :is-open="showInfoPanel"
         :conversation-id="activeId"
         @close="handleCloseInfoPanel"
       />
@@ -1012,5 +1076,77 @@ onBeforeUnmount(() => {
 }
 .messages-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgb(148 163 184);
+}
+
+/* Hiệu ứng shimmer ánh sáng lướt ngang mượt mà khi tải trang & đổi hội thoại */
+@keyframes shimmer-sweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(241, 245, 249, 1) 0%,
+    rgba(226, 232, 240, 0.7) 50%,
+    rgba(241, 245, 249, 1) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+.skeleton-shimmer-blue {
+  background: linear-gradient(
+    90deg,
+    rgba(219, 234, 254, 0.6) 0%,
+    rgba(191, 219, 254, 0.9) 50%,
+    rgba(219, 234, 254, 0.6) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+
+/* Fade-up khi nội dung xuất hiện (chuẩn CompanyView: 0.35s cubic-bezier(0.22, 1, 0.36, 1)) */
+.chat-fade {
+  animation: chat-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes chat-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Typing indicator fade (150ms ease-out) */
+.typing-fade-enter-active {
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+}
+.typing-fade-leave-active {
+  transition: opacity 0.12s ease-in;
+}
+.typing-fade-enter-from,
+.typing-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* Tắt toàn bộ transition nếu người dùng chọn giảm chuyển động trong HĐH */
+@media (prefers-reduced-motion: reduce) {
+  .typing-fade-enter-active,
+  .typing-fade-leave-active,
+  .skeleton-shimmer,
+  .skeleton-shimmer-blue,
+  .chat-fade {
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+  }
 }
 </style>

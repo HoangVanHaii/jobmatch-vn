@@ -18,10 +18,17 @@ import { fileIconInfo } from '@utils/fileIcon'
 import { useChatStore } from '@stores/chat'
 import type { ChatAttachmentWithContext, PeerRole } from '@/types/chat'
 
-const props = defineProps<{
-  /** Conversation id đang active; null nếu chưa chọn */
-  conversationId: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** Conversation id đang active; null nếu chưa chọn */
+    conversationId: string | null
+    /** Trạng thái mở panel (mặc định true) */
+    isOpen?: boolean
+  }>(),
+  {
+    isOpen: true,
+  },
+)
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -30,21 +37,38 @@ const emit = defineEmits<{
 const closeBtnEl = ref<HTMLButtonElement | null>(null)
 
 const onKeydown = (e: KeyboardEvent): void => {
-  if (e.key === 'Escape') emit('close')
+  if (e.key === 'Escape' && props.isOpen) emit('close')
 }
 
 let prevBodyOverflow = ''
 const isBelowXl = (): boolean => typeof window !== 'undefined' && window.innerWidth < 1280
 
+watch(
+  () => props.isOpen,
+  (open) => {
+    if (isBelowXl()) {
+      if (open) {
+        prevBodyOverflow = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+        void nextTick(() => {
+          closeBtnEl.value?.focus()
+        })
+      } else if (prevBodyOverflow !== undefined) {
+        document.body.style.overflow = prevBodyOverflow
+      }
+    }
+  },
+)
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
-  if (isBelowXl()) {
+  if (props.isOpen && isBelowXl()) {
     prevBodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    void nextTick(() => {
+      closeBtnEl.value?.focus()
+    })
   }
-  void nextTick(() => {
-    closeBtnEl.value?.focus()
-  })
 })
 
 onBeforeUnmount(() => {
@@ -126,48 +150,58 @@ const fetchMedia = async (): Promise<void> => {
   }
 }
 
-// Reset toggle khi đổi conv (tránh state "show all" bị stick từ conv cũ)
+// Reset toggle và fetch media khi đổi conv hoặc khi mở panel
 watch(
-  () => props.conversationId,
-  () => {
-    showAllImages.value = false
-    showAllFiles.value = false
-    void fetchMedia()
+  () => [props.conversationId, props.isOpen],
+  ([convId, open]) => {
+    if (open && convId) {
+      showAllImages.value = false
+      showAllFiles.value = false
+      void fetchMedia()
+    }
   },
   { immediate: true },
 )
 </script>
 
 <template>
-  <!-- Backdrop for drawer on < xl -->
-  <div
-    class="fixed inset-0 z-40 bg-black/40 xl:hidden"
-    aria-hidden="true"
-    @click="emit('close')"
-  />
+  <div>
+    <!-- Backdrop mờ (dành cho mobile/tablet khi panel mở toàn phần) -->
+    <div
+      v-if="props.isOpen"
+      class="fixed inset-0 z-30 bg-black/25 backdrop-blur-xs transition-opacity duration-200 xl:hidden"
+      aria-hidden="true"
+      @click="emit('close')"
+    />
 
-  <aside
-    role="dialog"
-    aria-modal="true"
-    aria-label="Thông tin hội thoại"
-    class="font-poppins fixed inset-y-0 right-0 z-50 flex w-[320px] max-w-[85vw] shrink-0 flex-col border-l border-slate-200 bg-white shadow-2xl xl:static xl:z-auto xl:max-w-none xl:shadow-none"
-  >
-    <!-- Title + Close button -->
-    <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-      <h2 class="text-sm font-semibold text-slate-900">
-        Thông tin hội thoại
-      </h2>
+    <!-- Panel dạng overlay position absolute + translateX trên cả desktop và mobile (0 reflow, không co giãn khung chat) -->
+    <aside
+      role="dialog"
+      aria-modal="true"
+      aria-label="Thông tin hội thoại"
+      class="font-poppins absolute inset-y-0 right-0 z-30 flex h-full w-80 max-w-[85vw] flex-col border-l border-slate-200 bg-white shadow-xl transition-all duration-200 ease-out"
+      :class="
+        props.isOpen
+          ? 'translate-x-0 opacity-100'
+          : 'translate-x-full opacity-0 pointer-events-none'
+      "
+    >
+      <!-- Title + Close button (hiển thị trên cả desktop và mobile để đóng) -->
+      <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+        <h2 class="text-sm font-semibold text-slate-900">
+          Thông tin hội thoại
+        </h2>
 
-      <button
-        ref="closeBtnEl"
-        type="button"
-        class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 xl:hidden"
-        aria-label="Đóng"
-        @click="emit('close')"
-      >
-        <X :size="18" />
-      </button>
-    </div>
+        <button
+          ref="closeBtnEl"
+          type="button"
+          class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition active:scale-95"
+          aria-label="Đóng"
+          @click="emit('close')"
+        >
+          <X :size="18" />
+        </button>
+      </div>
 
     <div class="panel-scroll flex-1 overflow-y-auto px-6 py-5">
       <!-- Avatar + name (wire to peer) -->
@@ -338,6 +372,7 @@ watch(
       </template>
     </div>
   </aside>
+  </div>
 </template>
 
 <style scoped>
@@ -358,5 +393,12 @@ watch(
 }
 .panel-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgb(148 163 184);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-info-panel-root,
+  aside {
+    transition: none !important;
+  }
 }
 </style>
