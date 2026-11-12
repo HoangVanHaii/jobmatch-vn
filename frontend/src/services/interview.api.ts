@@ -19,6 +19,8 @@ export interface CalendarStatus {
 export interface CreateInterviewPayload {
   applicationId: string;
   interviewerId: string;
+  interviewerName?: string;
+  interviewerEmail?: string;
   interviewType?: string;
   scheduledAt: string;
   durationMin?: number;
@@ -55,6 +57,9 @@ export interface PublicInterviewDetails {
   jobTitle?: string | null;
   companyName?: string | null;
   companyLogoUrl?: string | null;
+  interviewerName?: string | null;
+  interviewerEmail?: string | null;
+  interviewerAvatar?: string | null;
 }
 
 export interface PublicInterviewRespondPayload {
@@ -82,6 +87,7 @@ export interface InterviewListItem {
   candidateAvatar?: string | null;
   interviewerId: string;
   interviewerName?: string | null;
+  interviewerEmail?: string | null;
   interviewerAvatar?: string | null;
   interviewType?: string | null;
   scheduledAt: string;
@@ -128,9 +134,9 @@ export const interviewApi = {
   /**
    * Lấy danh sách khung giờ bận trong ngày từ Google Calendar
    */
-  getBusyTimes: (date: string) =>
+  getBusyTimes: (date: string, email?: string) =>
     http.get<ApiResponse<{ busyTimes: BusyTimeSlot[] }>>('/interviews/calendar/busy-times', {
-      params: { date },
+      params: { date, email: email || undefined },
     }),
 
   /**

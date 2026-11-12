@@ -121,3 +121,96 @@ export const sendInterviewFallbackEmail = async (params: SendInterviewFallbackEm
   });
 };
 
+export interface SendInterviewReminderFallbackEmailParams {
+  candidateEmail: string;
+  candidateName: string;
+  jobTitle: string;
+  companyName: string;
+  interviewType?: string | null;
+  scheduledAt: Date;
+  durationMin: number;
+  meetingLink?: string | null;
+  location?: string | null;
+  interviewerName?: string | null;
+  reminderType: '24h' | '2h' | '15m';
+}
+
+/**
+ * Gửi email nhắc lịch phỏng vấn trực tiếp bằng Nodemailer khi n8n không khả dụng
+ */
+export const sendInterviewReminderFallbackEmail = async (
+  params: SendInterviewReminderFallbackEmailParams,
+): Promise<void> => {
+  const timeFormatted = formatVietnamDateTime(params.scheduledAt);
+  const isOnline = Boolean(params.meetingLink);
+  const typeLabel = getInterviewTypeLabel(params.interviewType);
+
+  let timeBanner = '';
+  let subjectPrefix = '';
+  if (params.reminderType === '24h') {
+    subjectPrefix = 'Nhắc lịch (Ngày mai)';
+    timeBanner = 'Buổi phỏng vấn của bạn sẽ diễn ra vào ngày mai';
+  } else if (params.reminderType === '2h') {
+    subjectPrefix = 'Nhắc lịch (2 giờ nữa)';
+    timeBanner = 'Buổi phỏng vấn của bạn sẽ diễn ra sau 2 giờ nữa';
+  } else {
+    subjectPrefix = 'Sắp bắt đầu (15 phút nữa)';
+    timeBanner = 'Buổi phỏng vấn sắp diễn ra trong 15 phút tới!';
+  }
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h2 style="color: #4338ca; margin: 0; font-size: 22px;">JobMatch VN</h2>
+        <p style="color: #64748b; font-size: 13px; margin: 4px 0 0 0;">Cầu nối việc làm thông minh</p>
+      </div>
+
+      <div style="background-color: #e0e7ff; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; text-align: center;">
+        <span style="color: #3730a3; font-weight: 700; font-size: 15px;">⏰ ${timeBanner}</span>
+      </div>
+
+      <p style="font-size: 15px; line-height: 1.6;">Xin chào <strong>${params.candidateName}</strong>,</p>
+      <p style="font-size: 15px; line-height: 1.6;">
+        Hệ thống xin nhắc bạn về buổi <strong>${typeLabel}</strong> cho vị trí <strong>${params.jobTitle}</strong> tại <strong>${params.companyName}</strong>.
+      </p>
+
+      <div style="background-color: #f8fafc; border-left: 4px solid #4338ca; padding: 16px; border-radius: 6px; margin: 20px 0;">
+        <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Thời gian:</strong> ${timeFormatted} (${params.durationMin} phút)</p>
+        <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Hình thức:</strong> ${isOnline ? 'Online (Google Meet)' : 'Trực tiếp'}</p>
+        ${params.location ? `<p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Địa điểm:</strong> ${params.location}</p>` : ''}
+        ${params.interviewerName ? `<p style="margin: 0; font-size: 14px;"><strong>Người phỏng vấn / Hội đồng:</strong> ${params.interviewerName}</p>` : ''}
+      </div>
+
+      ${
+        isOnline && params.meetingLink
+          ? `
+      <div style="margin: 24px 0; padding: 16px; background-color: #eef2ff; border: 1px dashed #6366f1; border-radius: 8px; text-align: center;">
+        <p style="margin: 0 0 8px 0; font-size: 13px; color: #4338ca; font-weight: 600;">Link tham gia phỏng vấn:</p>
+        <a href="${params.meetingLink}" target="_blank" style="display: inline-block; background-color: #4338ca; color: #ffffff; padding: 10px 24px; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 8px;">
+          Tham gia Google Meet ngay
+        </a>
+        <p style="margin: 8px 0 0 0; font-size: 12px; color: #64748b; word-break: break-all;">${params.meetingLink}</p>
+      </div>
+      `
+          : ''
+      }
+
+      <div style="background-color: #fefce8; border: 1px solid #fef08a; border-radius: 8px; padding: 12px; font-size: 13px; color: #854d0e; line-height: 1.5;">
+        💡 <strong>Lưu ý:</strong> Vui lòng chuẩn bị trang phục lịch sự, kiểm tra kết nối Internet, micro và webcam trước giờ phỏng vấn ít nhất 5–10 phút để buổi gặp diễn ra thuận lợi nhất.
+      </div>
+
+      <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+      <p style="font-size: 12px; color: #94a3b8; text-align: center; margin: 0;">
+        Email nhắc lịch tự động từ nền tảng JobMatch VN. Chúc bạn có một buổi phỏng vấn thật thành công!
+      </p>
+    </div>
+  `;
+
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || `"JobMatch VN" <${process.env.SMTP_USER}>`,
+    to: params.candidateEmail,
+    subject: `[JobMatch] ${subjectPrefix}: ${typeLabel} - ${params.jobTitle} (${params.companyName})`,
+    html,
+  });
+};
+

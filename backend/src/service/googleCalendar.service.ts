@@ -8,7 +8,8 @@ import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { db } from '../config/database';
 import { userCalendarIntegrations } from '../db/schema/interview';
-import { eq, and } from 'drizzle-orm';
+import { users } from '../db/schema/users';
+import { eq, and, or } from 'drizzle-orm';
 import { env } from '../config/env';
 import { encrypt, decrypt } from '../config/crypto';
 import { AppError } from '../middleware/errorHandler';
@@ -225,6 +226,7 @@ export const googleCalendarService = {
     scheduledAt: Date;
     durationMin: number;
     attendeeEmail?: string;
+    interviewerEmail?: string;
     createMeet?: boolean;
   }): Promise<{ eventId: string; meetingLink: string | null; htmlLink?: string } | null> => {
     try {
@@ -238,13 +240,21 @@ export const googleCalendarService = {
       const startIso = params.scheduledAt.toISOString();
       const endIso = new Date(params.scheduledAt.getTime() + params.durationMin * 60 * 1000).toISOString();
 
+      const attendeesList: Array<{ email: string }> = [];
+      if (params.attendeeEmail) {
+        attendeesList.push({ email: params.attendeeEmail });
+      }
+      if (params.interviewerEmail && params.interviewerEmail !== params.attendeeEmail) {
+        attendeesList.push({ email: params.interviewerEmail });
+      }
+
       const requestBody: Record<string, unknown> = {
         summary: params.summary,
         description: params.description ?? '',
         location: params.location ?? '',
         start: { dateTime: startIso },
         end: { dateTime: endIso },
-        attendees: params.attendeeEmail ? [{ email: params.attendeeEmail }] : [],
+        attendees: attendeesList,
       };
 
       if (params.createMeet !== false) {
@@ -366,33 +376,81 @@ export const googleCalendarService = {
   },
 
   /**
-   * Lấy danh sách khung giờ bận trong ngày của HR (Google Calendar FreeBusy query)
+   * Lấy danh sách khung giờ bận trong ngày của người phỏng vấn hoặc HR (Google Calendar FreeBusy query)
    */
   getBusyTimes: async (params: {
     userId: string;
     timeMin: Date;
     timeMax: Date;
+    targetEmail?: string;
   }): Promise<Array<{ start: string; end: string }>> => {
     try {
-      const client = await googleCalendarService.getAuthenticatedClient(params.userId);
+      let client = await googleCalendarService.getAuthenticatedClient(params.userId);
+
+      const target = params.targetEmail?.trim();
+      const isTargetSpecified = Boolean(target && target.toLowerCase() !== 'primary');
+
+      let queryId = 'primary';
+
+      if (isTargetSpecified) {
+        // 1. Kiểm tra xem targetEmail có tài khoản kết nối Google Calendar trong hệ thống không
+        const [targetIntegration] = await db
+          .select({
+            userId: userCalendarIntegrations.userId,
+            calendarEmail: userCalendarIntegrations.calendarEmail,
+          })
+          .from(userCalendarIntegrations)
+          .leftJoin(users, eq(userCalendarIntegrations.userId, users.id))
+          .where(
+            and(
+              or(
+                eq(userCalendarIntegrations.calendarEmail, target!),
+                eq(users.email, target!),
+              ),
+              eq(userCalendarIntegrations.provider, 'google'),
+              eq(userCalendarIntegrations.isConnected, true),
+            ),
+          )
+          .limit(1);
+
+        if (targetIntegration) {
+          // Nếu người này đã kết nối calendar trong JobMatch VN, dùng chính client của họ -> đọc chính xác 100%
+          const targetClient = await googleCalendarService.getAuthenticatedClient(targetIntegration.userId);
+          if (targetClient) {
+            client = targetClient;
+            queryId = 'primary';
+          } else {
+            queryId = target!;
+          }
+        } else {
+          // Nếu không có token riêng, dùng client của HR để query lịch bận của targetEmail
+          queryId = target!;
+        }
+      }
+
       if (!client) return [];
 
       const tokenRes = await client.getAccessToken();
       const accessToken = tokenRes.token;
       if (!accessToken) return [];
 
+      // CHỈ query đúng calendar cần kiểm tra (không gộp cứng 'primary' của HR vào khi xem người khác)
+      const items: Array<{ id: string }> = [{ id: queryId }];
+
       const res = await axios.post<{
-        calendars?: {
-          primary?: {
+        calendars?: Record<
+          string,
+          {
             busy?: Array<{ start: string; end: string }>;
-          };
-        };
+            errors?: Array<{ domain?: string; reason?: string }>;
+          }
+        >;
       }>(
         'https://www.googleapis.com/calendar/v3/freeBusy',
         {
           timeMin: params.timeMin.toISOString(),
           timeMax: params.timeMax.toISOString(),
-          items: [{ id: 'primary' }],
+          items,
         },
         {
           headers: {
@@ -402,7 +460,21 @@ export const googleCalendarService = {
         },
       );
 
-      return res.data?.calendars?.primary?.busy ?? [];
+      const calendarData = res.data?.calendars
+        ? res.data.calendars[queryId] ||
+          Object.entries(res.data.calendars).find(
+            ([key]) => key.toLowerCase() === queryId.toLowerCase(),
+          )?.[1]
+        : undefined;
+
+      if (calendarData?.errors && calendarData.errors.length > 0) {
+        logger.warn(
+          { userId: params.userId, queryId, errors: calendarData.errors },
+          'googleCalendarService.getBusyTimes: Google returned errors (calendar may not be shared or accessible)',
+        );
+      }
+
+      return calendarData?.busy ?? [];
     } catch (err) {
       logger.error({ err, userId: params.userId }, 'googleCalendarService.getBusyTimes failed');
       return [];

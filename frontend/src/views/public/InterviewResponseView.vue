@@ -20,6 +20,7 @@ import {
   ExternalLink,
   ChevronRight,
   Layers,
+  UserCheck,
 } from 'lucide-vue-next';
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
@@ -161,7 +162,7 @@ onMounted(loadDetails);
     </header>
 
     <!-- Main Container -->
-    <main class="flex-1 flex items-center justify-center p-4 sm:p-6 my-6">
+    <main class="flex-1 flex items-center justify-center p-4 sm:p-6">
       <!-- Loading State -->
       <div v-if="state === 'loading'" class="text-center py-16">
         <Loader2 class="h-8 w-8 text-[#1769e8] animate-spin mx-auto mb-3" />
@@ -221,7 +222,7 @@ onMounted(loadDetails);
         class="w-full max-w-xl rounded-2xl bg-white border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in-95"
       >
         <!-- Company & Job Banner Header -->
-        <div class="bg-gradient-to-r from-blue-600 to-[#1769e8] p-6 text-white">
+        <div class="bg-gradient-to-r from-blue-600 to-[#1769e8] p-4 text-white">
           <div class="flex items-start justify-between gap-4">
             <div>
               <span class="inline-flex items-center rounded-full bg-white/20 px-2.5 py-0.5 text-[10px] font-semibold text-white mb-2 backdrop-blur-xs">
@@ -238,9 +239,9 @@ onMounted(loadDetails);
 
             <div
               v-if="details.companyLogoUrl"
-              class="h-12 w-12 rounded-xl bg-white p-1 shrink-0 overflow-hidden shadow-xs"
+              class="h-12 w-12 rounded-xl bg-white shrink-0 overflow-hidden shadow-xs"
             >
-              <img :src="details.companyLogoUrl" alt="Company Logo" class="h-full w-full object-contain" />
+              <img :src="details.companyLogoUrl" alt="Company Logo" class="h-full w-full object-cover" />
             </div>
           </div>
         </div>
@@ -320,6 +321,25 @@ onMounted(loadDetails);
                   <p class="text-xs font-semibold text-slate-900 mt-0.5">Phỏng vấn trực tiếp</p>
                   <p class="text-xs text-slate-600">{{ details.location || 'Tại văn phòng công ty' }}</p>
                 </div>
+              </div>
+            </div>
+
+            <!-- Người phỏng vấn -->
+            <div v-if="details.interviewerName" class="flex items-start gap-3 pt-3 border-t border-slate-200/60">
+              <div v-if="details.interviewerAvatar" class="h-8 w-8 rounded-lg overflow-hidden shrink-0 border border-slate-200/80">
+                <img :src="details.interviewerAvatar" :alt="details.interviewerName" class="h-full w-full object-cover" />
+              </div>
+              <span v-else class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                <UserCheck class="h-4 w-4" />
+              </span>
+              <div class="min-w-0">
+                <p class="text-xs text-slate-500 font-medium">Người phỏng vấn</p>
+                <p class="text-xs font-semibold text-slate-900 mt-0.5 truncate">
+                  {{ details.interviewerName }}
+                </p>
+                <p v-if="details.interviewerEmail" class="text-[11px] text-slate-400 mt-0.5 truncate">
+                  {{ details.interviewerEmail }}
+                </p>
               </div>
             </div>
           </div>

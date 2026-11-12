@@ -350,31 +350,32 @@ Logic kiểm tra xung đột lịch và cập nhật trạng thái phải nằm 
 
 ### 5.5 Interview reminder
 
-Hệ thống có hai thiết kế liên quan đến reminder:
+Hệ thống sử dụng cơ chế **Delayed Jobs (BullMQ + Redis)** theo mô hình Event-driven để nhắc lịch phỏng vấn chính xác đến từng giây mà không gây lãng phí tài nguyên polling:
 
-1. **Thiết kế trong source backend hiện tại:** BullMQ worker chạy định kỳ, backend tìm interview đến hạn rồi gọi webhook `interview_reminder` cho từng lịch.
-2. **Workflow JSON hiện có:** n8n Cron chạy mỗi 15 phút, gọi backend để lấy danh sách reminder đến hạn rồi gửi email.
+1. **Khi ứng viên xác nhận tham gia (status='confirmed'):** Backend tự động tính toán 3 mốc (24 giờ, 2 giờ, 15 phút trước giờ hẹn) và lên lịch các Delayed Jobs vào queue `interviewReminder`.
+2. **Khi dời lịch hoặc hủy lịch:** Backend tự động xóa bỏ hoặc hủy các Delayed Jobs đang chờ trong Redis.
+3. **Khi đến giờ hẹn:** Worker thức dậy, thực hiện **Lazy Check** (xác thực lịch còn confirmed không, giờ hẹn có bị thay đổi không, cờ đã gửi chưa). Nếu hợp lệ, Backend bắn webhook sang n8n để render và gửi email, đồng thời lưu cờ đã gửi vào DB và đẩy notification In-app.
 
-Không nên bật đồng thời hai scheduler vì có thể gửi email trùng. Team cần chọn **một nguồn lập lịch duy nhất**. Khuyến nghị theo source hiện tại:
-
-> BullMQ/backend quyết định interview nào đến hạn; n8n chỉ gửi email/push.
-
-Luồng khuyến nghị:
+Luồng hoạt động:
 
 ```mermaid
 flowchart LR
-  Q[BullMQ mỗi 15 phút] --> B[Backend tìm interview confirmed]
-  B --> T{Mốc 24h / 2h / 15m}
-  T --> N[n8n interview_reminder]
-  N --> E[Gửi email/push]
-  E --> U[Backend đánh dấu reminder sent]
+  C[Ứng viên Confirm lịch] --> S[Backend schedule 3 Delayed Jobs 24h, 2h, 15m]
+  S --> R[(Redis BullMQ Delay Queue)]
+  R -->|Đến giờ hẹn| W[interviewReminder Worker]
+  W --> L{Lazy Check DB}
+  L -->|Hợp lệ| N[n8n Webhook: interview_reminder]
+  L -->|Đã hủy/đổi giờ| SKIP[Bỏ qua]
+  N --> E[Gửi email & In-app Push]
+  E --> U[Backend cập nhật reminder_*_sent = true]
 ```
 
-Các cờ chống gửi trùng:
-
+Các cờ chống gửi trùng trong Database:
 - `reminder_24h_sent`
 - `reminder_2h_sent`
 - `reminder_15m_sent`
+
+*(Có sẵn cơ chế Fallback tự động gửi Nodemailer trực tiếp nếu n8n workflow chưa bật hoặc gặp sự cố mạng).*
 
 ### 5.6 AI test
 

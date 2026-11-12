@@ -31,6 +31,7 @@ import {
   RefreshCw,
   BarChart3,
   Printer,
+  Layers,
 } from 'lucide-vue-next';
 import ScheduleInterviewModal from '@/components/employer/ScheduleInterviewModal.vue';
 import GoogleCalendarConnectCard from '@/components/employer/GoogleCalendarConnectCard.vue';
@@ -56,7 +57,8 @@ export interface Interviewer {
   id: string;
   name: string;
   role: string;
-  avatar: string;
+  avatar?: string | null;
+  email?: string;
 }
 
 export interface InterviewEvent {
@@ -76,6 +78,8 @@ export interface InterviewEvent {
   durationHours: number; // 1.0
   location: string;
   meetingLink?: string;
+  confirmedAt?: string | null;
+  createdAt?: string;
   interviewers: Interviewer[];
   notes?: string;
   attachmentName?: string;
@@ -131,10 +135,10 @@ const activeFilterCount = computed(() => {
   return count;
 });
 
-// Time & Days structure: 08:00 -> 19:00
-const startHourBase = 8;
+// Time & Days structure: 06:00 -> 19:00
+const startHourBase = 6;
 const timeSlots = [
-  '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
+  '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
 ];
 
 export interface WeekDayItem {
@@ -177,6 +181,26 @@ function formatDisplayDate(dateStr?: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   if (!y || !m || !d) return dateStr;
   return `${d} Tháng ${m}, ${y}`;
+}
+
+function formatDateTimeVN(dateInput?: string | Date | null): string {
+  if (!dateInput) return '';
+  const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  if (isNaN(d.getTime())) return '';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${hh}:${mm} ngày ${dd}/${month}/${yyyy}`;
+}
+
+function getInitials(name?: string | null): string {
+  if (!name) return 'U';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'U';
+  const last = parts[parts.length - 1];
+  return last.charAt(0).toUpperCase();
 }
 
 const currentRealDate = ref(new Date());
@@ -366,7 +390,8 @@ function mapToInterviewEvent(item: InterviewListItem): InterviewEvent {
       id: item.interviewerId,
       name: item.interviewerName,
       role: 'Người phỏng vấn',
-      avatar: item.interviewerAvatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face',
+      avatar: item.interviewerAvatar || null,
+      email: item.interviewerEmail || undefined,
     });
   }
 
@@ -387,6 +412,8 @@ function mapToInterviewEvent(item: InterviewListItem): InterviewEvent {
     durationHours,
     location: item.location || (item.meetingLink ? 'Google Meet' : 'Văn phòng'),
     meetingLink: item.meetingLink || undefined,
+    confirmedAt: item.confirmedAt || null,
+    createdAt: item.createdAt,
     interviewers,
     colorTheme: resolveColorTheme(typeResolved, item.id),
   };
@@ -652,6 +679,20 @@ const filteredInterviews = computed(() => {
   });
 });
 
+// Danh sách người phỏng vấn trong 1 ngày cụ thể
+const getDayInterviewers = (fullDate: string): Interviewer[] => {
+  const dayEvents = filteredInterviews.value.filter((e) => e.date === fullDate);
+  const map = new Map<string, Interviewer>();
+  for (const evt of dayEvents) {
+    for (const int of evt.interviewers) {
+      if (int.name && int.name !== 'Người phỏng vấn' && !map.has(int.name)) {
+        map.set(int.name, int);
+      }
+    }
+  }
+  return Array.from(map.values());
+};
+
 // Clear all filters
 const clearAllFilters = (): void => {
   selectedType.value = 'All Types';
@@ -812,15 +853,109 @@ const triggerDatePicker = () => {
   }
 };
 
-// Tính toán vị trí top và height của Event card trên lưới theo giờ (8:00 = 0px)
-const calculateEventPosition = (startHourDecimal: number, durationHours: number) => {
+// ---------------------------------------------------------------------------
+// Xử lý va chạm thời gian & Hiệu ứng xếp chồng ngang (chỉ áp dụng khi CÙNG GIỜ BẮT ĐẦU)
+// ---------------------------------------------------------------------------
+export interface EventStackLayout {
+  stackIndex: number;
+  totalInGroup: number;
+}
+
+// Map lưu thông tin vị trí xếp chồng cho các buổi phỏng vấn CÙNG GIỜ BẮT ĐẦU
+const eventStackLayoutMap = computed<Map<string, EventStackLayout>>(() => {
+  const map = new Map<string, EventStackLayout>();
+
+  // Nhóm các sự kiện theo ngày + giờ bắt đầu chính xác (chỉ cùng giờ bắt đầu mới xếp chồng)
+  const eventsBySlot = new Map<string, InterviewEvent[]>();
+  for (const evt of filteredInterviews.value) {
+    const key = `${evt.date}_${evt.startTime}`;
+    const list = eventsBySlot.get(key) || [];
+    list.push(evt);
+    eventsBySlot.set(key, list);
+  }
+
+  // Xử lý từng nhóm cùng giờ bắt đầu
+  for (const [, slotEvents] of eventsBySlot.entries()) {
+    if (slotEvents.length === 1) {
+      map.set(slotEvents[0].id, { stackIndex: 0, totalInGroup: 1 });
+      continue;
+    }
+
+    // Khi có từ 2 sự kiện cùng giờ bắt đầu trở lên -> xếp chồng theo thứ tự
+    const totalInGroup = slotEvents.length;
+    slotEvents.forEach((evt, idx) => {
+      map.set(evt.id, {
+        stackIndex: idx,
+        totalInGroup,
+      });
+    });
+  }
+
+  return map;
+});
+
+const getEventLayout = (evtId: string): EventStackLayout => {
+  return eventStackLayoutMap.value.get(evtId) || { stackIndex: 0, totalInGroup: 1 };
+};
+
+// Tính toán vị trí top, height, left, width, z-index và shadow cho Event card theo hiệu ứng xếp chồng ngang
+const calculateEventPosition = (evt: InterviewEvent) => {
   const h = hourHeight.value;
-  const top = (startHourDecimal - startHourBase) * h;
-  const height = durationHours * h - 4; // Trừ khoảng hở giữa các sự kiện
-  return {
-    top: `${Math.max(0, top + 2)}px`,
-    height: `${Math.max(38, height)}px`,
-  };
+  const top = (evt.startHourDecimal - startHourBase) * h;
+  const height = evt.durationHours * h - 4; // Trừ khoảng hở giữa các sự kiện
+
+  const layout = getEventLayout(evt.id);
+  const { stackIndex, totalInGroup } = layout;
+
+  if (viewMode.value === 'week') {
+    if (totalInGroup <= 1) {
+      return {
+        top: `${Math.max(0, top + 2)}px`,
+        height: `${Math.max(38, height)}px`,
+        left: '6px',
+        right: '6px',
+        zIndex: 10,
+      };
+    }
+
+    // Chế độ Week: mỗi thẻ lệch sang phải ~18px, độ rộng chiếm phần lớn để vẫn đọc được nội dung
+    const stepPx = Math.min(22, Math.max(14, Math.floor(42 / totalInGroup)));
+    const maxOffset = (totalInGroup - 1) * stepPx;
+    const leftOffset = 6 + stackIndex * stepPx;
+
+    return {
+      top: `${Math.max(0, top + 2)}px`,
+      height: `${Math.max(38, height)}px`,
+      left: `${leftOffset}px`,
+      width: `calc(100% - ${maxOffset + 12}px)`,
+      zIndex: 10 + stackIndex,
+      boxShadow: stackIndex > 0 ? '-4px 0 12px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)' : undefined,
+    };
+  } else {
+    // Chế độ Day: Chiều ngang rộng rãi, mỗi thẻ lệch sang phải ~44px
+    if (totalInGroup <= 1) {
+      return {
+        top: `${Math.max(0, top + 2)}px`,
+        height: `${Math.max(38, height)}px`,
+        left: '16px',
+        right: '16px',
+        zIndex: 10,
+      };
+    }
+
+    const stepPx = Math.min(48, Math.max(28, Math.floor(120 / totalInGroup)));
+    const maxOffset = (totalInGroup - 1) * stepPx;
+    const leftOffset = 20 + stackIndex * stepPx;
+
+    return {
+      top: `${Math.max(0, top + 2)}px`,
+      height: `${Math.max(38, height)}px`,
+      left: `${leftOffset}px`,
+      width: `calc(100% - ${maxOffset + 40}px)`,
+      zIndex: 10 + stackIndex,
+      boxShadow: stackIndex > 0 ? '-6px 0 16px rgba(0,0,0,0.14), 0 4px 10px rgba(0,0,0,0.08)' : undefined,
+    };
+  }
 };
 
 const selectEvent = (evt: InterviewEvent): void => {
@@ -949,18 +1084,19 @@ const selectEvent = (evt: InterviewEvent): void => {
           <div class="relative inline-flex items-center">
             <button
               type="button"
-              class="grid h-7 w-7 place-items-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-[#4338ca] transition cursor-pointer"
+              class="grid h-7 w-7 place-items-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-[#4338ca] active:scale-95 transition cursor-pointer"
               title="Bấm để chọn ngày khác"
               @click="triggerDatePicker"
             >
-              <CalendarIcon class="h-4 w-4" />
+              <CalendarIcon class="h-4 w-4 pointer-events-none" />
             </button>
             <input
               ref="datePickerInput"
               type="date"
               :value="currentDayInfo.fullDate"
-              class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-              title="Bấm để chọn ngày khác"
+              class="pointer-events-none opacity-0 absolute w-0 h-0"
+              tabindex="-1"
+              aria-hidden="true"
               @change="onDateInputChange"
             />
           </div>
@@ -1203,21 +1339,46 @@ const selectEvent = (evt: InterviewEvent): void => {
               <div
                 v-for="d in weekDays"
                 :key="d.dayOfWeek"
-                class="h-14 border-r border-[#edf1f7] px-3 flex flex-col justify-center transition bg-[#fcfdfe] cursor-pointer hover:bg-indigo-50/40"
+                class="h-14 border-r border-[#edf1f7] px-3 flex items-center justify-between transition bg-[#fcfdfe] cursor-pointer hover:bg-indigo-50/40"
                 :class="d.dayOfWeek === activeDayOfWeek ? 'bg-indigo-50/50' : ''"
                 :title="`Xem ${d.nameVi} (${d.dateNum}/${d.monthNum})`"
                 @click="selectDay(d.dayOfWeek)"
               >
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-bold text-gray-800">{{ d.nameVi }}</span>
-                  <span
-                    class="grid h-6 w-6 place-items-center rounded-full text-xs font-bold"
-                    :class="d.fullDate === todayDateStr ? 'bg-[#4338ca] text-white shadow-xs' : 'text-gray-600 bg-gray-100'"
+                <!-- Tiêu đề ngày định dạng Thứ - Ngày (không dùng vòng tròn) -->
+                <div class="flex flex-col justify-center min-w-0">
+                  <div
+                    class="text-xs font-bold truncate"
+                    :class="d.fullDate === todayDateStr ? 'text-[#4338ca] font-extrabold' : 'text-gray-800'"
                   >
-                    {{ d.dateNum }}
+                    {{ d.nameVi }} - {{ String(d.dateNum).padStart(2, '0') }}
+                  </div>
+                  <span class="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">
+                    Thg {{ d.monthNum }}, {{ d.year }}
                   </span>
                 </div>
-                <span class="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">Thg {{ d.monthNum }}, {{ d.year }}</span>
+
+                <!-- Avatar người phỏng vấn trong ngày (hoặc chữ cái đầu nếu không có avatar) -->
+                <div
+                  v-if="getDayInterviewers(d.fullDate).length > 0"
+                  class="flex -space-x-1.5 overflow-hidden shrink-0 items-center"
+                >
+                  <template v-for="int in getDayInterviewers(d.fullDate)" :key="int.id || int.name">
+                    <img
+                      v-if="int.avatar"
+                      :src="int.avatar"
+                      :alt="int.name"
+                      :title="`Người phỏng vấn: ${int.name}`"
+                      class="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover shrink-0 aspect-square"
+                    />
+                    <div
+                      v-else
+                      :title="`Người phỏng vấn: ${int.name}`"
+                      class="inline-grid h-6 w-6 rounded-full ring-2 ring-white place-items-center bg-blue-100 text-[10px] font-bold text-blue-700 shrink-0 aspect-square select-none"
+                    >
+                      {{ getInitials(int.name) }}
+                    </div>
+                  </template>
+                </div>
               </div>
             </template>
 
@@ -1303,7 +1464,7 @@ const selectEvent = (evt: InterviewEvent): void => {
               </div>
             </div>
 
-            <!-- 1. Cột hiển thị giờ bên trái (08:00 - 19:00) -->
+            <!-- 1. Cột hiển thị giờ bên trái (06:00 - 19:00) -->
             <div class="border-r border-[#edf1f7] bg-white select-none">
               <div
                 v-for="time in timeSlots"
@@ -1332,7 +1493,7 @@ const selectEvent = (evt: InterviewEvent): void => {
 
                 <!-- Red Current Time Line nếu là hôm nay -->
                 <div
-                  v-if="d.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 19"
+                  v-if="d.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 20"
                   class="absolute left-0 right-0 z-20 pointer-events-none flex items-center"
                   :style="{ top: `calc((${nowTimeInfo.decimalHour} - ${startHourBase}) * ${hourHeight}px)` }"
                 >
@@ -1346,39 +1507,71 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <div
                   v-for="evt in filteredInterviews.filter(e => e.date === d.fullDate)"
                   :key="evt.id"
-                  class="absolute left-1.5 right-1.5 z-10 rounded-xl border text-left cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.01] overflow-hidden"
+                  class="absolute z-10 rounded-xl border text-left cursor-pointer transition-all duration-200 hover:!z-30 hover:scale-[1.02] hover:shadow-xl overflow-hidden"
                   :class="[
                     THEME_STYLES[evt.colorTheme].bg,
                     THEME_STYLES[evt.colorTheme].border,
-                    selectedInterview?.id === evt.id ? 'ring-2 ring-primary-500 shadow-sm' : '',
+                    selectedInterview?.id === evt.id ? '!z-25 ring-2 ring-primary-500 shadow-sm' : '',
                     evt.durationHours <= 0.55 ? 'p-1.5 sm:p-2' : 'p-2.5'
                   ]"
-                  :style="calculateEventPosition(evt.startHourDecimal, evt.durationHours)"
+                  :style="calculateEventPosition(evt)"
                   @click="selectEvent(evt)"
                 >
-                  <!-- Time & Calendar Icon -->
+                  <!-- Time & Calendar Icon & Stack indicator -->
                   <div class="flex items-center justify-between text-[10px] font-medium" :class="THEME_STYLES[evt.colorTheme].subText">
                     <span class="truncate">{{ evt.startTime }} - {{ evt.endTime }}</span>
-                    <CalendarIcon class="h-3 w-3 opacity-60 shrink-0" />
+                    <div class="flex items-center gap-1 shrink-0">
+                      <span
+                        v-if="getEventLayout(evt.id).totalInGroup > 1"
+                        class="inline-flex items-center gap-0.5 rounded px-1 py-0.2 bg-black/5 text-[8.5px] font-bold"
+                        :title="`Trùng ${getEventLayout(evt.id).totalInGroup} lịch (${getEventLayout(evt.id).stackIndex + 1}/${getEventLayout(evt.id).totalInGroup})`"
+                      >
+                        <Layers class="h-2.5 w-2.5 opacity-70" />
+                        {{ getEventLayout(evt.id).stackIndex + 1 }}/{{ getEventLayout(evt.id).totalInGroup }}
+                      </span>
+                      <CalendarIcon class="h-3 w-3 opacity-60 shrink-0" />
+                    </div>
                   </div>
 
-                  <!-- Candidate Avatar & Name -->
-                  <div class="flex items-center gap-1.5 mt-0.5 min-w-0">
-                    <img
-                      v-if="evt.candidateAvatar"
-                      :src="evt.candidateAvatar"
-                      :alt="evt.candidateName"
-                      class="h-4 w-4 rounded-full object-cover shrink-0 ring-1 ring-black/5"
-                    />
-                    <div
-                      v-else
-                      class="h-4 w-4 shrink-0 rounded-full bg-primary-100 text-[8.5px] font-bold text-primary-700 flex items-center justify-center select-none"
-                    >
-                      {{ evt.candidateName.charAt(0) }}
+                  <!-- Candidate Avatar & Name + Interviewer Avatar on Card -->
+                  <div class="flex items-center justify-between gap-1 mt-0.5 min-w-0">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <img
+                        v-if="evt.candidateAvatar"
+                        :src="evt.candidateAvatar"
+                        :alt="evt.candidateName"
+                        class="h-4 w-4 rounded-full object-cover shrink-0 ring-1 ring-black/5 aspect-square"
+                      />
+                      <div
+                        v-else
+                        class="h-4 w-4 shrink-0 rounded-full bg-primary-100 text-[8.5px] font-bold text-primary-700 flex items-center justify-center select-none aspect-square"
+                      >
+                        {{ getInitials(evt.candidateName) }}
+                      </div>
+                      <h4 class="text-xs font-bold truncate" :class="THEME_STYLES[evt.colorTheme].text">
+                        {{ evt.candidateName }}
+                      </h4>
                     </div>
-                    <h4 class="text-xs font-bold truncate" :class="THEME_STYLES[evt.colorTheme].text">
-                      {{ evt.candidateName }}
-                    </h4>
+
+                    <!-- Interviewers avatar stack on card -->
+                    <div v-if="evt.interviewers.length > 0" class="flex -space-x-1 shrink-0 items-center">
+                      <template v-for="int in evt.interviewers" :key="int.id || int.name">
+                        <img
+                          v-if="int.avatar"
+                          :src="int.avatar"
+                          :alt="int.name"
+                          :title="`Người PV: ${int.name}`"
+                          class="inline-block h-4 w-4 rounded-full ring-1 ring-white object-cover shrink-0 aspect-square"
+                        />
+                        <div
+                          v-else
+                          :title="`Người PV: ${int.name}`"
+                          class="inline-grid h-4 w-4 rounded-full ring-1 ring-white place-items-center bg-blue-100 text-[8px] font-bold text-blue-700 shrink-0 aspect-square select-none"
+                        >
+                          {{ getInitials(int.name) }}
+                        </div>
+                      </template>
+                    </div>
                   </div>
 
                   <!-- Job Title & Type: chỉ hiện nếu thời lượng đủ dài (> 35 phút) -->
@@ -1407,7 +1600,7 @@ const selectEvent = (evt: InterviewEvent): void => {
 
                 <!-- Red Current Time Line (chỉ hiển thị khi đang xem ngày hôm nay) -->
                 <div
-                  v-if="currentDayInfo.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 19"
+                  v-if="currentDayInfo.fullDate === todayDateStr && nowTimeInfo.decimalHour >= startHourBase && nowTimeInfo.decimalHour <= 20"
                   class="absolute left-0 right-0 z-20 pointer-events-none flex items-center"
                   :style="{ top: `calc((${nowTimeInfo.decimalHour} - ${startHourBase}) * ${hourHeight}px)` }"
                 >
@@ -1421,14 +1614,14 @@ const selectEvent = (evt: InterviewEvent): void => {
                 <div
                   v-for="evt in filteredInterviews"
                   :key="evt.id"
-                  class="absolute left-3 right-3 sm:left-6 sm:right-6 z-10 rounded-xl border text-left cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.005] overflow-hidden"
+                  class="absolute z-10 rounded-xl border text-left cursor-pointer transition-all duration-200 hover:!z-30 hover:scale-[1.01] hover:shadow-2xl overflow-hidden"
                   :class="[
                     THEME_STYLES[evt.colorTheme].bg,
                     THEME_STYLES[evt.colorTheme].border,
-                    selectedInterview?.id === evt.id ? 'ring-2 ring-primary-500 shadow-sm' : '',
+                    selectedInterview?.id === evt.id ? '!z-25 ring-2 ring-primary-500 shadow-sm' : '',
                     evt.durationHours <= 0.55 ? 'p-2 sm:p-2.5' : 'p-3.5 sm:p-4'
                   ]"
-                  :style="calculateEventPosition(evt.startHourDecimal, evt.durationHours)"
+                  :style="calculateEventPosition(evt)"
                   @click="selectEvent(evt)"
                 >
                   <!-- Layout compact khi thời lượng <= 30 phút (1 hàng ngang) -->
@@ -1439,13 +1632,13 @@ const selectEvent = (evt: InterviewEvent): void => {
                           v-if="evt.candidateAvatar"
                           :src="evt.candidateAvatar"
                           :alt="evt.candidateName"
-                          class="h-5 w-5 rounded-full object-cover shrink-0 ring-1 ring-black/5"
+                          class="h-5 w-5 rounded-full object-cover shrink-0 ring-1 ring-black/5 aspect-square"
                         />
                         <div
                           v-else
-                          class="h-5 w-5 shrink-0 rounded-full bg-primary-100 text-[10px] font-bold text-primary-700 flex items-center justify-center select-none"
+                          class="h-5 w-5 shrink-0 rounded-full bg-primary-100 text-[10px] font-bold text-primary-700 flex items-center justify-center select-none aspect-square"
                         >
-                          {{ evt.candidateName.charAt(0) }}
+                          {{ getInitials(evt.candidateName) }}
                         </div>
                         <h4 class="text-sm font-bold truncate" :class="THEME_STYLES[evt.colorTheme].text">
                           {{ evt.candidateName }}
@@ -1455,6 +1648,14 @@ const selectEvent = (evt: InterviewEvent): void => {
                         </span>
                         <span class="inline-flex items-center rounded-full bg-white/70 px-1.5 py-0.2 text-[10px] font-semibold text-gray-600 hidden md:inline">
                           {{ evt.interviewType }}
+                        </span>
+                        <span
+                          v-if="getEventLayout(evt.id).totalInGroup > 1"
+                          class="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.2 text-[10px] font-bold text-amber-800"
+                          :title="`Trùng khung giờ (${getEventLayout(evt.id).stackIndex + 1}/${getEventLayout(evt.id).totalInGroup})`"
+                        >
+                          <Layers class="h-2.5 w-2.5 text-amber-600" />
+                          {{ getEventLayout(evt.id).stackIndex + 1 }}/{{ getEventLayout(evt.id).totalInGroup }}
                         </span>
                       </div>
 
@@ -1470,7 +1671,17 @@ const selectEvent = (evt: InterviewEvent): void => {
                   <!-- Layout đầy đủ khi thời lượng >= 45 phút -->
                   <template v-else>
                     <div class="flex items-center justify-between text-xs font-medium" :class="THEME_STYLES[evt.colorTheme].subText">
-                      <span class="font-bold">{{ evt.startTime }} - {{ evt.endTime }} ({{ Math.round(evt.durationHours * 60) }} phút)</span>
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold">{{ evt.startTime }} - {{ evt.endTime }} ({{ Math.round(evt.durationHours * 60) }} phút)</span>
+                        <span
+                          v-if="getEventLayout(evt.id).totalInGroup > 1"
+                          class="inline-flex items-center gap-1 rounded-md bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-800"
+                          :title="`Khung giờ trùng ${getEventLayout(evt.id).totalInGroup} buổi phỏng vấn`"
+                        >
+                          <Layers class="h-3 w-3 text-amber-600" />
+                          Trùng lịch ({{ getEventLayout(evt.id).stackIndex + 1 }}/{{ getEventLayout(evt.id).totalInGroup }})
+                        </span>
+                      </div>
                       <span class="inline-flex items-center gap-1 rounded bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-gray-700">
                         {{ evt.location }}
                       </span>
@@ -1483,13 +1694,13 @@ const selectEvent = (evt: InterviewEvent): void => {
                             v-if="evt.candidateAvatar"
                             :src="evt.candidateAvatar"
                             :alt="evt.candidateName"
-                            class="h-6 w-6 rounded-full object-cover shrink-0 ring-1 ring-black/5"
+                            class="h-6 w-6 rounded-full object-cover shrink-0 ring-1 ring-black/5 aspect-square"
                           />
                           <div
                             v-else
-                            class="h-6 w-6 shrink-0 rounded-full bg-primary-100 text-[10.5px] font-bold text-primary-700 flex items-center justify-center select-none"
+                            class="h-6 w-6 shrink-0 rounded-full bg-primary-100 text-[10.5px] font-bold text-primary-700 flex items-center justify-center select-none aspect-square"
                           >
-                            {{ evt.candidateName.charAt(0) }}
+                            {{ getInitials(evt.candidateName) }}
                           </div>
                           <h4 class="text-sm font-bold truncate" :class="THEME_STYLES[evt.colorTheme].text">
                             {{ evt.candidateName }}
@@ -1503,14 +1714,22 @@ const selectEvent = (evt: InterviewEvent): void => {
                       <div class="flex items-center gap-2.5">
                         <!-- Interviewers avatar stack -->
                         <div class="flex -space-x-1.5 overflow-hidden">
-                          <img
-                            v-for="int in evt.interviewers"
-                            :key="int.id"
-                            :src="int.avatar"
-                            :alt="int.name"
-                            :title="int.name"
-                            class="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover"
-                          />
+                          <template v-for="int in evt.interviewers" :key="int.id">
+                            <img
+                              v-if="int.avatar"
+                              :src="int.avatar"
+                              :alt="int.name"
+                              :title="int.name"
+                              class="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover shrink-0 aspect-square"
+                            />
+                            <div
+                              v-else
+                              :title="int.name"
+                              class="inline-grid h-6 w-6 rounded-full ring-2 ring-white place-items-center bg-blue-100 text-[10px] font-bold text-blue-700 shrink-0 aspect-square select-none"
+                            >
+                              {{ getInitials(int.name) }}
+                            </div>
+                          </template>
                         </div>
                       </div>
                     </div>
@@ -1607,13 +1826,22 @@ const selectEvent = (evt: InterviewEvent): void => {
 
               <!-- Status badge -->
               <div>
-                <span
-                  class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border"
-                  :class="[STATUS_META[selectedInterview.status].bg, STATUS_META[selectedInterview.status].color]"
-                >
-                  <span class="h-1.5 w-1.5 rounded-full" :class="STATUS_META[selectedInterview.status].dot"></span>
-                  {{ STATUS_META[selectedInterview.status].label }}
-                </span>
+                <div class="flex items-center gap-2">
+                  <span
+                    class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border"
+                    :class="[STATUS_META[selectedInterview.status].bg, STATUS_META[selectedInterview.status].color]"
+                  >
+                    <span class="h-1.5 w-1.5 rounded-full" :class="STATUS_META[selectedInterview.status].dot"></span>
+                    {{ STATUS_META[selectedInterview.status].label }}
+                  </span>
+                  <span
+                    v-if="selectedInterview.confirmedAt"
+                    class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200"
+                  >
+                    <CheckCircle2 class="h-3 w-3" />
+                    Đã xác nhận
+                  </span>
+                </div>
 
                 <h2 class="text-base font-bold text-gray-900 mt-2">
                   Phỏng vấn {{ selectedInterview.jobTitle }}
@@ -1621,25 +1849,28 @@ const selectEvent = (evt: InterviewEvent): void => {
               </div>
 
               <!-- Candidate Card with Quick Actions -->
-              <div class="flex items-center justify-between rounded-2xl border border-gray-100 bg-gray-50/70 p-3">
-                <div class="flex items-center gap-3">
+              <div class="flex items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-gray-50/70 p-3">
+                <div class="flex items-center gap-3 min-w-0 flex-1">
                   <img
                     v-if="selectedInterview.candidateAvatar"
                     :src="selectedInterview.candidateAvatar"
                     :alt="selectedInterview.candidateName"
-                    class="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow-2xs"
+                    class="h-10 w-10 shrink-0 aspect-square rounded-full object-cover ring-2 ring-white shadow-2xs"
                   />
-                  <div v-else class="grid h-10 w-10 place-items-center rounded-full bg-primary-100 font-bold text-primary-700">
-                    {{ selectedInterview.candidateName.charAt(0) }}
+                  <div
+                    v-else
+                    class="grid h-10 w-10 shrink-0 aspect-square place-items-center rounded-full bg-primary-100 font-bold text-primary-700 text-sm select-none"
+                  >
+                    {{ getInitials(selectedInterview.candidateName) }}
                   </div>
-                  <div>
-                    <h4 class="font-bold text-gray-900 text-xs">{{ selectedInterview.candidateName }}</h4>
-                    <p class="text-[11px] text-gray-500">{{ selectedInterview.jobTitle }}</p>
+                  <div class="min-w-0 flex-1">
+                    <h4 class="font-bold text-gray-900 text-xs truncate" :title="selectedInterview.candidateName">{{ selectedInterview.candidateName }}</h4>
+                    <p class="text-[11px] text-gray-500 truncate" :title="selectedInterview.jobTitle">{{ selectedInterview.jobTitle }}</p>
                   </div>
                 </div>
 
                 <!-- Contact action icons -->
-                <div class="flex items-center gap-1 text-gray-400">
+                <div class="flex items-center gap-1 text-gray-400 shrink-0">
                   <a
                     :href="`mailto:${selectedInterview.candidateEmail}`"
                     class="grid h-7 w-7 place-items-center rounded-lg hover:bg-white hover:text-primary-600 transition shadow-2xs"
@@ -1673,6 +1904,23 @@ const selectEvent = (evt: InterviewEvent): void => {
                   <div>
                     <p class="font-semibold text-gray-900">{{ formatDisplayDate(selectedInterview.date) }}</p>
                     <p class="text-[11px] text-gray-500">{{ selectedInterview.startTime }} – {{ selectedInterview.endTime }} ({{ Math.round(selectedInterview.durationHours * 60) }} phút)</p>
+                  </div>
+                </div>
+
+                <!-- Confirmation Date -->
+                <div class="flex items-start gap-3">
+                  <CheckCircle2
+                    class="h-4 w-4 shrink-0 mt-0.5"
+                    :class="selectedInterview.confirmedAt ? 'text-emerald-500' : 'text-amber-500'"
+                  />
+                  <div>
+                    <p class="text-[11px] text-gray-400">Thời gian xác nhận</p>
+                    <p v-if="selectedInterview.confirmedAt" class="font-semibold text-emerald-700 text-xs mt-0.5">
+                      {{ formatDateTimeVN(selectedInterview.confirmedAt) }}
+                    </p>
+                    <p v-else class="text-xs text-amber-600 mt-0.5 font-medium">
+                      Chờ ứng viên phản hồi
+                    </p>
                   </div>
                 </div>
 
@@ -1710,22 +1958,29 @@ const selectEvent = (evt: InterviewEvent): void => {
                   <Users class="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
                   <div>
                     <p class="text-[11px] text-gray-400">Người phỏng vấn ({{ selectedInterview.interviewers.length }})</p>
-                    <div class="flex items-center gap-2 mt-1.5">
-                      <div class="flex -space-x-1.5 overflow-hidden">
+                    <div class="flex flex-col gap-1.5 mt-1.5">
+                      <div
+                        v-for="int in selectedInterview.interviewers"
+                        :key="int.id"
+                        class="flex items-center gap-2"
+                      >
                         <img
-                          v-for="int in selectedInterview.interviewers"
-                          :key="int.id"
+                          v-if="int.avatar"
                           :src="int.avatar"
                           :alt="int.name"
-                          class="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover"
+                          class="inline-block h-6 w-6 rounded-full ring-1 ring-gray-200 object-cover shrink-0 aspect-square"
                         />
+                        <div
+                          v-else
+                          class="grid h-6 w-6 shrink-0 aspect-square place-items-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 ring-1 ring-blue-200 select-none"
+                        >
+                          {{ getInitials(int.name) }}
+                        </div>
+                        <div class="flex flex-col min-w-0">
+                          <span class="text-xs font-medium text-gray-800 truncate">{{ int.name }}</span>
+                          <span v-if="int.email" class="text-[10px] text-gray-400 truncate">{{ int.email }}</span>
+                        </div>
                       </div>
-                      <span class="text-[11px] text-gray-500 font-medium">
-                        {{ selectedInterview.interviewers.map(i => i.name).slice(0, 2).join(', ') }}
-                        <template v-if="selectedInterview.interviewers.length > 2">
-                          +{{ selectedInterview.interviewers.length - 2 }}
-                        </template>
-                      </span>
                     </div>
                   </div>
                 </div>

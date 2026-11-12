@@ -1,69 +1,55 @@
 {
-  "name": "Interview Reminder (Cron)",
+  "name": "Interview Reminder (Webhook)",
   "nodes": [
     {
       "parameters": {
-        "rule": {
-          "interval": [15, "minutes"]
-        }
+        "httpMethod": "POST",
+        "path": "interview_reminder",
+        "responseMode": "onReceived"
       },
-      "id": "cron",
-      "name": "Every 15 minutes",
-      "type": "n8n-nodes-base.cron",
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [250, 300]
     },
     {
       "parameters": {
-        "url": "http://backend:5000/api/v1/schedule/reminders/check",
-        "options": {}
+        "functionCode": "// Render HTML email nhắc lịch phỏng vấn theo mốc (24h, 2h, 15m)\nconst body = $input.item.json.body || {};\nconst {\n  interviewId,\n  reminderType,\n  candidateEmail,\n  candidateName,\n  jobTitle,\n  companyName,\n  interviewType,\n  interviewTypeLabel,\n  scheduledAt,\n  durationMin,\n  location,\n  meetingLink,\n  interviewerName\n} = body;\n\nconst isOnline = Boolean(meetingLink);\nconst typeText = interviewTypeLabel || 'Phỏng vấn chuyên môn';\nconst formattedTime = new Date(scheduledAt).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });\n\nlet bannerText = 'Buổi phỏng vấn của bạn sắp diễn ra';\nlet subject = `[JobMatch] Nhắc lịch: ${typeText} - ${jobTitle} (${companyName})`;\n\nif (reminderType === '24h') {\n  bannerText = 'Buổi phỏng vấn của bạn sẽ diễn ra vào ngày mai';\n  subject = `[JobMatch] Nhắc lịch (Ngày mai): ${typeText} - ${jobTitle} (${companyName})`;\n} else if (reminderType === '2h') {\n  bannerText = 'Buổi phỏng vấn của bạn sẽ diễn ra sau 2 giờ nữa';\n  subject = `[JobMatch] Nhắc lịch (2 giờ nữa): ${typeText} - ${jobTitle} (${companyName})`;\n} else if (reminderType === '15m') {\n  bannerText = 'Buổi phỏng vấn sắp bắt đầu trong 15 phút tới!';\n  subject = `[JobMatch] Sắp bắt đầu (15 phút nữa): ${typeText} - ${jobTitle} (${companyName})`;\n}\n\nconst html = `\n<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;\">\n  <div style=\"text-align: center; margin-bottom: 24px;\">\n    <h2 style=\"color: #4338ca; margin: 0; font-size: 22px;\">JobMatch VN</h2>\n    <p style=\"color: #64748b; font-size: 13px; margin: 4px 0 0 0;\">Cầu nối việc làm thông minh</p>\n  </div>\n\n  <div style=\"background-color: #e0e7ff; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; text-align: center;\">\n    <span style=\"color: #3730a3; font-weight: 700; font-size: 15px;\">⏰ ${bannerText}</span>\n  </div>\n\n  <p style=\"font-size: 15px; line-height: 1.6;\">Xin chào <strong>${candidateName || 'Ứng viên'}</strong>,</p>\n  <p style=\"font-size: 15px; line-height: 1.6;\">\n    Hệ thống xin nhắc bạn về buổi <strong>${typeText}</strong> cho vị trí <strong>${jobTitle}</strong> tại <strong>${companyName}</strong>.\n  </p>\n\n  <div style=\"background-color: #f8fafc; border-left: 4px solid #4338ca; padding: 16px; border-radius: 6px; margin: 20px 0;\">\n    <p style=\"margin: 0 0 8px 0; font-size: 14px;\"><strong>Thời gian:</strong> ${formattedTime} (${durationMin || 60} phút)</p>\n    <p style=\"margin: 0 0 8px 0; font-size: 14px;\"><strong>Hình thức:</strong> ${isOnline ? 'Online (Google Meet)' : 'Trực tiếp'}</p>\n    ${location ? `<p style=\"margin: 0 0 8px 0; font-size: 14px;\"><strong>Địa điểm:</strong> ${location}</p>` : ''}\n    ${interviewerName ? `<p style=\"margin: 0; font-size: 14px;\"><strong>Người phỏng vấn / Hội đồng:</strong> ${interviewerName}</p>` : ''}\n  </div>\n\n  ${isOnline && meetingLink ? `\n  <div style=\"margin: 24px 0; padding: 16px; background-color: #eef2ff; border: 1px dashed #6366f1; border-radius: 8px; text-align: center;\">\n    <p style=\"margin: 0 0 8px 0; font-size: 13px; color: #4338ca; font-weight: 600;\">Phòng họp trực tuyến:</p>\n    <a href=\"${meetingLink}\" target=\"_blank\" style=\"display: inline-block; background-color: #4338ca; color: #ffffff; padding: 10px 24px; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 8px;\">\n      Vào Google Meet ngay\n    </a>\n    <p style=\"margin: 8px 0 0 0; font-size: 12px; color: #64748b; word-break: break-all;\">${meetingLink}</p>\n  </div>\n  ` : ''}\n\n  <div style=\"background-color: #fefce8; border: 1px solid #fef08a; border-radius: 8px; padding: 12px; font-size: 13px; color: #854d0e; line-height: 1.5;\">\n    💡 <strong>Lưu ý:</strong> Vui lòng chuẩn bị trang phục lịch sự, kiểm tra kết nối mạng Internet, micro và webcam trước giờ phỏng vấn ít nhất 5–10 phút để buổi gặp diễn ra thuận lợi nhất.\n  </div>\n\n  <hr style=\"border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;\" />\n  <p style=\"font-size: 12px; color: #94a3b8; text-align: center; margin: 0;\">\n    Email nhắc lịch tự động từ nền tảng JobMatch VN. Chúc bạn có một buổi phỏng vấn thật thành công!\n  </p>\n</div>`;\n\nreturn { json: { html, subject } };"
       },
-      "id": "http",
-      "name": "Get Due Reminders",
-      "type": "n8n-nodes-base.httpRequest",
+      "id": "render",
+      "name": "Render HTML",
+      "type": "n8n-nodes-base.function",
       "typeVersion": 1,
       "position": [450, 300]
     },
     {
       "parameters": {
-        "functionCode": "// For each interview due, send email\nconst interviews = $input.item.json.interviews || [];\nreturn interviews.map((i) => ({ json: i }));"
-      },
-      "id": "split",
-      "name": "Split",
-      "type": "n8n-nodes-base.function",
-      "typeVersion": 1,
-      "position": [650, 300]
-    },
-    {
-      "parameters": {
         "fromEmail": "no-reply@jobmatch.vn",
-        "toEmail": "={{$json.candidateEmail}}",
-        "subject": "Nhắc nhở: Buổi phỏng vấn sắp tới",
-        "text": "Xin chào,\n\nĐây là lời nhắc nhở buổi phỏng vấn {{$json.jobTitle}} vào lúc {{new Date($json.scheduledAt).toLocaleString('vi-VN')}}.\n\nĐịa điểm: {{$json.location}}\n{{$json.meetingLink ? 'Link: ' + $json.meetingLink : ''}}\n\nTrân trọng,\nJobMatch VN",
+        "toEmail": "={{$node[\"Webhook\"].json[\"body\"][\"candidateEmail\"]}}",
+        "subject": "={{$json.subject}}",
+        "html": "={{$json.html}}",
         "options": {
           "host": "localhost",
           "port": 1025
         }
       },
       "id": "send",
-      "name": "Send Reminder",
+      "name": "Send Email",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 1,
-      "position": [850, 300]
+      "position": [650, 300]
     }
   ],
   "connections": {
-    "Every 15 minutes": {
-      "main": [[{"node": "Get Due Reminders", "type": "main", "index": 0}]]
+    "Webhook": {
+      "main": [[{"node": "Render HTML", "type": "main", "index": 0}]]
     },
-    "Get Due Reminders": {
-      "main": [[{"node": "Split", "type": "main", "index": 0}]]
-    },
-    "Split": {
-      "main": [[{"node": "Send Reminder", "type": "main", "index": 0}]]
+    "Render HTML": {
+      "main": [[{"node": "Send Email", "type": "main", "index": 0}]]
     }
   },
   "active": false,
   "settings": {},
-  "versionId": "1"
+  "versionId": "2"
 }

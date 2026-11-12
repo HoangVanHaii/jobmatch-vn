@@ -256,6 +256,7 @@ export const interviewController = {
       if (!userId) throw new AppError(401, 'UNAUTHORIZED', 'Unauthorized');
 
       const dateStr = typeof req.query.date === 'string' ? req.query.date : new Date().toISOString().split('T')[0];
+      const targetEmail = typeof req.query.email === 'string' && req.query.email.trim() ? req.query.email.trim() : undefined;
       const startOfDay = new Date(`${dateStr}T00:00:00+07:00`);
       const endOfDay = new Date(`${dateStr}T23:59:59+07:00`);
 
@@ -263,6 +264,7 @@ export const interviewController = {
         userId,
         timeMin: startOfDay,
         timeMax: endOfDay,
+        targetEmail,
       });
 
       res.json({ success: true, data: { busyTimes } });

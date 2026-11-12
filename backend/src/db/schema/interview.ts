@@ -6,6 +6,8 @@ export const interviews = pgTable('interviews', {
   id: uuid('id').primaryKey().defaultRandom(),
   applicationId: uuid('application_id').notNull().references(() => applications.id),
   interviewerId: uuid('interviewer_id').notNull().references(() => users.id),
+  interviewerName: text('interviewer_name'),
+  interviewerEmail: text('interviewer_email'),
   interviewType: text('interview_type').default('technical').notNull(),
   scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
   durationMin: integer('duration_min').default(60),

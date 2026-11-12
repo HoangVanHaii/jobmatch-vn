@@ -15,11 +15,17 @@ import {
   ExternalLink,
   ChevronDown,
   Layers,
+  Users,
+  User,
+  Mail,
 } from 'lucide-vue-next';
 import dayjs from 'dayjs';
 import isBetween from 'dayjs/plugin/isBetween';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
 import { interviewApi, type BusyTimeSlot, type CalendarStatus } from '@/services/interview.api';
+import { companyApi } from '@/services/company.api';
+import { companyMemberApi } from '@/services/companyMember.api';
+import type { CompanyMember } from '@/types/companyMember';
 import { useAuthStore } from '@stores/auth';
 import { useToastStore } from '@stores/toast';
 import { extractErrorMessage } from '@/services/http';
@@ -49,6 +55,13 @@ const toast = useToastStore();
 // Calendar connection state
 const calendarStatus = ref<CalendarStatus>({ isConnected: false });
 const loadingCalendarStatus = ref(false);
+
+// Interviewer selection state (Hybrid: HR / Member / Custom)
+const selectedInterviewerKey = ref<string>('self'); // 'self' | member.userId | 'custom'
+const customInterviewerName = ref('');
+const customInterviewerEmail = ref('');
+const companyMembers = ref<CompanyMember[]>([]);
+const loadingMembers = ref(false);
 
 // Form state
 const meetingFormat = ref<'online' | 'offline'>('online');
@@ -94,14 +107,58 @@ watch(
   { immediate: true },
 );
 
+// Email & Tên người phỏng vấn hiện được chọn
+const activeInterviewerEmail = computed(() => {
+  if (selectedInterviewerKey.value === 'custom') {
+    return customInterviewerEmail.value.trim();
+  }
+  if (selectedInterviewerKey.value === 'self') {
+    return calendarStatus.value.calendarEmail || authStore.user?.email || '';
+  }
+  const found = companyMembers.value.find((m) => m.userId === selectedInterviewerKey.value);
+  return found?.user?.email || '';
+});
+
+const activeInterviewerName = computed(() => {
+  if (selectedInterviewerKey.value === 'custom') {
+    return customInterviewerName.value.trim() || 'Người phỏng vấn';
+  }
+  if (selectedInterviewerKey.value === 'self') {
+    return authStore.user?.fullName || 'Tôi (HR)';
+  }
+  const found = companyMembers.value.find((m) => m.userId === selectedInterviewerKey.value);
+  return found?.user?.fullName || found?.user?.email || 'Thành viên công ty';
+});
+
+// Load danh sách thành viên công ty
+const loadCompanyMembers = async (): Promise<void> => {
+  loadingMembers.value = true;
+  try {
+    const myCompRes = await companyApi.getMyCompany();
+    const compId = myCompRes.data?.data?.id;
+    if (compId) {
+      const membersRes = await companyMemberApi.list(compId, { limit: 100 });
+      const raw = membersRes.data?.data?.members || [];
+      // Lấy các thành viên active khác với user hiện tại
+      companyMembers.value = raw.filter(
+        (m) => m.status === 'active' && m.userId !== authStore.user?.id,
+      );
+    }
+  } catch {
+    companyMembers.value = [];
+  } finally {
+    loadingMembers.value = false;
+  }
+};
+
 // Busy times checking
 const busySlots = ref<BusyTimeSlot[]>([]);
 const loadingBusyTimes = ref(false);
 const submitting = ref(false);
 
 const TIME_OPTIONS = [
-  '08:30', '09:00', '09:30', '10:00', '10:30', '11:00',
-  '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00',
+  '06:00', '06:30', '07:00', '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00',
+  '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00',
 ];
 
 const DURATION_OPTIONS = [
@@ -152,7 +209,8 @@ const loadBusyTimes = async (): Promise<void> => {
   }
   loadingBusyTimes.value = true;
   try {
-    const res = await interviewApi.getBusyTimes(scheduledDate.value);
+    const emailToQuery = activeInterviewerEmail.value || undefined;
+    const res = await interviewApi.getBusyTimes(scheduledDate.value, emailToQuery);
     if (res.data?.success && res.data.data) {
       busySlots.value = res.data.data.busyTimes || [];
     }
@@ -163,6 +221,16 @@ const loadBusyTimes = async (): Promise<void> => {
   }
 };
 
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const handleCustomEmailChange = (): void => {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    if (props.open && selectedInterviewerKey.value === 'custom') {
+      void loadBusyTimes();
+    }
+  }, 400);
+};
+
 watch(
   () => props.open,
   (isOpen) => {
@@ -170,13 +238,14 @@ watch(
       void loadCalendarStatus().then(() => {
         void loadBusyTimes();
       });
+      void loadCompanyMembers();
     }
   },
   { immediate: true },
 );
 
 watch(
-  () => scheduledDate.value,
+  [() => scheduledDate.value, () => selectedInterviewerKey.value],
   () => {
     if (props.open) {
       void loadBusyTimes();
@@ -219,13 +288,54 @@ const handleSubmit = async (): Promise<void> => {
     return;
   }
 
+  let finalInterviewerId = authStore.user.id;
+  let finalInterviewerName: string | undefined = undefined;
+  let finalInterviewerEmail: string | undefined = undefined;
+
+  if (selectedInterviewerKey.value === 'custom') {
+    const name = customInterviewerName.value.trim();
+    const email = customInterviewerEmail.value.trim();
+    if (!name) {
+      toast.push({
+        variant: 'error',
+        title: 'Chưa nhập người phỏng vấn',
+        body: 'Vui lòng nhập họ tên người phỏng vấn (Tech Lead / Chuyên viên kỹ thuật...).',
+      });
+      return;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast.push({
+        variant: 'error',
+        title: 'Email người phỏng vấn không hợp lệ',
+        body: 'Vui lòng nhập địa chỉ email hợp lệ để hệ thống gửi lời mời phỏng vấn và kiểm tra lịch.',
+      });
+      return;
+    }
+    finalInterviewerId = authStore.user.id;
+    finalInterviewerName = name;
+    finalInterviewerEmail = email;
+  } else if (selectedInterviewerKey.value === 'self') {
+    finalInterviewerId = authStore.user.id;
+    finalInterviewerName = authStore.user.fullName || undefined;
+    finalInterviewerEmail = calendarStatus.value.calendarEmail || authStore.user.email || undefined;
+  } else {
+    const member = companyMembers.value.find((m) => m.userId === selectedInterviewerKey.value);
+    if (member) {
+      finalInterviewerId = member.userId;
+      finalInterviewerName = member.user?.fullName || member.user?.email || undefined;
+      finalInterviewerEmail = member.user?.email || undefined;
+    }
+  }
+
   const startIso = dayjs(`${scheduledDate.value}T${scheduledTime.value}:00+07:00`).toISOString();
 
   submitting.value = true;
   try {
     const res = await interviewApi.create({
       applicationId: props.applicationId,
-      interviewerId: authStore.user.id,
+      interviewerId: finalInterviewerId,
+      interviewerName: finalInterviewerName,
+      interviewerEmail: finalInterviewerEmail,
       interviewType: interviewType.value,
       scheduledAt: startIso,
       durationMin: durationMin.value,
@@ -243,7 +353,7 @@ const handleSubmit = async (): Promise<void> => {
       variant: 'success',
       title: 'Đã gửi lời mời phỏng vấn!',
       body: data.meetingLink
-        ? `Đã tạo link Google Meet và gửi thư mời tới ${props.candidateEmail || props.candidateName}.`
+        ? `Đã tạo link Google Meet và gửi thư mời tới ${props.candidateEmail || props.candidateName}${finalInterviewerEmail ? ` & ${finalInterviewerEmail}` : ''}.`
         : `Lịch phỏng vấn đã được thiết lập thành công.`,
     });
 
@@ -272,7 +382,7 @@ const handleSubmit = async (): Promise<void> => {
     @click.self="handleClose"
   >
     <div
-      class="w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200"
+      class="w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200 pt-3"
     >
       <!-- Header -->
       <div class="flex items-center justify-between border-b border-slate-100 px-6 py-4.5 bg-white">
@@ -381,6 +491,85 @@ const handleSubmit = async (): Promise<void> => {
           </p>
         </div>
 
+        <!-- Người phỏng vấn (Interviewer) -->
+        <div class="rounded-xl border border-slate-200/90 bg-slate-50/50 p-3.5 space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+              <Users class="h-4 w-4 text-[#1769e8]" />
+              Người phỏng vấn (Interviewer)
+            </label>
+            <span v-if="loadingMembers" class="inline-flex items-center gap-1 text-[11px] text-slate-400">
+              <Loader2 class="h-3 w-3 animate-spin" /> Đang tải thành viên...
+            </span>
+          </div>
+
+          <div class="relative">
+            <select
+              v-model="selectedInterviewerKey"
+              class="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-[#1769e8] focus:outline-hidden focus:ring-1 focus:ring-[#1769e8] cursor-pointer"
+            >
+              <option value="self">
+                Tôi ({{ authStore.user?.fullName || authStore.user?.email || 'Tài khoản hiện tại' }})
+              </option>
+              <optgroup v-if="companyMembers.length > 0" label="Thành viên công ty">
+                <option
+                  v-for="m in companyMembers"
+                  :key="m.userId"
+                  :value="m.userId"
+                >
+                  {{ m.user?.fullName || 'Thành viên' }} ({{ m.user?.email }})
+                </option>
+              </optgroup>
+              <option value="custom">
+                + Khác (Nhập Tech Lead, Developer, chuyên gia ngoài...)
+              </option>
+            </select>
+            <ChevronDown class="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          </div>
+
+          <!-- Nhập thủ công khi chọn 'custom' -->
+          <div
+            v-if="selectedInterviewerKey === 'custom'"
+            class="space-y-2.5 pt-1 rounded-lg border border-blue-100 bg-blue-50/40 p-3 animate-in fade-in duration-150"
+          >
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Họ tên người phỏng vấn <span class="text-red-500">*</span>
+                </label>
+                <div class="relative">
+                  <User class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    v-model="customInterviewerName"
+                    type="text"
+                    placeholder="Ví dụ: Nguyễn Văn A (Tech Lead)"
+                    class="w-full rounded-lg border border-slate-200 bg-white pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-[#1769e8] focus:outline-hidden focus:ring-1 focus:ring-[#1769e8]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Email người phỏng vấn <span class="text-red-500">*</span>
+                </label>
+                <div class="relative">
+                  <Mail class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    v-model="customInterviewerEmail"
+                    type="email"
+                    placeholder="techlead@company.com"
+                    @input="handleCustomEmailChange"
+                    class="w-full rounded-lg border border-slate-200 bg-white pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-[#1769e8] focus:outline-hidden focus:ring-1 focus:ring-[#1769e8]"
+                  />
+                </div>
+              </div>
+            </div>
+            <p class="text-[10.5px] text-slate-500 leading-relaxed">
+              * Lịch phỏng vấn & Google Meet sẽ tự động gửi lời mời tới email này. Nếu cùng tên miền Google Workspace, hệ thống sẽ tự động đối chiếu khung giờ bận bên dưới.
+            </p>
+          </div>
+        </div>
+
         <!-- Hình thức phỏng vấn -->
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-2">Hình thức phỏng vấn</label>
@@ -483,7 +672,7 @@ const handleSubmit = async (): Promise<void> => {
               <span
                 v-if="isTimeBusy(t)"
                 class="absolute -top-1 -right-1 flex h-2 w-2 rounded-full bg-red-500 ring-2 ring-white"
-                title="Khung giờ này bạn đã có lịch bận trên Google Calendar"
+                :title="`Khung giờ này ${selectedInterviewerKey === 'self' ? 'bạn' : activeInterviewerName} đã có lịch bận trên Google Calendar`"
               />
             </button>
           </div>
@@ -491,7 +680,7 @@ const handleSubmit = async (): Promise<void> => {
           <!-- Cảnh báo nếu khung giờ được chọn bị bận -->
           <p v-if="currentSlotBusy" class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
             <AlertCircle class="h-3.5 w-3.5 shrink-0" />
-            Khung giờ <strong>{{ scheduledTime }}</strong> có thể trùng với một lịch hẹn khác trên Google Calendar của bạn. Bạn vẫn có thể tiếp tục nếu muốn.
+            Khung giờ <strong>{{ scheduledTime }}</strong> có thể trùng với một lịch hẹn khác trên Google Calendar của {{ selectedInterviewerKey === 'self' ? 'bạn' : activeInterviewerName }}. Bạn vẫn có thể tiếp tục nếu muốn.
           </p>
         </div>
 

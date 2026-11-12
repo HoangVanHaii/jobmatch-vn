@@ -23,6 +23,8 @@ export const cvMatchQueue = new Queue('cvMatch', queueOptions);
 export const aiTestGenerateQueue = new Queue('aiTestGenerate', queueOptions);
 // Reconciliation payment PayOS — fix HIGH #1 (mỗi 10 phút, xem paymentReconciliation.worker)
 export const paymentReconcileQueue = new Queue('payment-reconcile', queueOptions);
+// Interview Reminder Delayed Queue — hẹn giờ nhắc lịch phỏng vấn (24h, 2h, 15m)
+export const interviewReminderQueue = new Queue('interviewReminder', queueOptions);
 
 export type JobName =
   | "send-email"
@@ -36,4 +38,5 @@ export type JobName =
   | "export-csv"
   | "job-scan"
   | "embed-job"
-  | "payment-reconcile";
+  | "payment-reconcile"
+  | "interview-reminder";
