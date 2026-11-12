@@ -8,6 +8,7 @@
  *     qua phải với backdrop + nút X. Auto-close khi navigate qua menu link.
  */
 import { ref } from 'vue';
+import type { RouteLocationNormalizedLoaded } from 'vue-router';
 import { Menu } from 'lucide-vue-next';
 import CandidateSidebar from '@components/candidate/CandidateSidebar.vue';
 
@@ -18,6 +19,13 @@ const openMobileSidebar = (): void => {
 };
 const closeMobileSidebar = (): void => {
   mobileSidebarOpen.value = false;
+};
+
+const getRouteKey = (route: RouteLocationNormalizedLoaded): string => {
+  if (route.name === 'chat') {
+    return 'candidate-chat';
+  }
+  return route.path;
 };
 </script>
 
@@ -63,7 +71,7 @@ const closeMobileSidebar = (): void => {
       <main class="flex-1 min-w-0">
         <router-view v-slot="{ Component, route }">
           <Transition name="page-fade" mode="out-in">
-            <div :key="route.path" class="w-full min-w-0">
+            <div :key="getRouteKey(route)" class="w-full min-w-0">
               <component :is="Component" />
             </div>
           </Transition>

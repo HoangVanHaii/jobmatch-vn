@@ -22,6 +22,9 @@ const getRouteKey = (route: RouteLocationNormalizedLoaded): string => {
   if (route.name === 'employer-job-detail') {
     return 'employer-job-detail';
   }
+  if (route.name === 'e-chat') {
+    return 'e-chat';
+  }
   return route.fullPath;
 };
 </script>

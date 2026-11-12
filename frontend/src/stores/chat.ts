@@ -123,6 +123,7 @@ export const useChatStore = defineStore('chat', () => {
    * fetch sidebar trước, rồi retry.
    */
   const setActive = async (conversationId: string): Promise<void> => {
+    if (activeId.value === conversationId && loadingMessages.value) return;
     activeId.value = conversationId;
 
     let conv = findConversation(conversationId);
@@ -131,12 +132,33 @@ export const useChatStore = defineStore('chat', () => {
       await fetchConversations(true);
       conv = findConversation(conversationId);
     }
-    activeConversation.value = conv ?? null;
+
+    // Nếu vẫn không thấy sau lần đầu, thử tải thêm trang kế tiếp nếu có cursor
+    if (!conv && conversationsCursor.value) {
+      await fetchMoreConversations();
+      conv = findConversation(conversationId);
+    }
+
+    // Fallback: nếu backend chưa có GET /conversations/:id và conv không có trong cache
+    // thì tạo object fallback với fullName: null để header/panel không bị null crash
+    activeConversation.value = conv ?? {
+      id: conversationId,
+      peer: {
+        id: '',
+        fullName: null,
+        avatarUrl: null,
+        role: 'candidate',
+      },
+      lastMessageAt: null,
+      lastMessagePreview: null,
+      unreadCount: 0,
+      createdAt: new Date().toISOString(),
+    };
 
     // Reset messages + reset unread count locally
     messages.value = [];
     messagesCursor.value = null;
-    if (activeConversation.value) {
+    if (conv) {
       upsertConversation({ ...activeConversation.value, unreadCount: 0 });
     }
 
