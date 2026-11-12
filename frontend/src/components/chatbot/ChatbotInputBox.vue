@@ -11,7 +11,7 @@
  * parent quản lý (one-way binding qua `draft` + emit `update:draft`), tránh
  * mất state khi v-if/v-else swap DOM.
  */
-import { computed } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { Send, Square, X, Briefcase, FileText } from 'lucide-vue-next';
 import { useChatbotStore } from '@stores/chatbot';
 import { useAuthStore } from '@stores/auth';
@@ -34,6 +34,7 @@ const emit = defineEmits<{
 
 const store = useChatbotStore();
 const auth = useAuthStore();
+const textareaEl = ref<HTMLTextAreaElement | null>(null);
 
 const selectedJobs = computed(() => store.attachedJobs);
 const selectedCvs = computed(() => store.attachedCvs);
@@ -45,10 +46,37 @@ const removeTooltip = computed(() =>
   store.isStreaming ? 'Đang chờ phản hồi — bấm "Dừng" phía dưới để đổi.' : '',
 );
 
+/**
+ * Tự động điều chỉnh chiều cao của textarea theo nội dung gõ (auto-grow).
+ * Tối đa 128px (tương đương max-h-32).
+ * Ẩn hẳn scrollbar khi chưa vượt quá 128px để chống vệt scroll xám trên mobile.
+ */
+const adjustHeight = async (): Promise<void> => {
+  await nextTick();
+  const el = textareaEl.value;
+  if (!el) return;
+  el.style.height = 'auto';
+  const newHeight = Math.min(el.scrollHeight, 128);
+  el.style.height = `${newHeight}px`;
+  el.style.overflowY = el.scrollHeight > 128 ? 'auto' : 'hidden';
+};
+
 const onInput = (e: Event): void => {
   const target = e.target as HTMLTextAreaElement;
   emit('update:draft', target.value);
+  void adjustHeight();
 };
+
+watch(
+  () => props.draft,
+  () => {
+    void adjustHeight();
+  },
+);
+
+onMounted(() => {
+  void adjustHeight();
+});
 </script>
 
 <template>
@@ -102,14 +130,15 @@ const onInput = (e: Event): void => {
     <div class="flex items-end gap-2 p-2">
       <ChatbotAttachmentMenu v-if="auth.isAuthenticated" />
       <textarea
+        ref="textareaEl"
         :value="props.draft"
         rows="1"
         :placeholder="
           hasContext
-            ? 'Nhập câu hỏi về job/CV đã đính kèm...'
-            : 'Nhập câu hỏi của bạn (Đính kèm JD/CV để tôi hiểu bạn hơn)...'
+            ? 'Nhập câu hỏi về job/CV...'
+            : 'Nhập câu hỏi của bạn...'
         "
-        class="min-h-[36px] max-h-32 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm focus:outline-none focus:ring-0"
+        class="min-h-[36px] max-h-32 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-base md:text-sm focus:outline-none focus:ring-0 overflow-x-hidden overflow-y-hidden"
         @input="onInput"
         @keydown="(e) => emit('enter', e as KeyboardEvent)"
       />
@@ -135,3 +164,21 @@ const onInput = (e: Event): void => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Thanh cuộn tinh tế khi nội dung gõ vượt quá 128px */
+textarea {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.4) transparent;
+}
+textarea::-webkit-scrollbar {
+  width: 4px;
+}
+textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+textarea::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.4);
+  border-radius: 9999px;
+}
+</style>

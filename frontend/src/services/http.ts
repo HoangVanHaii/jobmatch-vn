@@ -233,6 +233,88 @@ http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
+/**
+ * Lấy Access Token mới bằng Refresh Token.
+ * Dùng chung lock `isRefreshing` + `failedQueue` để tránh race condition
+ * giữa Axios interceptor và fetch (SSE / Stream / Binary).
+ */
+export const refreshAccessToken = async (): Promise<string> => {
+  if (isRefreshing) {
+    return withQueueTimeout(
+      new Promise<string>((resolve, reject) => {
+        failedQueue.push({ resolve, reject });
+      }),
+    );
+  }
+
+  isRefreshing = true;
+  try {
+    // Không có refresh token → session không thể phục hồi. Clear + reject
+    // ngay, KHÔNG gọi /auth/refresh (body null chỉ nhận 400 từ
+    // refreshSchema) và KHÔNG redirect — đang ở trang auth mà redirect về
+    // chính nó sẽ full-reload → mount lại → 401 → lặp vô hạn (bug F5 /login).
+    const storedRefresh = localStorage.getItem('refresh_token');
+    if (!storedRefresh) {
+      localStorage.removeItem('access_token');
+      const noSession = new HttpError(
+        401,
+        'NO_REFRESH_TOKEN',
+        'Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.',
+      );
+      processQueue(noSession);
+      redirectToLogin();
+      return await Promise.reject(noSession);
+    }
+    // Dùng instance `http` (đã có timeout 30s) thay vì raw axios.
+    const { data } = await http.post<{
+      success: true;
+      data: { accessToken: string; refreshToken: string };
+    }>('/auth/refresh', { refreshToken: storedRefresh });
+
+    const newAccessToken = data.data.accessToken;
+    const newRefreshToken = data.data.refreshToken;
+    localStorage.setItem('access_token', newAccessToken);
+    localStorage.setItem('refresh_token', newRefreshToken);
+    processQueue(null, newAccessToken);
+    return newAccessToken;
+  } catch (refreshErr) {
+    processQueue(refreshErr);
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    redirectToLogin();
+    return await Promise.reject(refreshErr);
+  } finally {
+    isRefreshing = false;
+  }
+};
+
+/**
+ * Wrapper xung quanh native `fetch` dành cho các luồng SSE/Stream hoặc binary/file,
+ * tự động gắn Access Token và tự động refresh token nếu backend trả về 401.
+ */
+export const fetchWithAuth = async (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
+  const token = localStorage.getItem('access_token');
+  const headers = new Headers(init?.headers);
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const res = await fetch(input, { ...init, headers });
+  const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  if (res.status !== 401 || urlStr.includes('/auth/')) {
+    return res;
+  }
+
+  // 401: Refresh token và retry lại 1 lần duy nhất với token mới
+  const newAccessToken = await refreshAccessToken();
+  const retryHeaders = new Headers(init?.headers);
+  retryHeaders.set('Authorization', `Bearer ${newAccessToken}`);
+  return fetch(input, { ...init, headers: retryHeaders });
+};
+
 // Response interceptor — auto refresh on 401 + unwrap BE errors + envelope validation
 http.interceptors.response.use(
   (r) => {
@@ -263,59 +345,14 @@ http.interceptors.response.use(
     // ─── 401 refresh flow (existing) ────────────────────────────────
     if (error.response?.status !== 401 || original._retry || original.url?.includes('/auth/')) {
       // Không refresh: nhảy xuống dưới để unwrap BE error.
-    } else if (isRefreshing) {
-      // Set _retry TRƯỚC khi xếp hàng: sau khi dequeue + retry, nếu request vẫn
-      // 401 (token mới không được endpoint này chấp nhận) nó phải rơi xuống
-      // nhánh unwrap + reject thay vì tự trở thành refresher mới → tránh vòng
-      // lặp refresh trong session. (Refresher chính set _retry ở nhánh dưới.)
-      original._retry = true;
-      try {
-        const token = await withQueueTimeout(
-          new Promise<string>((resolve, reject) => {
-            failedQueue.push({ resolve, reject });
-          }),
-        );
-        original.headers.set('Authorization', `Bearer ${token}`);
-        return http(original);
-      } catch (queueErr) {
-        return Promise.reject(queueErr);
-      }
     } else {
       original._retry = true;
-      isRefreshing = true;
       try {
-        // Không có refresh token → session không thể phục hồi. Clear + reject
-        // ngay, KHÔNG gọi /auth/refresh (body null chỉ nhận 400 từ
-        // refreshSchema) và KHÔNG redirect — đang ở trang auth mà redirect về
-        // chính nó sẽ full-reload → mount lại → 401 → lặp vô hạn (bug F5 /login).
-        const storedRefresh = localStorage.getItem('refresh_token');
-        if (!storedRefresh) {
-          localStorage.removeItem('access_token');
-          const noSession = new HttpError(
-            401, 'NO_REFRESH_TOKEN', 'Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.',
-          );
-          processQueue(noSession);
-          redirectToLogin();
-          return Promise.reject(noSession);
-        }
-        // Dùng instance `http` (đã có timeout 30s) thay vì raw axios.
-        const { data } = await http.post<{ success: true; data: { accessToken: string; refreshToken: string } }>(
-          '/auth/refresh',
-          { refreshToken: storedRefresh },
-        );
-        localStorage.setItem('access_token', data.data.accessToken);
-        localStorage.setItem('refresh_token', data.data.refreshToken);
-        processQueue(null, data.data.accessToken);
-        original.headers.set('Authorization', `Bearer ${data.data.accessToken}`);
+        const newAccessToken = await refreshAccessToken();
+        original.headers.set('Authorization', `Bearer ${newAccessToken}`);
         return http(original);
       } catch (refreshErr) {
-        processQueue(refreshErr);
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        redirectToLogin();
         return Promise.reject(refreshErr);
-      } finally {
-        isRefreshing = false;
       }
     }
 

@@ -8,7 +8,7 @@
  * Phase 2 refactor: attach chip là local state ở FE — KHÔNG gọi PATCH /context.
  * Context chỉ được gửi kèm khi user POST /turn. Xem `streamTurn` dưới.
  */
-import { http } from './http';
+import { http, fetchWithAuth } from './http';
 import type {
   ChatbotSseYield,
   ChatSession,
@@ -110,14 +110,12 @@ export const chatbotApi = {
     signal: AbortSignal,
   ): AsyncGenerator<ChatbotSseYield, void, void> {
     const baseUrl = (import.meta.env.VITE_API_BASE_URL as string) || '';
-    const token = localStorage.getItem('access_token');
 
-    const res = await fetch(`${baseUrl}/chatbot/sessions/${sessionId}/turn`, {
+    const res = await fetchWithAuth(`${baseUrl}/chatbot/sessions/${sessionId}/turn`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
-        Authorization: token ? `Bearer ${token}` : '',
       },
       body: JSON.stringify({ message, jobIds, cvIds, attachedJobs, attachedCvs }),
       signal,

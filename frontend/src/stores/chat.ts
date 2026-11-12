@@ -13,6 +13,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { chatApi } from '@services/chat.api';
+import { useAuthStore } from './auth';
 import type {
   ConversationWithPeer,
   ChatMessage,
@@ -123,6 +124,7 @@ export const useChatStore = defineStore('chat', () => {
    * fetch sidebar trước, rồi retry.
    */
   const setActive = async (conversationId: string): Promise<void> => {
+    if (activeId.value === conversationId && loadingMessages.value) return;
     activeId.value = conversationId;
 
     let conv = findConversation(conversationId);
@@ -131,12 +133,33 @@ export const useChatStore = defineStore('chat', () => {
       await fetchConversations(true);
       conv = findConversation(conversationId);
     }
-    activeConversation.value = conv ?? null;
+
+    // Nếu vẫn không thấy sau lần đầu, thử tải thêm trang kế tiếp nếu có cursor
+    if (!conv && conversationsCursor.value) {
+      await fetchMoreConversations();
+      conv = findConversation(conversationId);
+    }
+
+    // Fallback: nếu backend chưa có GET /conversations/:id và conv không có trong cache
+    // thì tạo object fallback với fullName: null để header/panel không bị null crash
+    activeConversation.value = conv ?? {
+      id: conversationId,
+      peer: {
+        id: '',
+        fullName: null,
+        avatarUrl: null,
+        role: 'candidate',
+      },
+      lastMessageAt: null,
+      lastMessagePreview: null,
+      unreadCount: 0,
+      createdAt: new Date().toISOString(),
+    };
 
     // Reset messages + reset unread count locally
     messages.value = [];
     messagesCursor.value = null;
-    if (activeConversation.value) {
+    if (conv) {
       upsertConversation({ ...activeConversation.value, unreadCount: 0 });
     }
 
@@ -211,6 +234,8 @@ export const useChatStore = defineStore('chat', () => {
       attachments?: ChatMessage['attachments'];
     };
   }): void => {
+    const auth = useAuthStore();
+    const isFromMe = Boolean(auth.user?.id && payload.lastMessage.senderId === auth.user.id);
     const idx = conversations.value.findIndex((c) => c.id === payload.conversationId);
     const isActive = payload.conversationId === activeId.value;
 
@@ -231,7 +256,7 @@ export const useChatStore = defineStore('chat', () => {
       ...prev,
       lastMessageAt: payload.lastMessage.createdAt,
       lastMessagePreview: preview,
-      unreadCount: isActive ? 0 : prev.unreadCount + 1,
+      unreadCount: isActive ? 0 : isFromMe ? prev.unreadCount : prev.unreadCount + 1,
     };
 
     upsertConversation(next);

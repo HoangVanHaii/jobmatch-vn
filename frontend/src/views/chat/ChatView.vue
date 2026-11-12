@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * MockupChat — 3-column chat UI dùng real chat API (1-1).
+ * ChatView — 3-column chat UI dùng real chat API (1-1).
  *
  * Wiring map:
  *   - Sidebar "Tin nhắn"        ← store.conversations
@@ -8,26 +8,21 @@
  *   - Message list               ← useChat().messages (realtime + REST)
  *   - Composer                   ← chatHook.send() + uploadApi.uploadChatAttachment()
  *   - Right panel Images/Files   ← chatApi.listAttachments(activeId)
- *
- * Static (no API):
- *   - Sidebar tabs / "Đoạn chat mới" / Groups
- *   - Right panel: "Group Information" title, Links section
  */
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
-  Phone,
-  Video,
-  MoreHorizontal,
-  Moon,
-  Smile,
   Paperclip,
   Send,
   Settings2,
   Loader2,
   Check,
-  ChevronRight,
   X,
   Download,
+  MessageSquare,
+  AlertCircle,
+  RefreshCw,
+  ArrowLeft,
 } from 'lucide-vue-next'
 import { useChatStore } from '@stores/chat'
 import { useAuthStore } from '@stores/auth'
@@ -43,25 +38,126 @@ import type {
   PeerRole,
 } from '@/types/chat'
 
+interface ContentToken {
+  type: 'text' | 'link'
+  value: string
+  href?: string
+}
+
+/** Tách nội dung văn bản thành các token text và link an toàn (chỉ scheme http/https). */
+function parseMessageContent(text: string): ContentToken[] {
+  if (!text) return []
+  const urlRegex = /(https?:\/\/[^\s]+)/gi
+  const tokens: ContentToken[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = urlRegex.exec(text)) !== null) {
+    const matchIndex = match.index
+    if (matchIndex > lastIndex) {
+      tokens.push({ type: 'text', value: text.slice(lastIndex, matchIndex) })
+    }
+
+    let rawUrl = match[0]
+    let trailingPunct = ''
+    const punctMatch = rawUrl.match(/[.,!?:;)}\]"']+$/)
+    if (punctMatch) {
+      trailingPunct = punctMatch[0]
+      rawUrl = rawUrl.slice(0, rawUrl.length - trailingPunct.length)
+    }
+
+    if (/^https?:\/\//i.test(rawUrl)) {
+      tokens.push({ type: 'link', value: rawUrl, href: rawUrl })
+    } else {
+      tokens.push({ type: 'text', value: rawUrl })
+    }
+
+    if (trailingPunct) {
+      tokens.push({ type: 'text', value: trailingPunct })
+    }
+    lastIndex = matchIndex + match[0].length
+  }
+
+  if (lastIndex < text.length) {
+    tokens.push({ type: 'text', value: text.slice(lastIndex) })
+  }
+  return tokens
+}
+
 const store = useChatStore()
 const auth = useAuthStore()
 const toast = useToastStore()
-
-// (demo message removed — backend không có voice/reactions)
+const route = useRoute()
+const router = useRouter()
 
 // ===== Chat wiring =====
 const activeId = ref<string | null>(null)
 const chatHook = useChat(() => activeId.value ?? '')
 const showInfoPanel = ref(false)
+const toggleInfoBtnEl = ref<HTMLButtonElement | null>(null)
 
 function toggleInfoPanel() {
   showInfoPanel.value = !showInfoPanel.value
+}
+
+function handleCloseInfoPanel() {
+  showInfoPanel.value = false
+  void nextTick(() => {
+    toggleInfoBtnEl.value?.focus()
+  })
+}
+
+// ===== Deep-link and route sync =====
+const syncConversationWithRoute = async (): Promise<void> => {
+  // 1. Ưu tiên deep-link query: ?peer=<userId>
+  const peerQuery = route.query.peer ? String(route.query.peer) : null
+  if (peerQuery) {
+    try {
+      const convId = await store.createOrGet({ peerUserId: peerQuery })
+      activeId.value = convId
+      await store.setActive(convId)
+      const currentRouteName = route.name ? String(route.name) : (auth.user?.role === 'employer' ? 'e-chat' : 'chat')
+      await router.replace({ name: currentRouteName, params: { id: convId }, query: {} })
+      return
+    } catch {
+      // Tiếp tục fallback bên dưới nếu lỗi
+    }
+  }
+
+  // 2. Ưu tiên route param :id
+  const routeId = route.params.id ? String(route.params.id) : null
+  if (routeId) {
+    if (activeId.value !== routeId) {
+      activeId.value = routeId
+      await store.setActive(routeId)
+    }
+    return
+  }
+
+  // 3. Fallback: trên desktop (>= 1024px) tự chọn hội thoại đầu tiên, trên mobile giữ null
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024
+  if (isDesktop && store.conversations.length > 0) {
+    const firstId = store.conversations[0].id
+    activeId.value = firstId
+    await store.setActive(firstId)
+  } else if (!isDesktop) {
+    activeId.value = null
+  }
+}
+
+const goBackToList = async (): Promise<void> => {
+  activeId.value = null
+  const currentRouteName = route.name ? String(route.name) : (auth.user?.role === 'employer' ? 'e-chat' : 'chat')
+  // Dùng router.replace để không tạo thêm entry trùng lặp trên history stack (tránh history loop khi back)
+  await router.replace({ name: currentRouteName, params: { id: '' } })
 }
 
 // ===== Sidebar =====
 const selectConversation = async (id: string): Promise<void> => {
   if (activeId.value === id) return
   activeId.value = id
+  const currentRouteName = route.name ? String(route.name) : (auth.user?.role === 'employer' ? 'e-chat' : 'chat')
+  await router.push({ name: currentRouteName, params: { id }, query: {} })
   await store.setActive(id)
 }
 
@@ -81,8 +177,8 @@ const groupedMessages = computed(() => {
     const key = d.toDateString()
     const sameDay = key === new Date().toDateString()
     const label = sameDay
-      ? 'Today'
-      : d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+      ? 'Hôm nay'
+      : d.toLocaleDateString('vi-VN', { weekday: 'long', month: 'short', day: 'numeric' })
     if (key !== currentKey) {
       groups.push({ date: key, label, items: [m] })
       currentKey = key
@@ -116,12 +212,6 @@ const lastMessageId = computed<string | null>(() => {
   const real = chatHook?.messages.value ?? []
   return real.length > 0 ? real[real.length - 1].id : null
 })
-
-const safe = (s: string): string => s
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/\n/g, '<br>')
 
 /** ID message đang được expand (click để hiện timestamp + read receipt). */
 const expandedMessageId = ref<string | null>(null)
@@ -185,11 +275,11 @@ const uploadFile = async (file: File): Promise<void> => {
         : a,
     )
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Upload thất bại'
+    const msg = err instanceof Error ? err.message : 'Tải lên thất bại'
     attachments.value = attachments.value.map((a) =>
       a.id === id ? { ...a, status: 'error', error: msg } : a,
     )
-    toast.push({ variant: 'error', title: 'Upload thất bại', body: msg })
+    toast.push({ variant: 'error', title: 'Tải lên thất bại', body: msg })
   }
 }
 
@@ -199,13 +289,44 @@ const removeAttachment = (id: string): void => {
   attachments.value = attachments.value.filter((a) => a.id !== id)
 }
 
+const ALLOWED_MIME_PREFIXES = ['image/']
+const ALLOWED_MIMES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/csv',
+  'application/zip',
+])
+
 const onPickFile = (): void => fileInputEl.value?.click()
 
 const onFileInputChange = (e: Event): void => {
   const target = e.target as HTMLInputElement
   const files = target.files
   if (!files || files.length === 0) return
-  void Promise.all(Array.from(files).map((f) => uploadFile(f)))
+
+  const validFiles: File[] = []
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]
+    if (f.size > 10 * 1024 * 1024) {
+      toast.push({ variant: 'error', title: 'Tải lên thất bại', body: 'Tệp vượt quá giới hạn 10MB' })
+      continue
+    }
+    const isAllowed = ALLOWED_MIME_PREFIXES.some((p) => f.type.startsWith(p)) || ALLOWED_MIMES.has(f.type)
+    if (!isAllowed) {
+      toast.push({ variant: 'error', title: 'Tải lên thất bại', body: 'Loại tệp không được hỗ trợ' })
+      continue
+    }
+    validFiles.push(f)
+  }
+
+  if (validFiles.length > 0) {
+    void Promise.all(validFiles.map((f) => uploadFile(f)))
+  }
   target.value = ''
 }
 
@@ -217,7 +338,13 @@ const onPaste = (e: ClipboardEvent): void => {
     const item = items[i]
     if (item.kind === 'file') {
       const file = item.getAsFile()
-      if (file) files.push(file)
+      if (file) {
+        if (file.size > 10 * 1024 * 1024) {
+          toast.push({ variant: 'error', title: 'Tải lên thất bại', body: 'Tệp vượt quá giới hạn 10MB' })
+          continue
+        }
+        files.push(file)
+      }
     }
   }
   if (files.length === 0) return
@@ -248,13 +375,31 @@ const sendMessage = (): void => {
   }
   attachments.value = []
   chatHook?.typing(false)
-  void nextTick(() => textareaEl.value?.focus())
+  void nextTick(() => {
+    textareaEl.value?.focus()
+    scrollToBottom()
+  })
 }
 
 const onComposerKeydown = (e: KeyboardEvent): void => {
+  if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     sendMessage()
+  }
+}
+
+// Cờ đánh dấu đã cuộn xuống cuối lần đầu cho cuộc hội thoại hiện tại
+const isInitialScrollDone = ref(false)
+
+const onMessagesScroll = async (e: Event): Promise<void> => {
+  const el = e.target as HTMLElement
+  if (!isInitialScrollDone.value) return
+  if (el.scrollTop <= 50 && store.messagesCursor && !store.loadingMessages) {
+    const prevScrollHeight = el.scrollHeight
+    await store.fetchMoreMessages()
+    await nextTick()
+    el.scrollTop = el.scrollHeight - prevScrollHeight
   }
 }
 
@@ -277,6 +422,16 @@ const filenameFromUrl = (url: string): string => {
 const messagesEl = ref<HTMLElement | null>(null)
 const lastMessageCount = ref(0)
 
+const scrollToBottom = (): void => {
+  if (!messagesEl.value) return
+  messagesEl.value.scrollTop = messagesEl.value.scrollHeight
+  requestAnimationFrame(() => {
+    if (messagesEl.value) {
+      messagesEl.value.scrollTop = messagesEl.value.scrollHeight
+    }
+  })
+}
+
 watch(
   () => chatHook?.messages.value.length ?? 0,
   async (count) => {
@@ -284,13 +439,26 @@ watch(
       lastMessageCount.value = count
       return
     }
+    const isFirstBatch = !isInitialScrollDone.value
     lastMessageCount.value = count
     await nextTick()
     if (messagesEl.value) {
-      messagesEl.value.scrollTo({
-        top: messagesEl.value.scrollHeight,
-        behavior: 'smooth',
-      })
+      if (isFirstBatch) {
+        messagesEl.value.scrollTop = messagesEl.value.scrollHeight
+        isInitialScrollDone.value = true
+      } else {
+        scrollToBottom()
+      }
+    }
+  },
+)
+
+// Khi hội thoại rỗng tải xong mà không có tin nhắn nào, vẫn đánh dấu là đã cuộn xong
+watch(
+  () => store.loadingMessages,
+  (loading) => {
+    if (!loading && (chatHook?.messages.value.length ?? 0) === 0) {
+      isInitialScrollDone.value = true
     }
   },
 )
@@ -298,23 +466,79 @@ watch(
 // Reset counter khi đổi conversation để scroll xuống cuối cho conv mới
 watch(activeId, () => {
   lastMessageCount.value = 0
+  isInitialScrollDone.value = false
 })
+
+// Theo dõi thay đổi URL (param :id hoặc query ?peer=) để chuyển conversation
+watch(
+  () => [route.params.id, route.query.peer],
+  async () => {
+    await syncConversationWithRoute()
+  },
+)
+
+// Đo động chiều cao mobile header từ layout cha (CandidateLayout / EmployerLayout)
+const mobileHeaderHeight = ref(0)
+const updateHeaderHeight = (): void => {
+  if (typeof window === 'undefined') return
+  const h = document.querySelector('header.md\\:hidden') as HTMLElement | null
+  mobileHeaderHeight.value = h ? h.offsetHeight : 0
+}
+
+// Xử lý đổi kích thước / xoay màn hình lên >= 1024px (desktop) khi chưa chọn hội thoại
+let mediaQuery: MediaQueryList | null = null
+
+const handleBreakpointChange = (e: MediaQueryListEvent | MediaQueryList): void => {
+  if (e.matches && !activeId.value && store.conversations.length > 0) {
+    const firstId = store.conversations[0].id
+    activeId.value = firstId
+    void store.setActive(firstId)
+    const currentRouteName = route.name ? String(route.name) : (auth.user?.role === 'employer' ? 'e-chat' : 'chat')
+    // Dùng router.replace để cập nhật URL mà không tạo thêm history entry, tránh loop với watch(route)
+    void router.replace({ name: currentRouteName, params: { id: firstId }, query: {} })
+  }
+}
 
 // ===== Initial mount =====
 onMounted(async () => {
   await store.fetchConversations(true)
-  if (!activeId.value && store.conversations.length > 0) {
-    const first = store.conversations[0]
-    activeId.value = first.id
-    await store.setActive(first.id)
+  await syncConversationWithRoute()
+  updateHeaderHeight()
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', updateHeaderHeight)
+    mediaQuery = window.matchMedia('(min-width: 1024px)')
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleBreakpointChange)
+    } else {
+      mediaQuery.addListener(handleBreakpointChange)
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateHeaderHeight)
+    if (mediaQuery) {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener('change', handleBreakpointChange)
+      } else {
+        mediaQuery.removeListener(handleBreakpointChange)
+      }
+    }
   }
 })
 </script>
 
 <template>
-  <div class="font-poppins h-screen bg-[#f5f6f8]">
+  <div
+    class="font-poppins bg-[#f5f6f8] md:!h-screen"
+    :style="{
+      height: mobileHeaderHeight > 0 ? `calc(100dvh - ${mobileHeaderHeight}px)` : '100dvh'
+    }"
+  >
     <div
-      class="font-poppins mx-auto flex h-full max-w-[1600px] overflow-hidden bg-white shadow-[0_20px_60px_rgba(15,23,42,0.08)]"
+      class="font-poppins relative mx-auto flex h-full max-w-[1600px] overflow-hidden bg-white shadow-[0_20px_60px_rgba(15,23,42,0.08)]"
     >
       <!-- ================= LEFT SIDEBAR ================= -->
       <ChatSidebar
@@ -323,58 +547,75 @@ onMounted(async () => {
       />
 
       <!-- ================= MIDDLE CHAT ================= -->
-      <main class="flex min-w-0 flex-1 flex-col border-r border-slate-200">
+      <main
+        class="min-w-0 flex-col border-r border-slate-200"
+        :class="activeId ? 'flex flex-1' : 'hidden lg:flex lg:flex-1'"
+      >
         <!-- Header — WIRED -->
         <header
           class="flex h-[82px] shrink-0 items-center justify-between border-b border-slate-200 px-5 md:px-6"
         >
-          <div class="flex items-center gap-3">
-            <div class="relative">
-              <img
-                v-if="store.activeConversation?.peer.avatarUrl"
-                :src="store.activeConversation.peer.avatarUrl"
-                class="h-11 w-11 rounded-full object-cover"
-              />
+          <div class="flex min-w-0 flex-1 items-center gap-3">
+            <!-- Mobile back button to conversations list -->
+            <button
+              type="button"
+              class="mr-1 -ml-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-all duration-150 hover:bg-slate-100 active:scale-95 lg:hidden"
+              aria-label="Quay lại"
+              @click="goBackToList"
+            >
+              <ArrowLeft :size="20" />
+            </button>
 
-              <img
-                v-else
-                src="/avatars/peer-default.svg"
-                alt=""
-                class="h-11 w-11 rounded-full object-cover"
-              />
+            <!-- Peer Info — phản hồi tức thì khi chọn hội thoại, không trễ hay chớp DOM -->
+            <div :key="activeId ?? ''" class="chat-fade flex min-w-0 flex-1 items-center gap-3">
+              <div class="relative shrink-0">
+                <img
+                  v-if="store.activeConversation?.peer.avatarUrl"
+                  :src="store.activeConversation.peer.avatarUrl"
+                  :alt="store.activeConversation?.peer.fullName ?? 'Người dùng'"
+                  class="h-11 w-11 rounded-full object-cover ring-2 ring-slate-100 transition-opacity duration-150"
+                />
 
-              <span
-                class="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500"
-              />
-            </div>
+                <img
+                  v-else
+                  src="/avatars/peer-default.svg"
+                  alt="Người dùng"
+                  class="h-11 w-11 rounded-full object-cover ring-2 ring-slate-100 transition-opacity duration-150"
+                />
+              </div>
 
-            <div>
-              <h1 class="text-base font-semibold text-slate-900">
-                {{
-                  store.activeConversation?.peer.fullName ?? 'Chọn cuộc hội thoại'
-                }}
-              </h1>
+              <div class="min-w-0 flex-1">
+                <h1 class="truncate text-base font-semibold text-slate-900">
+                  {{
+                    activeId
+                      ? (store.activeConversation?.peer?.fullName?.trim() || 'Người dùng')
+                      : 'Chọn cuộc hội thoại'
+                  }}
+                </h1>
 
-              <p class="mt-0.5 text-xs text-slate-400">
-                {{
-                  store.activeConversation?.peer
-                    ? roleLabel(store.activeConversation.peer.role)
-                    : '—'
-                }}
-              </p>
+                <p class="mt-0.5 truncate text-xs text-slate-400">
+                  {{
+                    activeId && store.activeConversation?.peer
+                      ? roleLabel(store.activeConversation.peer.role)
+                      : '—'
+                  }}
+                </p>
+              </div>
             </div>
           </div>
 
-          <div class="flex items-center gap-1">
+          <div class="flex shrink-0 items-center gap-1">
             <button
+              ref="toggleInfoBtnEl"
               @click="toggleInfoPanel"
-              class="flex h-10 w-10 items-center justify-center rounded-xl transition"
+              class="flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-200 active:scale-95"
               :class="
                 showInfoPanel
-                  ? 'bg-blue-50 text-blue-500'
+                  ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-100'
                   : 'text-slate-500 hover:bg-slate-100'
               "
-              title="Toggle group info"
+              aria-label="Thông tin hội thoại"
+              title="Thông tin hội thoại"
             >
               <Settings2 :size="18" />
             </button>
@@ -384,8 +625,31 @@ onMounted(async () => {
         <!-- Messages — WIRED -->
         <section
           ref="messagesEl"
-          class="messages-scroll flex-1 overflow-y-auto bg-white px-5 py-6 md:px-8"
+          class="messages-scroll flex-1 overflow-y-auto overscroll-contain bg-white px-5 py-6 md:px-8"
+          aria-live="polite"
+          aria-relevant="additions"
+          @scroll="onMessagesScroll"
         >
+          <!-- Messages error banner -->
+          <div
+            v-if="store.messagesError"
+            class="mx-auto mb-4 flex max-w-[760px] items-center justify-between rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-600"
+          >
+            <div class="flex items-center gap-2">
+              <AlertCircle class="h-4 w-4 shrink-0 text-red-500" />
+              <span>{{ store.messagesError }}</span>
+            </div>
+
+            <button
+              type="button"
+              class="flex items-center gap-1 font-semibold underline hover:text-red-700"
+              @click="store.fetchMessages(true)"
+            >
+              <RefreshCw class="h-3 w-3" />
+              Thử lại
+            </button>
+          </div>
+
           <div v-if="!activeId" class="flex h-full items-center justify-center">
             <p class="text-sm text-slate-400">
               Chọn một cuộc hội thoại để bắt đầu
@@ -393,14 +657,78 @@ onMounted(async () => {
           </div>
 
           <template v-else>
+            <!-- Loading indicator when fetching older messages via infinite scroll -->
             <div
-              v-if="store.loadingMessages && (chatHook?.messages.value.length ?? 0) === 0"
-              class="flex justify-center py-12"
+              v-if="store.loadingMessages && (chatHook?.messages.value.length ?? 0) > 0"
+              class="flex justify-center py-2"
             >
-              <Loader2 class="h-6 w-6 animate-spin text-slate-400" />
+              <Loader2 class="h-5 w-5 animate-spin text-slate-400" />
             </div>
 
-            <div v-else class="mx-auto max-w-[760px] space-y-5">
+            <!-- Skeleton Chat Loading khi đang tải tin nhắn lần đầu (cùng kích thước & layout với tin nhắn thật, hiệu ứng Shimmer mượt mà) -->
+            <div
+              v-if="store.loadingMessages && (chatHook?.messages.value.length ?? 0) === 0"
+              class="mx-auto max-w-[760px] space-y-4 py-1"
+              aria-label="Đang tải tin nhắn"
+            >
+              <!-- Tin nhắn nhận 1 -->
+              <div class="flex justify-start">
+                <div class="mr-2 shrink-0 self-end">
+                  <div class="h-8 w-8 rounded-full skeleton-shimmer" />
+                </div>
+                <div class="max-w-[70%] rounded-2xl rounded-bl-md border border-slate-200/80 bg-slate-50/80 px-3.5 py-2.5 space-y-2">
+                  <div class="h-3.5 w-48 rounded skeleton-shimmer" />
+                  <div class="h-3 w-32 rounded skeleton-shimmer" />
+                </div>
+              </div>
+
+              <!-- Tin nhắn gửi 1 -->
+              <div class="flex justify-end">
+                <div class="max-w-[70%] rounded-2xl rounded-br-none bg-blue-100/60 border border-blue-200/40 px-3.5 py-2.5">
+                  <div class="h-3.5 w-56 rounded skeleton-shimmer-blue" />
+                </div>
+              </div>
+
+              <!-- Tin nhắn nhận 2 -->
+              <div class="flex justify-start">
+                <div class="mr-2 shrink-0 self-end">
+                  <div class="h-8 w-8 rounded-full skeleton-shimmer" />
+                </div>
+                <div class="max-w-[70%] rounded-2xl rounded-bl-md border border-slate-200/80 bg-slate-50/80 px-3.5 py-2.5">
+                  <div class="h-3.5 w-40 rounded skeleton-shimmer" />
+                </div>
+              </div>
+
+              <!-- Tin nhắn gửi 2 -->
+              <div class="flex justify-end">
+                <div class="max-w-[70%] rounded-2xl rounded-br-none bg-blue-100/60 border border-blue-200/40 px-3.5 py-2.5 space-y-2">
+                  <div class="h-3.5 w-44 rounded skeleton-shimmer-blue" />
+                  <div class="h-3 w-28 rounded skeleton-shimmer-blue" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Empty conversation state -->
+            <div
+              v-else-if="groupedMessages.length === 0"
+              class="chat-fade flex h-full flex-col items-center justify-center py-16 text-center"
+            >
+              <div
+                class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400"
+              >
+                <MessageSquare class="h-6 w-6" />
+              </div>
+
+              <p class="text-sm font-semibold text-slate-700">
+                Chưa có tin nhắn nào
+              </p>
+
+              <p class="mt-1 text-xs text-slate-400">
+                Hãy gửi tin nhắn đầu tiên để bắt đầu trò chuyện
+              </p>
+            </div>
+
+            <div v-else :key="activeId ?? ''" class="chat-fade mx-auto max-w-[760px] space-y-5">
               <template v-for="group in groupedMessages" :key="group.date">
                 <!-- Date divider -->
                 <div class="flex items-center gap-4 py-2">
@@ -413,10 +741,12 @@ onMounted(async () => {
                   <div class="h-px flex-1 bg-slate-200" />
                 </div>
 
-                <template v-for="m in group.items" :key="m.id">
+                <div class="space-y-3">
                   <!-- Real chat message -->
                   <div
-                    class="group flex cursor-pointer"
+                    v-for="m in group.items"
+                    :key="m.tempId || m.id"
+                    class="group flex cursor-pointer transition-transform duration-100 active:scale-[0.995]"
                     :class="isOwn(m) ? 'justify-end' : 'justify-start'"
                     @click="toggleExpand(m.id)"
                   >
@@ -427,19 +757,20 @@ onMounted(async () => {
                       <img
                         v-if="store.activeConversation?.peer.avatarUrl"
                         :src="store.activeConversation.peer.avatarUrl"
+                        :alt="store.activeConversation?.peer.fullName ?? 'Người dùng'"
                         class="h-8 w-8 rounded-full object-cover"
                       />
 
                       <img
                         v-else
                         src="/avatars/peer-default.svg"
-                        alt=""
+                        alt="Người dùng"
                         class="h-8 w-8 rounded-full object-cover"
                       />
                     </div>
 
                     <div
-                      class="max-w-[70%] text-sm leading-relaxed"
+                      class="max-w-[70%] text-sm leading-relaxed transition-all duration-150"
                       :class="(() => {
                         const hasAtt = !!(m.attachments && m.attachments.length > 0)
                         const hasText = !!m.content?.trim()
@@ -449,8 +780,8 @@ onMounted(async () => {
                           return 'rounded-2xl rounded-br-none bg-transparent text-slate-700'
                         }
                         return own
-                          ? 'rounded-2xl rounded-br-none bg-blue-700 px-3.5 py-2 text-white shadow-sm'
-                          : 'rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-slate-700 shadow-sm'
+                          ? 'rounded-2xl rounded-br-none bg-blue-700 px-3.5 py-2 text-white shadow-xs'
+                          : 'rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-slate-700 shadow-xs'
                       })()"
                     >
                       <!-- Attachments -->
@@ -467,12 +798,12 @@ onMounted(async () => {
                             :href="att.url"
                             target="_blank"
                             rel="noopener noreferrer"
-                            class="block overflow-hidden rounded-md bg-slate-100"
+                            class="group/img block overflow-hidden rounded-md bg-slate-100"
                           >
                             <img
                               :src="att.url"
                               :alt="att.name ?? att.mime"
-                              class="max-h-[200px] max-w-[200px] object-cover"
+                              class="max-h-[200px] max-w-[200px] object-cover transition-transform duration-200 group-hover/img:scale-105"
                               loading="lazy"
                             />
                           </a>
@@ -508,9 +839,21 @@ onMounted(async () => {
 
                       <div
                         v-if="m.content"
- class="break-words whitespace-pre-wrap"
-                        v-html="safe(m.content)"
-                      />
+                        class="break-words whitespace-pre-wrap"
+                      >
+                        <template v-for="(token, tIdx) in parseMessageContent(m.content)" :key="tIdx">
+                          <a
+                            v-if="token.type === 'link'"
+                            :href="token.href"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="break-all underline hover:opacity-80"
+                            :class="isOwn(m) ? 'text-blue-100 decoration-blue-200' : 'text-blue-600 decoration-blue-300'"
+                            @click.stop
+                          >{{ token.value }}</a>
+                          <span v-else>{{ token.value }}</span>
+                        </template>
+                      </div>
 
                       <div
                         v-if="
@@ -536,36 +879,38 @@ onMounted(async () => {
                       </div>
                     </div>
                   </div>
-                </template>
+                </div>
               </template>
 
               <!-- Typing indicator -->
-              <div v-if="chatHook?.peerTyping.value" class="flex justify-start">
-                <div class="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3 py-2">
-                  <div class="flex gap-1">
-                    <span
-                      class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                      style="animation-delay: 0ms"
-                    />
+              <Transition name="typing-fade">
+                <div v-if="chatHook?.peerTyping.value" class="flex justify-start">
+                  <div class="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2.5 shadow-xs">
+                    <div class="flex items-center gap-1.5">
+                      <span
+                        class="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500"
+                        style="animation-delay: 0ms"
+                      />
 
-                    <span
-                      class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                      style="animation-delay: 150ms"
-                    />
+                      <span
+                        class="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500"
+                        style="animation-delay: 150ms"
+                      />
 
-                    <span
-                      class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
-                      style="animation-delay: 300ms"
-                    />
+                      <span
+                        class="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500"
+                        style="animation-delay: 300ms"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              </Transition>
             </div>
           </template>
         </section>
 
         <!-- Composer — WIRED -->
-        <footer class="border-t border-slate-200 bg-white p-4">
+        <footer class="border-t border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
           <!-- Attachment preview row -->
           <div
             v-if="attachments.length > 0"
@@ -628,11 +973,13 @@ onMounted(async () => {
               <button
                 type="button"
                 aria-label="Xoá file"
-                title="Xoá"
-                class="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition hover:bg-black/80 group-hover:opacity-100"
+                title="Xoá file"
+                class="absolute -right-2 -top-2 flex h-10 w-10 items-center justify-center text-white transition focus:outline-none"
                 @click="removeAttachment(att.id)"
               >
-                <X class="h-3 w-3" />
+                <span class="flex h-5 w-5 items-center justify-center rounded-full bg-black/70 hover:bg-black">
+                  <X class="h-3 w-3" />
+                </span>
               </button>
             </div>
 
@@ -646,26 +993,26 @@ onMounted(async () => {
 
           <div class="mx-auto max-w-[760px]">
             <div
-              class="flex items-center gap-2  bg-white px-4 py-2.5 transition focus-within:border-slate-300 focus-within:outline-none"
+              class="flex items-center gap-2 bg-white px-4 py-2.5 transition focus-within:border-slate-300 focus-within:outline-none"
             >
               <input
                 ref="textareaEl"
                 v-model="messageInput"
                 type="text"
                 :disabled="!activeId"
+                maxlength="5000"
                 placeholder="Aa..."
-                class="flex-1 bg-transparent text-sm rounded-md border border-slate-200 text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-0"
+                class="flex-1 bg-transparent text-base md:text-sm rounded-md border border-slate-200 text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-0"
                 @keydown="onComposerKeydown"
                 @input="onComposerInput"
                 @paste="onPaste"
               />
 
-          
               <button
                 type="button"
                 aria-label="Đính kèm file"
                 title="Đính kèm file"
-                class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                class="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 transition-all duration-150 hover:bg-slate-50 hover:text-slate-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="!activeId"
                 @click="onPickFile"
               >
@@ -676,11 +1023,16 @@ onMounted(async () => {
                 type="button"
                 aria-label="Gửi"
                 title="Gửi"
-                class="flex h-9 w-9 items-center justify-center rounded-full bg-blue-500 text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                class="group/send flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200 active:scale-90 disabled:cursor-not-allowed shadow-xs"
+                :class="
+                  canSend
+                    ? 'bg-blue-600 text-white hover:bg-blue-700 hover:shadow-md hover:scale-105 active:scale-95'
+                    : 'bg-slate-100 text-slate-300'
+                "
                 :disabled="!canSend"
                 @click="sendMessage"
               >
-                <Send :size="16" />
+                <Send :size="16" class="transition-transform duration-150 group-hover/send:translate-x-0.5 group-active/send:scale-90" />
               </button>
             </div>
           </div>
@@ -698,8 +1050,9 @@ onMounted(async () => {
 
       <!-- ================= RIGHT INFO PANEL ================= -->
       <ChatInfoPanel
-        v-if="showInfoPanel"
+        :is-open="showInfoPanel"
         :conversation-id="activeId"
+        @close="handleCloseInfoPanel"
       />
     </div>
   </div>
@@ -723,5 +1076,77 @@ onMounted(async () => {
 }
 .messages-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgb(148 163 184);
+}
+
+/* Hiệu ứng shimmer ánh sáng lướt ngang mượt mà khi tải trang & đổi hội thoại */
+@keyframes shimmer-sweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(241, 245, 249, 1) 0%,
+    rgba(226, 232, 240, 0.7) 50%,
+    rgba(241, 245, 249, 1) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+.skeleton-shimmer-blue {
+  background: linear-gradient(
+    90deg,
+    rgba(219, 234, 254, 0.6) 0%,
+    rgba(191, 219, 254, 0.9) 50%,
+    rgba(219, 234, 254, 0.6) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+
+/* Fade-up khi nội dung xuất hiện (chuẩn CompanyView: 0.35s cubic-bezier(0.22, 1, 0.36, 1)) */
+.chat-fade {
+  animation: chat-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes chat-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Typing indicator fade (150ms ease-out) */
+.typing-fade-enter-active {
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+}
+.typing-fade-leave-active {
+  transition: opacity 0.12s ease-in;
+}
+.typing-fade-enter-from,
+.typing-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* Tắt toàn bộ transition nếu người dùng chọn giảm chuyển động trong HĐH */
+@media (prefers-reduced-motion: reduce) {
+  .typing-fade-enter-active,
+  .typing-fade-leave-active,
+  .skeleton-shimmer,
+  .skeleton-shimmer-blue,
+  .chat-fade {
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+  }
 }
 </style>
