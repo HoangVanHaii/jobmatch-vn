@@ -1,4 +1,4 @@
-import { http } from './http';
+import { http, fetchWithAuth } from './http';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -7,11 +7,10 @@ export interface ApiResponse<T> {
 
 export const aiApi = {
   chat: async function* (messages: Array<{ role: string; content: string }>) {
-    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/ai/chat`, {
+    const res = await fetchWithAuth(`${import.meta.env.VITE_API_BASE_URL}/ai/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('access_token')}`,
       },
       body: JSON.stringify({ messages }),
     });

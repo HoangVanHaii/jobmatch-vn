@@ -55,7 +55,7 @@ const isExceeded = computed(() => props.totalTokens >= 50_000);
 
     <div class="flex items-center gap-3">
       <div
-        class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium mr-6"
+        class="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium md:mr-6 md:px-3"
         :class="[
           isExceeded
             ? 'bg-red-50 text-red-700 ring-1 ring-red-200'
@@ -73,7 +73,7 @@ const isExceeded = computed(() => props.totalTokens >= 50_000);
       >
         <AlertTriangle v-if="isWarning || isExceeded" class="h-3.5 w-3.5" />
         <Coins v-else class="h-3.5 w-3.5" />
-        <span>{{ formattedTokens }} / 50.000</span>
+        <span>{{ formattedTokens }}<span class="hidden sm:inline"> / 50.000</span></span>
       </div>
     </div>
   </header>

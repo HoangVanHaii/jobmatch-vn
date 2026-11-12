@@ -15,7 +15,7 @@
  * Picker không còn là panel riêng — user click icon Paperclip để mở menu
  * "Thêm Job / Thêm CV", chọn xong đóng dropdown và chip hiện inline trên input.
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { Sparkles, X } from 'lucide-vue-next';
 import { useRoute, useRouter } from 'vue-router';
 import { useChatbotStore } from '@stores/chatbot';
@@ -95,7 +95,27 @@ const bootstrap = async (): Promise<void> => {
   setInitialMobileView();
 };
 
-onMounted(bootstrap);
+// Đo động chiều cao mobile header từ layout cha (CandidateLayout / EmployerLayout)
+const mobileHeaderHeight = ref(0);
+const updateHeaderHeight = (): void => {
+  if (typeof window === 'undefined') return;
+  const h = document.querySelector('header.md\\:hidden') as HTMLElement | null;
+  mobileHeaderHeight.value = h ? h.offsetHeight : 0;
+};
+
+onMounted(() => {
+  void bootstrap();
+  updateHeaderHeight();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', updateHeaderHeight);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateHeaderHeight);
+  }
+});
 
 watch(
   () => route.query.session,
@@ -320,7 +340,12 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
 </script>
 
 <template>
-  <div class="font-poppins flex h-screen flex-col bg-gray-50/50">
+  <div
+    class="font-poppins flex flex-col bg-gray-50/50 md:!h-screen"
+    :style="{
+      height: mobileHeaderHeight > 0 ? `calc(100dvh - ${mobileHeaderHeight}px)` : '100dvh'
+    }"
+  >
     <ChatbotHeader
       :title="store.activeSession?.title ?? null"
       :total-tokens="store.totalTokens"
@@ -374,7 +399,7 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
         <div
           v-show="!isEmpty"
           ref="messagesEl"
-          class="flex-1 overflow-y-auto scrollbar-visible px-3 pb-32 pt-4 md:px-6"
+          class="flex-1 overflow-y-auto scrollbar-visible px-3 pb-36 pt-4 md:px-6 md:pb-40"
         >
           <ChatbotMessage
             :messages="store.messages"
@@ -493,19 +518,21 @@ const onCreateAndDismissExceeded = async (): Promise<void> => {
               </div>
             </Transition>
 
-            <ChatbotInputBox
-              :draft="draft"
-              :can-send="canSend"
-              @update:draft="(v) => (draft = v)"
-              @send="onSend"
-              @stop="onStop"
-              @enter="onEnter"
-            />
-            <div
-              v-if="store.totalContextCount > 0 && !isEmpty"
-              class="mt-1.5 px-1 text-[11px] text-gray-400"
-            >
-              Đã gắn {{ store.totalContextCount }}/3 — bấm X trên chip hoặc mở kẹp giấy để đổi.
+            <div :class="isEmpty ? '' : 'mx-auto max-w-3xl'">
+              <ChatbotInputBox
+                :draft="draft"
+                :can-send="canSend"
+                @update:draft="(v) => (draft = v)"
+                @send="onSend"
+                @stop="onStop"
+                @enter="onEnter"
+              />
+              <div
+                v-if="store.totalContextCount > 0 && !isEmpty"
+                class="mt-1.5 px-1 text-[11px] text-gray-400"
+              >
+                Đã gắn {{ store.totalContextCount }}/3 — bấm X trên chip hoặc mở kẹp giấy để đổi.
+              </div>
             </div>
           </div>
         </div>
